@@ -2,7 +2,6 @@ import "./globals.css";
 import type { Metadata } from "next";
 import Sidebar from "@/components/Sidebar";
 import TopBar from "@/components/TopBar";
-import Disclaimer from "@/components/Disclaimer";
 
 export const metadata: Metadata = {
   title: "Signal AI — Options Strategy Builder",
@@ -18,7 +17,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <div className="flex-1 flex flex-col">
             <TopBar />
             <main className="flex-1 p-6 max-w-[1400px] w-full mx-auto">{children}</main>
-            <Disclaimer />
           </div>
         </div>
       </body>
