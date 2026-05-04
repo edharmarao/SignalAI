@@ -7,14 +7,46 @@ export interface Tick {
   ts: number;
 }
 
+const USE_MOCK =
+  (process.env.NEXT_PUBLIC_USE_MOCK ?? "true").toLowerCase() !== "false";
+
+const SEEDS: Record<string, number> = {
+  NIFTY: 22500,
+  BANKNIFTY: 48000,
+  FINNIFTY: 21000,
+  SENSEX: 74000,
+};
+
 export function useLiveTicks() {
-  const [ticks, setTicks] = useState<Record<string, Tick>>({});
+  const [ticks, setTicks] = useState<Record<string, Tick>>(() =>
+    Object.fromEntries(
+      Object.entries(SEEDS).map(([s, v]) => [s, { symbol: s, ltp: v, ts: Date.now() }])
+    )
+  );
 
   useEffect(() => {
+    if (USE_MOCK) {
+      const id = setInterval(() => {
+        setTicks((prev) => {
+          const next: Record<string, Tick> = { ...prev };
+          for (const sym of Object.keys(SEEDS)) {
+            const last = prev[sym]?.ltp ?? SEEDS[sym];
+            const drift = (Math.random() - 0.5) * last * 0.0008;
+            next[sym] = {
+              symbol: sym,
+              ltp: +(last + drift).toFixed(2),
+              ts: Date.now(),
+            };
+          }
+          return next;
+        });
+      }, 1000);
+      return () => clearInterval(id);
+    }
+
     const url = process.env.NEXT_PUBLIC_WS_URL ?? "ws://localhost:8000/ws";
     let ws: WebSocket | null = null;
     let stopped = false;
-
     function connect() {
       ws = new WebSocket(url);
       ws.onmessage = (e) => {

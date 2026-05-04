@@ -17,7 +17,10 @@ export default function TopBar() {
   return (
     <div className="border-b border-slate-800 bg-slate-950/60 px-6 py-3 flex items-center gap-3 sticky top-0 z-10 backdrop-blur">
       <Badge tone="info">PAPER MODE (default)</Badge>
-      {killed && <Badge tone="danger">KILL SWITCH ENGAGED</Badge>}
+      {(process.env.NEXT_PUBLIC_USE_MOCK ?? "true").toLowerCase() !== "false" && (
+        <Badge tone="warn">DEMO DATA</Badge>
+      )}
+      {killed && <Badge tone="danger">EMERGENCY STOP ENGAGED</Badge>}
       <div className="ml-auto flex items-center gap-3">
         <Button
           variant={killed ? "secondary" : "danger"}

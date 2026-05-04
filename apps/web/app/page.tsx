@@ -1,11 +1,26 @@
 "use client";
+import { useEffect, useState } from "react";
 import { Card, Badge } from "@signalai/ui";
 import { useLiveTicks } from "@/lib/ws";
 import { INDEX_OPTIONS } from "@signalai/utils";
+import { api } from "@/lib/api";
+import type { StrategyRow, TradeRow } from "@signalai/types";
 import Link from "next/link";
 
 export default function DashboardPage() {
   const ticks = useLiveTicks();
+  const [strategies, setStrategies] = useState<StrategyRow[]>([]);
+  const [trades, setTrades] = useState<TradeRow[]>([]);
+
+  useEffect(() => {
+    api<StrategyRow[]>("/strategies").then(setStrategies).catch(() => {});
+    api<TradeRow[]>("/trades").then(setTrades).catch(() => {});
+  }, []);
+
+  const todayPnl = trades.reduce((acc, t) => acc + (t.pnl ?? 0), 0);
+  const active = strategies.filter((s) => s.status === "active").length;
+  const open = trades.filter((t) => t.status === "open").length;
+
   return (
     <div className="space-y-6">
       <div className="flex items-end justify-between">
@@ -39,23 +54,53 @@ export default function DashboardPage() {
         })}
       </div>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <Card title="Paper P&L (today)">
-          <div className="text-3xl font-semibold text-emerald-400">₹0.00</div>
-          <div className="text-xs text-slate-500 mt-1">across all paper strategies</div>
+        <Card title="Paper P&L (cumulative)">
+          <div
+            className={`text-3xl font-semibold ${
+              todayPnl >= 0 ? "text-emerald-400" : "text-rose-400"
+            }`}
+          >
+            ₹{todayPnl.toFixed(2)}
+          </div>
+          <div className="text-xs text-slate-500 mt-1">
+            across {trades.length} paper trades
+          </div>
         </Card>
         <Card title="Active strategies">
-          <div className="text-3xl font-semibold">0</div>
+          <div className="text-3xl font-semibold">{active}</div>
           <Link href="/strategies" className="text-xs text-sky-400">
             View all →
           </Link>
         </Card>
         <Card title="Open positions">
-          <div className="text-3xl font-semibold">0</div>
+          <div className="text-3xl font-semibold">{open}</div>
           <Link href="/trades" className="text-xs text-sky-400">
             View live trades →
           </Link>
         </Card>
       </div>
+
+      {strategies.length > 0 && (
+        <Card title="Recent strategies">
+          <ul className="divide-y divide-slate-800">
+            {strategies.slice(0, 5).map((s) => (
+              <li key={s.id} className="py-2 flex items-center gap-3">
+                <Link href={`/strategies/${s.id}`} className="font-medium hover:underline">
+                  {s.name}
+                </Link>
+                <Badge tone={s.mode === "live" ? "danger" : "success"}>
+                  {s.mode.toUpperCase()}
+                </Badge>
+                <Badge tone="info">{s.status}</Badge>
+                <div className="ml-auto text-xs text-slate-500">
+                  {s.strategy_json.index} · {s.strategy_json.optionType} ·{" "}
+                  {s.strategy_json.strike}
+                </div>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      )}
     </div>
   );
 }

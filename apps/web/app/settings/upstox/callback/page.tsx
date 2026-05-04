@@ -1,10 +1,10 @@
 "use client";
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { Card } from "@signalai/ui";
 import { api } from "@/lib/api";
 
-export default function UpstoxCallback() {
+function CallbackInner() {
   const search = useSearchParams();
   const router = useRouter();
   const [status, setStatus] = useState("Connecting…");
@@ -32,5 +32,19 @@ export default function UpstoxCallback() {
         <p className="text-sm text-slate-300">{status}</p>
       </Card>
     </div>
+  );
+}
+
+export default function UpstoxCallback() {
+  return (
+    <Suspense
+      fallback={
+        <div className="max-w-md mx-auto mt-16">
+          <Card>Loading…</Card>
+        </div>
+      }
+    >
+      <CallbackInner />
+    </Suspense>
   );
 }
