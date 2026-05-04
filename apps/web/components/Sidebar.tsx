@@ -56,46 +56,41 @@ const NAV = [
 export default function Sidebar() {
   const path = usePathname();
   return (
-    // Outer reserves a fixed 64px column so main content doesn't shift.
-    // Inner is absolutely positioned and expands to 240px on hover.
-    <div className="hidden md:block w-16 shrink-0 relative">
-      <aside
-        className="group absolute inset-y-0 left-0 w-16 hover:w-60 transition-[width] duration-200 ease-out
-                   bg-slate-950/95 border-r border-slate-800 p-3 flex flex-col z-30 overflow-hidden shadow-xl"
-      >
-        <div className="flex items-center gap-2 mb-8 px-1 h-8">
-          <div className="w-8 h-8 shrink-0 rounded-md bg-gradient-to-br from-emerald-400 to-sky-500" />
-          <div className="font-semibold tracking-tight text-slate-100 whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity duration-150">
-            Signal AI
-          </div>
+    <aside className="w-60 shrink-0 bg-slate-950/80 border-r border-slate-800 p-4 hidden md:flex flex-col">
+      <div className="flex items-center gap-2 mb-8 px-2">
+        <div className="w-9 h-9 shrink-0 rounded-lg bg-gradient-to-br from-emerald-400 via-emerald-500 to-sky-500 flex items-center justify-center shadow-lg shadow-emerald-500/30 ring-1 ring-white/10">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.25" strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5 text-slate-950">
+            <path d="M3 14l3.5-3.5 3 3L14 8l3 4 4-5" />
+            <circle cx="14" cy="8" r="1.6" fill="currentColor" stroke="none" />
+          </svg>
         </div>
-        <nav className="flex-1 flex flex-col gap-1">
-          {NAV.map((n) => {
-            const active = path === n.href || (n.href !== "/" && path?.startsWith(n.href));
-            const Icon = n.icon;
-            return (
-              <Link
-                key={n.href}
-                href={n.href}
-                title={n.label}
-                className={`flex items-center gap-3 px-3 py-2 rounded-md text-sm transition ${
-                  active
-                    ? "bg-slate-800 text-emerald-400"
-                    : "text-slate-300 hover:bg-slate-800/60 hover:text-slate-100"
-                }`}
-              >
-                <Icon className={`w-5 h-5 shrink-0 ${active ? "text-emerald-400" : "text-slate-400"}`} />
-                <span className="whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity duration-150">
-                  {n.label}
-                </span>
-              </Link>
-            );
-          })}
-        </nav>
-        <div className="text-[10px] text-slate-500 px-2 mt-4 whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity duration-150">
-          v0.1.0
+        <div className="font-semibold tracking-tight text-slate-100">
+          Signal <span className="text-emerald-400">AI</span>
         </div>
-      </aside>
-    </div>
+      </div>
+      <nav className="flex-1 flex flex-col gap-1">
+        {NAV.map((n) => {
+          const active = path === n.href || (n.href !== "/" && path?.startsWith(n.href));
+          const Icon = n.icon;
+          return (
+            <Link
+              key={n.href}
+              href={n.href}
+              className={`flex items-center gap-3 px-3 py-2 rounded-md text-sm transition ${
+                active
+                  ? "bg-slate-800 text-emerald-400"
+                  : "text-slate-300 hover:bg-slate-800/60 hover:text-slate-100"
+              }`}
+            >
+              <Icon className={`w-4 h-4 shrink-0 ${active ? "text-emerald-400" : "text-slate-400"}`} />
+              <span>{n.label}</span>
+            </Link>
+          );
+        })}
+      </nav>
+      <div className="text-[10px] text-slate-500 px-2 mt-4">
+        v0.1.0
+      </div>
+    </aside>
   );
 }
