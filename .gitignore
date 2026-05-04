@@ -1,0 +1,16 @@
+node_modules
+.next
+dist
+build
+.env
+.env.local
+.env.*.local
+*.log
+.DS_Store
+.venv
+__pycache__
+*.pyc
+.pytest_cache
+.turbo
+coverage
+.idea

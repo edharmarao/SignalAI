@@ -1,0 +1,10 @@
+{
+  "name": "@signalai/ui",
+  "version": "0.1.0",
+  "main": "src/index.tsx",
+  "types": "src/index.tsx",
+  "private": true,
+  "peerDependencies": {
+    "react": "^18.2.0"
+  }
+}
