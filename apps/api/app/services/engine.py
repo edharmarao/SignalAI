@@ -56,7 +56,12 @@ def evaluate_group(df: pd.DataFrame, group: dict[str, Any]) -> pd.Series:
     conds = group.get("conditions") or []
     if not conds:
         return pd.Series([False] * len(df), index=df.index)
-    masks = [evaluate_condition(df, c) for c in conds]
+    masks = []
+    for c in conds:
+        if isinstance(c, dict) and "logic" in c and "conditions" in c:
+            masks.append(evaluate_group(df, c))
+        else:
+            masks.append(evaluate_condition(df, c))
     if group.get("logic") == "OR":
         out = masks[0]
         for m in masks[1:]:
@@ -103,6 +108,33 @@ def _exit_pnl(side: str, entry: float, current: float, qty: int) -> float:
     return (current - entry) * qty if side == "BUY" else (entry - current) * qty
 
 
+def _strip_simple_exits(group: dict[str, Any]) -> dict[str, Any]:
+    """Return a copy of the group with stop_loss/target/trailing_stop_loss/time_exit
+    leaves removed, preserving nested group structure for indicator/level exits."""
+    SIMPLE = {"stop_loss", "target", "trailing_stop_loss", "time_exit"}
+    out_conds: list[Any] = []
+    for c in (group or {}).get("conditions") or []:
+        if isinstance(c, dict) and "logic" in c and "conditions" in c:
+            sub = _strip_simple_exits(c)
+            if sub["conditions"]:
+                out_conds.append(sub)
+        elif c.get("type") not in SIMPLE:
+            out_conds.append(c)
+    return {"logic": (group or {}).get("logic") or "OR", "conditions": out_conds}
+
+
+def _flatten(group: dict[str, Any]) -> list[dict[str, Any]]:
+    """Flatten a possibly-nested condition group into a list of leaf conditions.
+    Used by the SL/TP/time-exit extraction path in the engine."""
+    out: list[dict[str, Any]] = []
+    for c in (group or {}).get("conditions") or []:
+        if isinstance(c, dict) and "logic" in c and "conditions" in c:
+            out.extend(_flatten(c))
+        else:
+            out.append(c)
+    return out
+
+
 def run_strategy(df: pd.DataFrame, strategy: dict[str, Any]) -> EngineResult:
     """Evaluate strategy on candle DataFrame. Returns trade list + stats."""
     df = df.reset_index(drop=True).copy()
@@ -110,21 +142,17 @@ def run_strategy(df: pd.DataFrame, strategy: dict[str, Any]) -> EngineResult:
         df["time"] = pd.date_range("2024-01-01 09:15", periods=len(df), freq="5min").astype(str)
 
     entry_mask = evaluate_group(df, strategy["entry"])
-    exit_conds = (strategy["exit"] or {}).get("conditions") or []
-    exit_logic = (strategy["exit"] or {}).get("logic") or "OR"
+    exit_group = strategy["exit"] or {}
+    exit_conds = _flatten(exit_group)
     side = strategy.get("action", "BUY")
     qty = int(strategy.get("quantity", 1))
 
-    sl = next((c["value"] for c in exit_conds if c["type"] == "stop_loss"), None)
-    tp = next((c["value"] for c in exit_conds if c["type"] == "target"), None)
-    tsl = next((c["value"] for c in exit_conds if c["type"] == "trailing_stop_loss"), None)
-    time_exit = next((c["time"] for c in exit_conds if c["type"] == "time_exit"), None)
-    indicator_exits = [c for c in exit_conds if c["type"] in ("indicator", "level")]
-    indicator_exit_mask = (
-        evaluate_group(df, {"logic": exit_logic, "conditions": indicator_exits})
-        if indicator_exits
-        else pd.Series([False] * len(df))
-    )
+    sl = next((c["value"] for c in exit_conds if c.get("type") == "stop_loss"), None)
+    tp = next((c["value"] for c in exit_conds if c.get("type") == "target"), None)
+    tsl = next((c["value"] for c in exit_conds if c.get("type") == "trailing_stop_loss"), None)
+    time_exit = next((c["time"] for c in exit_conds if c.get("type") == "time_exit"), None)
+    # Indicator/level exits keep their original group structure so AND/OR + nesting are honored.
+    indicator_exit_mask = evaluate_group(df, _strip_simple_exits(exit_group))
 
     risk = strategy.get("risk", {}) or {}
     max_trades = int(risk.get("maxTradesPerDay", 999))

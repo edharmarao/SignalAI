@@ -53,6 +53,15 @@ export interface TimeCondition {
 
 export type EntryCondition = LevelCondition | IndicatorCondition | TimeCondition;
 
+export interface ConditionGroup<T = EntryCondition | ExitCondition> {
+  logic: Logic;
+  conditions: Array<T | ConditionGroup<T>>;
+}
+
+export function isGroup<T>(c: any): c is ConditionGroup<T> {
+  return c && Array.isArray(c.conditions) && (c.logic === "AND" || c.logic === "OR");
+}
+
 export interface ExitStopLoss { type: "stop_loss"; value: number; }
 export interface ExitTarget { type: "target"; value: number; }
 export interface ExitTrailing { type: "trailing_stop_loss"; value: number; }
@@ -87,8 +96,8 @@ export interface StrategyJSON {
   quantity: number;
   mode: Mode;
   status: StrategyStatus;
-  entry: { logic: Logic; conditions: EntryCondition[] };
-  exit: { logic: Logic; conditions: ExitCondition[] };
+  entry: ConditionGroup<EntryCondition>;
+  exit: ConditionGroup<ExitCondition>;
   risk: RiskControls;
 }
 

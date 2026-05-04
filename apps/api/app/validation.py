@@ -1,6 +1,28 @@
 """Strategy validation mirroring packages/utils/validateStrategy."""
 from __future__ import annotations
+from typing import Any
 from .models import StrategyJSON
+
+
+def _is_group(c: Any) -> bool:
+    return isinstance(c, dict) and "logic" in c and "conditions" in c
+
+
+def _count_leaves(g: dict) -> int:
+    n = 0
+    for c in (g or {}).get("conditions") or []:
+        n += _count_leaves(c) if _is_group(c) else 1
+    return n
+
+
+def _has_type(g: dict, t: str) -> bool:
+    for c in (g or {}).get("conditions") or []:
+        if _is_group(c):
+            if _has_type(c, t):
+                return True
+        elif c.get("type") == t:
+            return True
+    return False
 
 
 def validate_strategy(s: StrategyJSON) -> list[str]:
@@ -10,16 +32,12 @@ def validate_strategy(s: StrategyJSON) -> list[str]:
     if s.quantity <= 0:
         errors.append("Quantity must be greater than zero.")
 
-    entry_conds = (s.entry or {}).get("conditions") or []
-    if not entry_conds:
+    if _count_leaves(s.entry or {}) == 0:
         errors.append("At least one entry condition is required.")
-    if len(entry_conds) > 2:
-        errors.append("Maximum two entry indicator conditions are supported.")
 
-    exit_conds = (s.exit or {}).get("conditions") or []
-    if not exit_conds:
+    if _count_leaves(s.exit or {}) == 0:
         errors.append("At least one exit condition is required.")
-    if not any(c.get("type") == "stop_loss" for c in exit_conds):
+    if not _has_type(s.exit or {}, "stop_loss"):
         errors.append("Stop loss is required.")
 
     if not s.risk or s.risk.maxLossPerDay <= 0:

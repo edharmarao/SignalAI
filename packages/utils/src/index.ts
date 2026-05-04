@@ -3,7 +3,9 @@ import type {
   EntryCondition,
   ExitCondition,
   IndicatorCondition,
+  ConditionGroup,
 } from "@signalai/types";
+import { isGroup } from "@signalai/types";
 
 export const INDEX_OPTIONS = ["NIFTY", "BANKNIFTY", "FINNIFTY", "SENSEX"] as const;
 export const OPTION_TYPES = ["CE", "PE"] as const;
@@ -25,6 +27,19 @@ export interface ValidationResult {
   errors: string[];
 }
 
+function countLeaves(g: ConditionGroup<any>): number {
+  return g.conditions.reduce(
+    (n, c) => n + (isGroup(c) ? countLeaves(c) : 1),
+    0
+  );
+}
+
+function hasStopLoss(g: ConditionGroup<any>): boolean {
+  return g.conditions.some((c) =>
+    isGroup(c) ? hasStopLoss(c) : (c as any).type === "stop_loss"
+  );
+}
+
 export function validateStrategy(s: StrategyJSON): ValidationResult {
   const errors: string[] = [];
   if (!s.name?.trim()) errors.push("Strategy name is required.");
@@ -34,12 +49,11 @@ export function validateStrategy(s: StrategyJSON): ValidationResult {
   if (!s.action) errors.push("Action is required.");
   if (!s.candleTime) errors.push("Candle time is required.");
   if (!s.quantity || s.quantity <= 0) errors.push("Quantity must be greater than zero.");
-  if (!s.entry?.conditions?.length) errors.push("At least one entry condition is required.");
-  if (s.entry?.conditions?.length > 2)
-    errors.push("Maximum two entry indicator conditions are supported.");
-  if (!s.exit?.conditions?.length) errors.push("At least one exit condition is required.");
-  const hasSL = s.exit?.conditions?.some((c) => c.type === "stop_loss");
-  if (!hasSL) errors.push("Stop loss is required.");
+  if (!s.entry || countLeaves(s.entry) === 0)
+    errors.push("At least one entry condition is required.");
+  if (!s.exit || countLeaves(s.exit) === 0)
+    errors.push("At least one exit condition is required.");
+  if (!hasStopLoss(s.exit)) errors.push("Stop loss is required.");
   if (!s.risk?.maxLossPerDay || s.risk.maxLossPerDay <= 0)
     errors.push("Max daily loss must be set.");
   if (!s.risk?.autoSquareOffTime) errors.push("Auto square-off time is required.");
@@ -76,10 +90,16 @@ export function describeCondition(c: EntryCondition | ExitCondition): string {
   }
 }
 
+export function describeGroup(g: ConditionGroup<any>): string {
+  if (!g.conditions.length) return "(empty)";
+  const parts = g.conditions.map((c) =>
+    isGroup(c) ? `(${describeGroup(c)})` : describeCondition(c as any)
+  );
+  return parts.join(` ${g.logic} `);
+}
+
 export function describeStrategy(s: StrategyJSON): string {
-  const entry = s.entry.conditions.map(describeCondition).join(` ${s.entry.logic} `);
-  const exit = s.exit.conditions.map(describeCondition).join(` ${s.exit.logic} `);
-  return `${s.action} ${s.quantity}x ${s.index} ${s.strike} ${s.optionType} on ${s.candleTime} candle. Enter when ${entry}. Exit when ${exit}.`;
+  return `${s.action} ${s.quantity}x ${s.index} ${s.strike} ${s.optionType} on ${s.candleTime} candle. Enter when ${describeGroup(s.entry)}. Exit when ${describeGroup(s.exit)}.`;
 }
 
 export function emptyStrategy(name = "New Strategy"): StrategyJSON {
