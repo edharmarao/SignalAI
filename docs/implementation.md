@@ -1,7 +1,7 @@
 # Signal AI – Implementation Notes
 
 End-to-end walk-through of how each major feature is implemented, with
-file references and rationale. Pair this with `architecture.md` for the
+file references and rationale. Pair this with [`architecture.md`](./architecture.md) for the
 big picture.
 
 ---

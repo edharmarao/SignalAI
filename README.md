@@ -6,6 +6,8 @@
 >
 > **For education only. Trading involves risk.**
 
+📚 **Docs:** [architecture](./docs/architecture.md) · [implementation](./docs/implementation.md) · [requirements](./docs/requirements.md)
+
 ---
 
 ## ✨ Features
