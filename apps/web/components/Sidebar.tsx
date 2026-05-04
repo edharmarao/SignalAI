@@ -39,7 +39,7 @@ export default function Sidebar() {
         })}
       </nav>
       <div className="text-[10px] text-slate-500 px-2 mt-4">
-        v0.1.0 · paper-mode default
+        v0.1.0
       </div>
     </aside>
   );
