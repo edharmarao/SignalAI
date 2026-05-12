@@ -2,11 +2,14 @@ export type IndexSymbol = "NIFTY" | "BANKNIFTY" | "FINNIFTY" | "SENSEX";
 export type OptionType = "CE" | "PE";
 export type StrikeOffset = "ATM" | "ATM+50" | "ATM+100" | "ATM-50" | "ATM-100";
 export type Action = "BUY" | "SELL";
-export type CandleTime = "15sec" | "1min" | "5min" | "15min";
+export type CandleTime = "15sec" | "1min" | "5min" | "15min" | "1H" | "EOD" | "Weekly";
 export type Mode = "paper" | "live";
 export type StrategyStatus = "draft" | "active" | "paused" | "stopped";
 export type Logic = "AND" | "OR";
 export type Operator = ">" | "<" | ">=" | "<=" | "==" | "crosses_above" | "crosses_below";
+
+export type DeskType = "equity" | "mutual-funds" | "options";
+export type ExpiryType = "Weekly" | "Monthly";
 
 export type IndicatorName =
   | "RSI"
@@ -81,24 +84,67 @@ export interface RiskControls {
   maxLossPerDay: number;
   maxTradesPerDay: number;
   maxOpenPositions: number;
-  autoSquareOffTime: string; // "HH:MM"
+  autoSquareOffTime?: string; // "HH:MM" — required for intraday, optional for swing
   killSwitch?: boolean;
+  holdDays?: number; // swing desk: max days to hold a position
 }
 
 export interface StrategyJSON {
   version: 1;
   name: string;
+  desk: DeskType;
   index: IndexSymbol;
-  optionType: OptionType;
-  strike: StrikeOffset;
+  optionType?: OptionType;  // not used for equity desk
+  strike?: StrikeOffset;    // not used for equity desk
   action: Action;
   candleTime: CandleTime;
   quantity: number;
   mode: Mode;
   status: StrategyStatus;
+  expiry?: ExpiryType;      // options desk only
+  holdDays?: number;        // future use
   entry: ConditionGroup<EntryCondition>;
   exit: ConditionGroup<ExitCondition>;
   risk: RiskControls;
+}
+
+// ── Mutual Funds ─────────────────────────────────────────────────────────────
+
+export type MFCategory =
+  | "Large Cap" | "Mid Cap" | "Small Cap" | "Flexi Cap"
+  | "ELSS" | "Index" | "Debt" | "Hybrid";
+
+export type SIPFrequency = "Monthly" | "Quarterly";
+
+export interface MutualFundHolding {
+  id: string;
+  user_id: string;
+  fund_name: string;
+  category: MFCategory;
+  folio: string;
+  invested: number;     // total amount invested ₹
+  units: number;
+  nav: number;          // current NAV ₹
+  current_value: number;
+  xirr: number;         // annualised return %
+  sip_amount?: number;  // monthly SIP if active
+  sip_day?: number;     // day of month
+  sip_frequency?: SIPFrequency;
+  started_at: string;
+  updated_at: string;
+}
+
+export interface SIPEntry {
+  id: string;
+  user_id: string;
+  fund_id: string;
+  fund_name: string;
+  amount: number;
+  frequency: SIPFrequency;
+  day: number;          // day of month
+  next_date: string;
+  status: "active" | "paused" | "stopped";
+  created_at: string;
 }
 
 export interface StrategyRow {
