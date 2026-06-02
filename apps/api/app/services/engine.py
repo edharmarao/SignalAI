@@ -139,13 +139,16 @@ def run_strategy(df: pd.DataFrame, strategy: dict[str, Any]) -> EngineResult:
     """Evaluate strategy on candle DataFrame. Returns trade list + stats."""
     df = df.reset_index(drop=True).copy()
     if "time" not in df.columns:
-        df["time"] = pd.date_range("2024-01-01 09:15", periods=len(df), freq="5min").astype(str)
+        default_freq = "1D" if strategy.get("candleTime") in {"EOD", "Weekly"} else "5min"
+        df["time"] = pd.date_range("2024-01-01 09:15", periods=len(df), freq=default_freq).astype(str)
 
     entry_mask = evaluate_group(df, strategy["entry"])
     exit_group = strategy["exit"] or {}
     exit_conds = _flatten(exit_group)
     side = strategy.get("action", "BUY")
-    qty = int(strategy.get("quantity", 1))
+    desk = strategy.get("desk", "options")
+    qty_multiplier = 1 if desk == "equity" else 50
+    qty = int(strategy.get("quantity", 1)) * qty_multiplier
 
     sl = next((c["value"] for c in exit_conds if c.get("type") == "stop_loss"), None)
     tp = next((c["value"] for c in exit_conds if c.get("type") == "target"), None)

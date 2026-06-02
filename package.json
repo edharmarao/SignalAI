@@ -7,10 +7,10 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "npm run dev --workspace apps/web",
+    "dev": "lsof -ti:${PORT:-3003} | xargs kill -9 2>/dev/null; npm run dev --workspace apps/web",
     "build": "npm run build --workspace apps/web",
     "lint": "npm run lint --workspaces --if-present",
-    "api": "cd apps/api && uvicorn app.main:app --reload --port ${API_PORT:-8003}"
+    "api": "lsof -ti:${API_PORT:-8003} | xargs kill -9 2>/dev/null; cd apps/api && uvicorn app.main:app --reload --port ${API_PORT:-8003}"
   },
   "engines": {
     "node": ">=22.17.1"

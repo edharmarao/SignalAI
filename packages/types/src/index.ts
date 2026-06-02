@@ -93,7 +93,9 @@ export interface StrategyJSON {
   version: 1;
   name: string;
   desk: DeskType;
-  index: IndexSymbol;
+  index?: IndexSymbol;
+  symbol?: string;           // equity stock ticker (RELIANCE, TCS, etc.)
+  universe?: string;         // Nifty 50/100/500/Midcap 100
   optionType?: OptionType;  // not used for equity desk
   strike?: StrikeOffset;    // not used for equity desk
   action: Action;

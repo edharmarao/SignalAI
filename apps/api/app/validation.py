@@ -29,19 +29,30 @@ def validate_strategy(s: StrategyJSON) -> list[str]:
     errors: list[str] = []
     if not s.name.strip():
         errors.append("Strategy name is required.")
+    if s.desk == "equity":
+        if not s.symbol:
+            errors.append("Stock symbol is required.")
+    elif s.desk == "options":
+        if not s.index:
+            errors.append("Index is required.")
+        if not s.optionType:
+            errors.append("Option type (CE/PE) is required.")
+        if not s.strike:
+            errors.append("Strike is required.")
+        if not s.expiry:
+            errors.append("Expiry (Weekly/Monthly) is required.")
+    if not s.action:
+        errors.append("Action is required.")
+    if not s.candleTime:
+        errors.append("Candle time is required.")
     if s.quantity <= 0:
         errors.append("Quantity must be greater than zero.")
-
     if _count_leaves(s.entry or {}) == 0:
         errors.append("At least one entry condition is required.")
-
     if _count_leaves(s.exit or {}) == 0:
         errors.append("At least one exit condition is required.")
     if not _has_type(s.exit or {}, "stop_loss"):
         errors.append("Stop loss is required.")
-
     if not s.risk or s.risk.maxLossPerDay <= 0:
         errors.append("Max daily loss must be set.")
-    if not s.risk.autoSquareOffTime:
-        errors.append("Auto square-off time is required.")
     return errors

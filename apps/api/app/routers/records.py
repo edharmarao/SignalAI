@@ -6,8 +6,23 @@ from ..supabase_client import supabase
 router = APIRouter(tags=["records"])
 
 
+def _strategy_ids_for_desk(user_id: str, desk: str) -> set[str]:
+    res = (
+        supabase()
+        .table("strategies")
+        .select("id,strategy_json")
+        .eq("user_id", user_id)
+        .execute()
+    )
+    return {
+        row["id"]
+        for row in (res.data or [])
+        if (row.get("strategy_json") or {}).get("desk") == desk
+    }
+
+
 @router.get("/trades")
-def list_trades(user=Depends(get_current_user)):
+def list_trades(desk: str | None = None, user=Depends(get_current_user)):
     res = (
         supabase()
         .table("trades")
@@ -16,11 +31,15 @@ def list_trades(user=Depends(get_current_user)):
         .order("opened_at", desc=True)
         .execute()
     )
-    return res.data
+    rows = res.data or []
+    if not desk:
+        return rows
+    ids = _strategy_ids_for_desk(user["id"], desk)
+    return [row for row in rows if row.get("strategy_id") in ids]
 
 
 @router.get("/orders")
-def list_orders(user=Depends(get_current_user)):
+def list_orders(desk: str | None = None, user=Depends(get_current_user)):
     res = (
         supabase()
         .table("orders")
@@ -29,11 +48,15 @@ def list_orders(user=Depends(get_current_user)):
         .order("created_at", desc=True)
         .execute()
     )
-    return res.data
+    rows = res.data or []
+    if not desk:
+        return rows
+    ids = _strategy_ids_for_desk(user["id"], desk)
+    return [row for row in rows if row.get("strategy_id") in ids]
 
 
 @router.get("/logs")
-def list_logs(user=Depends(get_current_user)):
+def list_logs(desk: str | None = None, user=Depends(get_current_user)):
     res = (
         supabase()
         .table("logs")
@@ -43,4 +66,8 @@ def list_logs(user=Depends(get_current_user)):
         .limit(500)
         .execute()
     )
-    return res.data
+    rows = res.data or []
+    if not desk:
+        return rows
+    ids = _strategy_ids_for_desk(user["id"], desk)
+    return [row for row in rows if not row.get("strategy_id") or row.get("strategy_id") in ids]

@@ -28,14 +28,14 @@ export const INDICATORS = [
 export const DESK_CANDLE_TIMES: Record<DeskType, readonly CandleTime[]> = {
   equity:         ["5min", "15min", "1H", "EOD"],
   options:        ["1min", "5min", "15min"],
-  "mutual-funds": ["EOD"],           // NAV-based, daily only
+  "mutual-funds": ["EOD"],
 };
 
 export const DESK_META: Record<DeskType, { label: string; color: string; description: string }> = {
   equity: {
     label: "Equity",
     color: "emerald",
-    description: "Trade NIFTY, BANKNIFTY & index futures. Trend following, breakout & momentum.",
+    description: "Trade Nifty 500 stocks. Trend following, breakout & momentum strategies.",
   },
   options: {
     label: "Options",
@@ -48,6 +48,103 @@ export const DESK_META: Record<DeskType, { label: string; color: string; descrip
     description: "Track SIPs, holdings, NAV & portfolio returns across fund categories.",
   },
 };
+
+export const NIFTY500_STOCKS: Array<{ symbol: string; name: string; sector: string }> = [
+  { symbol: "RELIANCE", name: "Reliance Industries", sector: "Energy" },
+  { symbol: "TCS", name: "Tata Consultancy Services", sector: "IT" },
+  { symbol: "HDFCBANK", name: "HDFC Bank", sector: "Banking" },
+  { symbol: "INFY", name: "Infosys", sector: "IT" },
+  { symbol: "HINDUNILVR", name: "Hindustan Unilever", sector: "FMCG" },
+  { symbol: "ICICIBANK", name: "ICICI Bank", sector: "Banking" },
+  { symbol: "SBIN", name: "State Bank of India", sector: "Banking" },
+  { symbol: "BHARTIARTL", name: "Bharti Airtel", sector: "Telecom" },
+  { symbol: "KOTAKBANK", name: "Kotak Mahindra Bank", sector: "Banking" },
+  { symbol: "LT", name: "Larsen & Toubro", sector: "Infrastructure" },
+  { symbol: "AXISBANK", name: "Axis Bank", sector: "Banking" },
+  { symbol: "ASIANPAINT", name: "Asian Paints", sector: "Paints" },
+  { symbol: "MARUTI", name: "Maruti Suzuki", sector: "Auto" },
+  { symbol: "SUNPHARMA", name: "Sun Pharmaceutical", sector: "Pharma" },
+  { symbol: "TITAN", name: "Titan Company", sector: "Consumer" },
+  { symbol: "BAJFINANCE", name: "Bajaj Finance", sector: "NBFC" },
+  { symbol: "NESTLEIND", name: "Nestle India", sector: "FMCG" },
+  { symbol: "WIPRO", name: "Wipro", sector: "IT" },
+  { symbol: "HCLTECH", name: "HCL Technologies", sector: "IT" },
+  { symbol: "ULTRACEMCO", name: "UltraTech Cement", sector: "Cement" },
+  { symbol: "TECHM", name: "Tech Mahindra", sector: "IT" },
+  { symbol: "POWERGRID", name: "Power Grid Corporation", sector: "Utilities" },
+  { symbol: "NTPC", name: "NTPC", sector: "Utilities" },
+  { symbol: "COALINDIA", name: "Coal India", sector: "Mining" },
+  { symbol: "GRASIM", name: "Grasim Industries", sector: "Diversified" },
+  { symbol: "BPCL", name: "Bharat Petroleum", sector: "Energy" },
+  { symbol: "ONGC", name: "Oil & Natural Gas Corp", sector: "Energy" },
+  { symbol: "IOC", name: "Indian Oil Corporation", sector: "Energy" },
+  { symbol: "JSWSTEEL", name: "JSW Steel", sector: "Metals" },
+  { symbol: "TATASTEEL", name: "Tata Steel", sector: "Metals" },
+  { symbol: "TATAMOTORS", name: "Tata Motors", sector: "Auto" },
+  { symbol: "MM", name: "Mahindra & Mahindra", sector: "Auto" },
+  { symbol: "BAJAJFINSV", name: "Bajaj Finserv", sector: "Financial Services" },
+  { symbol: "ADANIPORTS", name: "Adani Ports", sector: "Infrastructure" },
+  { symbol: "DRREDDY", name: "Dr. Reddy's Laboratories", sector: "Pharma" },
+  { symbol: "CIPLA", name: "Cipla", sector: "Pharma" },
+  { symbol: "DIVISLAB", name: "Divi's Laboratories", sector: "Pharma" },
+  { symbol: "EICHERMOT", name: "Eicher Motors", sector: "Auto" },
+  { symbol: "HEROMOTOCO", name: "Hero MotoCorp", sector: "Auto" },
+  { symbol: "HINDALCO", name: "Hindalco Industries", sector: "Metals" },
+  { symbol: "INDUSINDBK", name: "IndusInd Bank", sector: "Banking" },
+  { symbol: "APOLLOHOSP", name: "Apollo Hospitals", sector: "Healthcare" },
+  { symbol: "PIDILITIND", name: "Pidilite Industries", sector: "Chemicals" },
+  { symbol: "DMART", name: "Avenue Supermarts (DMart)", sector: "Retail" },
+  { symbol: "HAVELLS", name: "Havells India", sector: "Consumer Electricals" },
+  { symbol: "MUTHOOTFIN", name: "Muthoot Finance", sector: "NBFC" },
+  { symbol: "BERGERPAINTS", name: "Berger Paints", sector: "Paints" },
+  { symbol: "COLPAL", name: "Colgate-Palmolive India", sector: "FMCG" },
+  { symbol: "DABUR", name: "Dabur India", sector: "FMCG" },
+  { symbol: "MARICO", name: "Marico", sector: "FMCG" },
+  { symbol: "GODREJCP", name: "Godrej Consumer Products", sector: "FMCG" },
+  { symbol: "PGHH", name: "Procter & Gamble Hygiene", sector: "FMCG" },
+  { symbol: "BRITANNIA", name: "Britannia Industries", sector: "FMCG" },
+  { symbol: "ITC", name: "ITC", sector: "FMCG" },
+  { symbol: "TATACONSUM", name: "Tata Consumer Products", sector: "FMCG" },
+  { symbol: "VEDL", name: "Vedanta", sector: "Metals" },
+  { symbol: "SIEMENS", name: "Siemens India", sector: "Industrials" },
+  { symbol: "ABB", name: "ABB India", sector: "Industrials" },
+  { symbol: "BHEL", name: "Bharat Heavy Electricals", sector: "Industrials" },
+  { symbol: "HAL", name: "Hindustan Aeronautics", sector: "Defence" },
+  { symbol: "BEL", name: "Bharat Electronics", sector: "Defence" },
+  { symbol: "IRCTC", name: "IRCTC", sector: "Travel" },
+  { symbol: "DELHIVERY", name: "Delhivery", sector: "Logistics" },
+  { symbol: "NYKAA", name: "Nykaa (FSN E-Commerce)", sector: "E-Commerce" },
+  { symbol: "PAYTM", name: "Paytm (One97 Communications)", sector: "Fintech" },
+  { symbol: "ZOMATO", name: "Zomato", sector: "Food Tech" },
+  { symbol: "POLICYBZR", name: "PB Fintech (Policybazaar)", sector: "Fintech" },
+  { symbol: "PERSISTENT", name: "Persistent Systems", sector: "IT" },
+  { symbol: "COFORGE", name: "Coforge", sector: "IT" },
+  { symbol: "MPHASIS", name: "Mphasis", sector: "IT" },
+  { symbol: "LTIM", name: "LTIMindtree", sector: "IT" },
+  { symbol: "OFSS", name: "Oracle Financial Services", sector: "IT" },
+  { symbol: "TRENT", name: "Trent", sector: "Retail" },
+  { symbol: "PAGEIND", name: "Page Industries", sector: "Textiles" },
+  { symbol: "VARUNBEV", name: "Varun Beverages", sector: "Beverages" },
+  { symbol: "JUBLFOOD", name: "Jubilant Foodworks", sector: "QSR" },
+  { symbol: "DEVYANI", name: "Devyani International", sector: "QSR" },
+  { symbol: "WESTLIFE", name: "Westlife Foodworld", sector: "QSR" },
+  { symbol: "CROMPTON", name: "Crompton Greaves Consumer", sector: "Consumer Electricals" },
+  { symbol: "VOLTAS", name: "Voltas", sector: "Consumer Electricals" },
+  { symbol: "WHIRLPOOL", name: "Whirlpool of India", sector: "Consumer Electricals" },
+  { symbol: "TATAPOWER", name: "Tata Power", sector: "Utilities" },
+  { symbol: "ADANIGREEN", name: "Adani Green Energy", sector: "Utilities" },
+  { symbol: "TORNTPOWER", name: "Torrent Power", sector: "Utilities" },
+  { symbol: "CESC", name: "CESC", sector: "Utilities" },
+  { symbol: "NHPC", name: "NHPC", sector: "Utilities" },
+  { symbol: "RECLTD", name: "REC Limited", sector: "Financial Services" },
+  { symbol: "PFC", name: "Power Finance Corporation", sector: "Financial Services" },
+  { symbol: "IRFC", name: "Indian Railway Finance Corp", sector: "Financial Services" },
+  { symbol: "MMFIN", name: "Mahindra & Mahindra Financial", sector: "NBFC" },
+  { symbol: "CHOLAFIN", name: "Cholamandalam Investment", sector: "NBFC" },
+  { symbol: "HDFCLIFE", name: "HDFC Life Insurance", sector: "Insurance" },
+  { symbol: "ICICIGI", name: "ICICI Lombard General Insurance", sector: "Insurance" },
+  { symbol: "SBILIFE", name: "SBI Life Insurance", sector: "Insurance" },
+];
 
 export interface ValidationResult {
   ok: boolean;
@@ -70,8 +167,10 @@ function hasStopLoss(g: ConditionGroup<any>): boolean {
 export function validateStrategy(s: StrategyJSON): ValidationResult {
   const errors: string[] = [];
   if (!s.name?.trim()) errors.push("Strategy name is required.");
-  if (!s.index) errors.push("Index is required.");
-  if (s.desk === "options") {
+  if (s.desk === "equity") {
+    if (!s.symbol) errors.push("Stock symbol is required.");
+  } else if (s.desk === "options") {
+    if (!s.index) errors.push("Index is required.");
     if (!s.optionType) errors.push("Option type (CE/PE) is required.");
     if (!s.strike) errors.push("Strike is required.");
     if (!s.expiry) errors.push("Expiry (Weekly/Monthly) is required.");
@@ -128,7 +227,10 @@ export function describeGroup(g: ConditionGroup<any>): string {
 }
 
 export function describeStrategy(s: StrategyJSON): string {
-  return `${s.action} ${s.quantity}x ${s.index} ${s.strike} ${s.optionType} on ${s.candleTime} candle. Enter when ${describeGroup(s.entry)}. Exit when ${describeGroup(s.exit)}.`;
+  if (s.desk === "equity") {
+    return `${s.action} ${s.quantity} shares of ${s.symbol ?? "?"} on ${s.candleTime} candle. Enter when ${describeGroup(s.entry)}. Exit when ${describeGroup(s.exit)}.`;
+  }
+  return `${s.action} ${s.quantity}x ${s.index} ${s.strike ?? ""} ${s.optionType ?? ""} on ${s.candleTime} candle. Enter when ${describeGroup(s.entry)}. Exit when ${describeGroup(s.exit)}.`;
 }
 
 export function emptyStrategy(name = "New Strategy"): StrategyJSON {
@@ -137,15 +239,17 @@ export function emptyStrategy(name = "New Strategy"): StrategyJSON {
 
 export function emptyStrategyForDesk(desk: DeskType, name = "New Strategy"): StrategyJSON {
   const isOptions = desk === "options";
+  const isEquity = desk === "equity";
   const base: StrategyJSON = {
     version: 1,
     name,
     desk,
-    index: "NIFTY",
+    ...(isOptions ? { index: "NIFTY" as const } : {}),
+    ...(isEquity ? { symbol: "RELIANCE", universe: "Nifty 500" } : {}),
     ...(isOptions ? { optionType: "CE" as const, strike: "ATM" as const } : {}),
     action: "BUY",
-    candleTime: desk === "equity" ? "15min" : desk === "options" ? "5min" : "EOD",
-    quantity: 1,
+    candleTime: isEquity ? "EOD" : isOptions ? "5min" : "EOD",
+    quantity: isEquity ? 100 : 1,
     mode: "paper",
     status: "draft",
     entry: { logic: "AND", conditions: [] },
@@ -158,22 +262,25 @@ export function emptyStrategyForDesk(desk: DeskType, name = "New Strategy"): Str
       ],
     },
     risk: {
-      maxLossPerDay: isOptions ? 2000 : 5000,
+      maxLossPerDay: isEquity ? 10000 : isOptions ? 2000 : 5000,
       maxTradesPerDay: 3,
-      maxOpenPositions: 1,
-      autoSquareOffTime: "15:20",
+      maxOpenPositions: isEquity ? 5 : 1,
+      ...(isOptions ? { autoSquareOffTime: "15:20" } : {}),
       killSwitch: false,
+      ...(isEquity ? { holdDays: 30 } : {}),
     },
     ...(isOptions ? { expiry: "Weekly" as const } : {}),
+    ...(isEquity ? { holdDays: 30 } : {}),
   };
   return base;
 }
 
 export const TEMPLATES: Record<string, StrategyJSON> = {
   // ── Equity ────────────────────────────────────────────────────────────────
-  "Equity EMA Crossover": {
-    ...emptyStrategyForDesk("equity", "NIFTY EMA Crossover"),
-    candleTime: "15min",
+  "EMA Crossover (RELIANCE)": {
+    ...emptyStrategyForDesk("equity", "EMA Crossover – RELIANCE"),
+    symbol: "RELIANCE",
+    candleTime: "EOD",
     entry: {
       logic: "AND",
       conditions: [
@@ -184,20 +291,39 @@ export const TEMPLATES: Record<string, StrategyJSON> = {
         },
       ],
     },
-  },
-  "Equity RSI Breakout": {
-    ...emptyStrategyForDesk("equity", "NIFTY RSI Breakout"),
-    candleTime: "15min",
-    entry: {
-      logic: "AND",
+    exit: {
+      logic: "OR",
       conditions: [
-        { type: "indicator", indicator: "RSI", period: 14, operator: ">", value: 60 },
-        { type: "level", field: "price", operator: ">", value: 22500 },
+        {
+          type: "indicator", indicator: "EMA", period: 9,
+          operator: "crosses_below", compareTo: "indicator",
+          rhsIndicator: "EMA", rhsPeriod: 21,
+        },
+        { type: "stop_loss", value: 50 },
       ],
     },
   },
-  "Equity MACD Signal": {
-    ...emptyStrategyForDesk("equity", "NIFTY MACD Signal"),
+  "RSI Oversold (TCS)": {
+    ...emptyStrategyForDesk("equity", "RSI Oversold – TCS"),
+    symbol: "TCS",
+    candleTime: "EOD",
+    entry: {
+      logic: "AND",
+      conditions: [
+        { type: "indicator", indicator: "RSI", period: 14, operator: "<", value: 35 },
+      ],
+    },
+    exit: {
+      logic: "OR",
+      conditions: [
+        { type: "indicator", indicator: "RSI", period: 14, operator: ">", value: 60 },
+        { type: "stop_loss", value: 50 },
+      ],
+    },
+  },
+  "MACD Signal (HDFCBANK)": {
+    ...emptyStrategyForDesk("equity", "MACD Signal – HDFCBANK"),
+    symbol: "HDFCBANK",
     candleTime: "EOD",
     entry: {
       logic: "AND",
@@ -209,10 +335,22 @@ export const TEMPLATES: Record<string, StrategyJSON> = {
         },
       ],
     },
+    exit: {
+      logic: "OR",
+      conditions: [
+        {
+          type: "indicator", indicator: "MACD",
+          fast: 12, slow: 26, signal: 9,
+          operator: "crosses_below", compareTo: "indicator",
+        },
+        { type: "stop_loss", value: 50 },
+      ],
+    },
   },
   // ── Options ───────────────────────────────────────────────────────────────
   "RSI CE Breakout": {
     ...emptyStrategyForDesk("options", "NIFTY RSI CE Breakout"),
+    index: "NIFTY",
     optionType: "CE", expiry: "Weekly",
     entry: {
       logic: "AND",
@@ -224,6 +362,7 @@ export const TEMPLATES: Record<string, StrategyJSON> = {
   },
   "VWAP CE Entry": {
     ...emptyStrategyForDesk("options", "NIFTY VWAP CE Entry"),
+    index: "NIFTY",
     optionType: "CE", expiry: "Weekly",
     entry: {
       logic: "AND",
@@ -249,7 +388,7 @@ export const TEMPLATES: Record<string, StrategyJSON> = {
 };
 
 export const DESK_TEMPLATES: Record<DeskType, string[]> = {
-  equity:         ["Equity EMA Crossover", "Equity RSI Breakout", "Equity MACD Signal"],
+  equity:         ["EMA Crossover (RELIANCE)", "RSI Oversold (TCS)", "MACD Signal (HDFCBANK)"],
   options:        ["RSI CE Breakout", "VWAP CE Entry", "Supertrend PE"],
-  "mutual-funds": [],   // no strategy templates for MF
+  "mutual-funds": [],
 };

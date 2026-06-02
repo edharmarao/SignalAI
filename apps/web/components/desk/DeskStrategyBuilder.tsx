@@ -179,7 +179,7 @@ export default function DeskStrategyBuilder({ desk }: { desk: DeskType }) {
           </div>
           <div>
             <Label>Index</Label>
-            <Select options={INDEX_OPTIONS as any} value={draft.index} onChange={(e) => set({ index: e.target.value as any })} />
+            <Select options={INDEX_OPTIONS as any} value={draft.index ?? "NIFTY"} onChange={(e) => set({ index: e.target.value as any })} />
           </div>
           <div>
             <Label>Option Type</Label>

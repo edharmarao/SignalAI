@@ -1,14 +1,24 @@
 from __future__ import annotations
+
 import uuid
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, HTTPException
+
+from fastapi import APIRouter, Depends, Header, HTTPException, Response
 from pydantic import BaseModel
-from ..deps import get_current_user
+
 from ..config import get_settings
-from ..supabase_client import supabase
+from ..deps import get_current_user
 from ..services.upstox import UpstoxClient
+from ..supabase_client import supabase
+
+# IMPORTANT: Order placement endpoints are NOT idempotent.
+# Clients must NOT retry failed order requests without implementing
+# idempotency keys. Re-sending can create duplicate live orders.
 
 router = APIRouter(prefix="/orders", tags=["orders"])
+_IDEMPOTENCY_WINDOW_SECONDS = 300
+# Single-process cache only. Use Redis or another shared store for multi-instance deployments.
+_idempotency_cache: dict[str, tuple[datetime, dict]] = {}
 
 
 class PlaceOrderRequest(BaseModel):
@@ -26,8 +36,28 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _purge_expired_keys(now: datetime) -> None:
+    expired = [key for key, (created_at, _) in _idempotency_cache.items() if (now - created_at).total_seconds() > _IDEMPOTENCY_WINDOW_SECONDS]
+    for key in expired:
+        _idempotency_cache.pop(key, None)
+
+
 @router.post("/place")
-async def place(req: PlaceOrderRequest, user=Depends(get_current_user)):
+async def place(
+    req: PlaceOrderRequest,
+    response: Response,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    user=Depends(get_current_user),
+):
+    now = datetime.now(timezone.utc)
+    cache_key = f"{user['id']}:{idempotency_key}" if idempotency_key else None
+    if cache_key:
+        _purge_expired_keys(now)
+        cached = _idempotency_cache.get(cache_key)
+        if cached is not None:
+            response.headers["X-Idempotency-Replayed"] = "true"
+            return cached[1]
+
     settings = get_settings()
     if req.mode == "live":
         if not settings.allow_live_trading:
@@ -84,4 +114,6 @@ async def place(req: PlaceOrderRequest, user=Depends(get_current_user)):
         "created_at": _now(),
     }
     supabase().table("orders").insert(row).execute()
+    if cache_key:
+        _idempotency_cache[cache_key] = (now, row)
     return row

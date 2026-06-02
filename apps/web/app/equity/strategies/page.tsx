@@ -1,2 +1,2 @@
-import { DeskStrategiesPage } from "@/components/desk/DeskStrategiesPage";
-export default function Page() { return <DeskStrategiesPage desk="equity" />; }
+import EquityStrategiesPage from "@/components/equity/EquityStrategiesPage";
+export default function Page() { return <EquityStrategiesPage />; }

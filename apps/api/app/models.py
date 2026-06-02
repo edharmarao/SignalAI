@@ -1,36 +1,50 @@
 from __future__ import annotations
+
 from typing import Any, Literal, Optional
-from pydantic import BaseModel, Field
+
+from pydantic import BaseModel, ConfigDict, Field
 
 IndexSymbol = Literal["NIFTY", "BANKNIFTY", "FINNIFTY", "SENSEX"]
 OptionType = Literal["CE", "PE"]
 StrikeOffset = Literal["ATM", "ATM+50", "ATM+100", "ATM-50", "ATM-100"]
 ActionT = Literal["BUY", "SELL"]
-CandleTime = Literal["15sec", "1min", "5min", "15min"]
+DeskType = Literal["equity", "mutual-funds", "options"]
+CandleTime = Literal["15sec", "1min", "5min", "15min", "1H", "EOD", "Weekly"]
 ModeT = Literal["paper", "live"]
 StatusT = Literal["draft", "active", "paused", "stopped"]
+ExpiryType = Literal["Weekly", "Monthly"]
 LogicT = Literal["AND", "OR"]
 
 
 class Risk(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     maxLossPerDay: float
     maxTradesPerDay: int
     maxOpenPositions: int
-    autoSquareOffTime: str
+    autoSquareOffTime: Optional[str] = None
     killSwitch: bool = False
+    holdDays: Optional[int] = None
 
 
 class StrategyJSON(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
     version: int = 1
     name: str
-    index: IndexSymbol
-    optionType: OptionType
-    strike: StrikeOffset
+    desk: DeskType
+    index: Optional[IndexSymbol] = None
+    symbol: Optional[str] = None
+    universe: Optional[str] = None
+    optionType: Optional[OptionType] = None
+    strike: Optional[StrikeOffset] = None
     action: ActionT
     candleTime: CandleTime
-    quantity: int
+    quantity: int = Field(ge=1, le=50000)
     mode: ModeT = "paper"
     status: StatusT = "draft"
+    expiry: Optional[ExpiryType] = None
+    holdDays: Optional[int] = None
     entry: dict[str, Any]
     exit: dict[str, Any]
     risk: Risk
@@ -57,7 +71,7 @@ class BacktestRequest(BaseModel):
         default=None,
         description="Optional OHLCV list. Each item: {time, open, high, low, close, volume}.",
     )
-    days: int = 5
+    days: int = Field(default=5, ge=1, le=365)
 
 
 class LogCreate(BaseModel):

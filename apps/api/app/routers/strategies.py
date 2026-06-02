@@ -15,7 +15,7 @@ def _now() -> str:
 
 
 @router.get("")
-def list_strategies(user=Depends(get_current_user)):
+def list_strategies(desk: str | None = None, user=Depends(get_current_user)):
     res = (
         supabase()
         .table("strategies")
@@ -24,7 +24,10 @@ def list_strategies(user=Depends(get_current_user)):
         .order("created_at", desc=True)
         .execute()
     )
-    return res.data
+    rows = res.data or []
+    if desk:
+        rows = [row for row in rows if (row.get("strategy_json") or {}).get("desk") == desk]
+    return rows
 
 
 @router.post("")

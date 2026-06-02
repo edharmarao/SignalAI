@@ -11,11 +11,12 @@ router = APIRouter(prefix="/backtest", tags=["backtest"])
 
 @router.post("")
 def backtest(req: BacktestRequest, user=Depends(get_current_user)):
+    strategy = req.strategy_json.model_dump()
     if req.candles:
         df = pd.DataFrame(req.candles)
     else:
-        df = synthetic_candles(days=req.days)
-    result = run_strategy(df, req.strategy_json.model_dump())
+        df = synthetic_candles(days=req.days, strategy=strategy)
+    result = run_strategy(df, strategy)
     return {
         "totalTrades": len(result.trades),
         "wins": result.wins,

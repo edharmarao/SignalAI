@@ -14,9 +14,9 @@ import type {
   MutualFundHolding,
   SIPEntry,
 } from "@signalai/types";
-import { DESK_TEMPLATES, TEMPLATES } from "@signalai/utils";
+import { DESK_TEMPLATES, TEMPLATES, NIFTY500_STOCKS } from "@signalai/utils";
 
-const LS_KEY = "signalai:mock:v3";
+const LS_KEY = "signalai:mock:v4";
 
 interface Store {
   strategies: StrategyRow[];
@@ -64,20 +64,29 @@ function seed(): Store {
 
   for (let i = 0; i < strategies.length * 4; i++) {
     const s = strategies[i % strategies.length];
+    const isEquity = s.strategy_json.desk === "equity";
     const opened = daysAgo(i * 0.5);
-    const entry = 200 + Math.random() * 150;
-    const move = (Math.random() - 0.4) * 60;
+    // Equity: realistic stock prices 500-5000; options: 100-350
+    const basePrice = isEquity ? 500 + Math.random() * 4500 : 100 + Math.random() * 250;
+    const move = isEquity
+      ? (Math.random() - 0.45) * basePrice * 0.06
+      : (Math.random() - 0.4) * 60;
+    const entry = basePrice;
     const exit = entry + move;
-    const qty = (s.strategy_json.quantity ?? 1) * 50;
+    const qty = isEquity ? (s.strategy_json.quantity ?? 100) : (s.strategy_json.quantity ?? 1) * 50;
     const pnl = ((s.strategy_json.action ?? "BUY") === "BUY" ? exit - entry : entry - exit) * qty;
     const isOpen = i < 2;
     const tradeId = uid();
-    const idx = s.strategy_json.index;
-    const optType = s.strategy_json.optionType ?? "";
-    const strike = (s.strategy_json.strike ?? "ATM") === "ATM" ? "22500" : "22600";
-    const symbol = optType
-      ? `${idx}24MAY${strike}${optType}`
-      : `${idx}-FUT`;
+
+    let symbol: string;
+    if (isEquity) {
+      symbol = s.strategy_json.symbol ?? "RELIANCE";
+    } else {
+      const idx = s.strategy_json.index ?? "NIFTY";
+      const optType = s.strategy_json.optionType ?? "";
+      const strike = (s.strategy_json.strike ?? "ATM") === "ATM" ? "22500" : "22600";
+      symbol = optType ? `${idx}24MAY${strike}${optType}` : `${idx}-FUT`;
+    }
 
     trades.push({
       id: tradeId,
@@ -114,8 +123,8 @@ function seed(): Store {
   // ── Logs ──────────────────────────────────────────────────────────────────
   const logEvents: Array<[LogRow["level"], string, any, DeskType]> = [
     ["info",   "Engine started",      { mode: "paper" },              "equity"],
-    ["signal", "Entry condition met", { ema: "9>21", price: 22510 },  "equity"],
-    ["info",   "Order placed",        { side: "BUY", qty: 50 },       "equity"],
+    ["signal", "Entry condition met", { ema: "9>21", price: 2510 },   "equity"],
+    ["info",   "Order placed",        { side: "BUY", qty: 100 },      "equity"],
     ["signal", "Target hit",          { pnl: 3200 },                  "equity"],
     ["info",   "RSI CE entry",        { rsi: 63, strike: "ATM+100" }, "options"],
     ["signal", "Options SL hit",      { pnl: -1200 },                 "options"],
@@ -139,7 +148,6 @@ function seed(): Store {
 
   // ── Mutual Fund Holdings ──────────────────────────────────────────────────
   const mfData: Array<[string, string, number, number, number, number]> = [
-    // [name, category, invested, units, nav, xirr%]
     ["Parag Parikh Flexi Cap Fund",    "Flexi Cap",  120000, 1502.3, 82.34, 18.2],
     ["Mirae Asset Emerging Bluechip",  "Mid Cap",     80000,  980.1, 94.12, 22.5],
     ["SBI Bluechip Fund",              "Large Cap",   60000, 3210.5, 21.40, 14.8],
@@ -228,6 +236,11 @@ export async function mockApi<T = any>(path: string, init: RequestInit = {}): Pr
   const store = load();
   const { pathname, desk } = parsePath(path);
 
+  // ── Equity stocks list ──
+  if (pathname === "/equity/stocks" && method === "GET") {
+    return delay(NIFTY500_STOCKS as any);
+  }
+
   // ── Strategies ──
   if (pathname === "/strategies" && method === "GET") {
     const rows = desk
@@ -294,7 +307,7 @@ export async function mockApi<T = any>(path: string, init: RequestInit = {}): Pr
 
   // ── Backtest ──
   if (pathname === "/backtest" && method === "POST")
-    return delay(simulateBacktest(body.strategy_json, body.days ?? 5) as any);
+    return delay(simulateBacktest(body.strategy_json, body.days ?? 90) as any);
 
   throw new Error(`Mock API: no handler for ${method} ${pathname}`);
 }
@@ -302,21 +315,33 @@ export async function mockApi<T = any>(path: string, init: RequestInit = {}): Pr
 // ── Backtest sim ──────────────────────────────────────────────────────────────
 
 function simulateBacktest(s: StrategyJSON, days: number): BacktestResult {
-  const n = 75 * Math.max(1, days);
-  let price = 22500;
+  const isEquity = s.desk === "equity";
+  // For equity EOD strategies, one candle per day; for intraday, more candles
+  const candlesPerDay = isEquity && s.candleTime === "EOD" ? 1 : 75;
+  const n = candlesPerDay * Math.max(1, days);
+
+  // Equity: start at realistic stock price; options: 22500
+  let price = isEquity ? 1000 + Math.random() * 3000 : 22500;
   const trades: BacktestResult["trades"] = [];
   let inPos = false, entry = 0, entryTime = "", pnl = 0, peak = 0, dd = 0;
-  const sl = ((s.exit.conditions.find((c: any) => c.type === "stop_loss") as any)?.value ?? 30);
-  const tp = ((s.exit.conditions.find((c: any) => c.type === "target") as any)?.value ?? 60);
+  const sl = ((s.exit.conditions.find((c: any) => c.type === "stop_loss") as any)?.value ?? (isEquity ? 50 : 30));
+  const tp = ((s.exit.conditions.find((c: any) => c.type === "target") as any)?.value ?? (isEquity ? 100 : 60));
+
+  // Price move per candle: equity stocks move more in absolute terms
+  const moveScale = isEquity ? price * 0.015 : 18;
+
   for (let i = 0; i < n; i++) {
-    price += (Math.random() - 0.5) * 18;
-    const t = new Date(Date.now() - (n - i) * 5 * 60 * 1000).toISOString();
+    price = Math.max(10, price + (Math.random() - 0.5) * moveScale);
+    const msPerCandle = isEquity ? 86400000 : 5 * 60 * 1000;
+    const t = new Date(Date.now() - (n - i) * msPerCandle).toISOString();
     if (!inPos && Math.random() < 0.04) { inPos = true; entry = price; entryTime = t; }
     else if (inPos) {
       const move = (s.action ?? "BUY") === "BUY" ? price - entry : entry - price;
       let reason = move >= tp ? "target" : move <= -sl ? "stop_loss" : Math.random() < 0.02 ? "indicator_exit" : "";
       if (reason) {
-        const tPnl = move * (s.quantity ?? 1) * 50;
+        const qty = s.quantity ?? (isEquity ? 100 : 1);
+        const multiplier = isEquity ? 1 : 50;
+        const tPnl = move * qty * multiplier;
         pnl += tPnl; peak = Math.max(peak, pnl); dd = Math.max(dd, peak - pnl);
         trades.push({ entryTime, exitTime: t, entryPrice: +entry.toFixed(2), exitPrice: +price.toFixed(2), pnl: +tPnl.toFixed(2), reason });
         inPos = false;

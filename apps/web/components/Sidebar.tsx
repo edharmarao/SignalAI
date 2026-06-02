@@ -51,6 +51,14 @@ const I = {
       <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.8.3l-.1-.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3h0a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8v0a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" />
     </svg>
   ),
+  charts: (p: IconProps) => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className={p.className}>
+      <rect x="3" y="12" width="3" height="9" rx="1" />
+      <rect x="9" y="7" width="3" height="14" rx="1" />
+      <rect x="15" y="3" width="3" height="18" rx="1" />
+      <path d="M21 21H3" />
+    </svg>
+  ),
 };
 
 type Desk = "equity" | "mutual-funds" | "options";
@@ -184,8 +192,19 @@ export default function Sidebar() {
         })}
       </nav>
 
-      {/* Settings */}
-      <div className="mt-4 border-t border-slate-800 pt-4">
+      {/* Charts + Settings */}
+      <div className="mt-4 border-t border-slate-800 pt-4 flex flex-col gap-1">
+        <Link
+          href="/charts"
+          className={`flex items-center gap-3 px-3 py-2 rounded-md text-sm transition ${
+            path.startsWith("/charts")
+              ? "bg-amber-500/10 text-amber-300"
+              : "text-slate-400 hover:bg-slate-800/60 hover:text-slate-100"
+          }`}
+        >
+          <I.charts className={`w-4 h-4 shrink-0 ${path.startsWith("/charts") ? "text-amber-400" : "text-slate-400"}`} />
+          <span>Charts</span>
+        </Link>
         <Link
           href="/settings"
           className={`flex items-center gap-3 px-3 py-2 rounded-md text-sm transition ${
