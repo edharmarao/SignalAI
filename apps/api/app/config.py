@@ -8,8 +8,8 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     api_host: str = "0.0.0.0"
-    api_port: int = 8000
-    allowed_origins: str = "http://localhost:3000"
+    api_port: int = 8003
+    allowed_origins: str = "http://localhost:3003"
 
     supabase_url: str = ""
     supabase_service_role_key: str = ""
@@ -17,7 +17,7 @@ class Settings(BaseSettings):
 
     upstox_client_id: str = ""
     upstox_client_secret: str = ""
-    upstox_redirect_uri: str = "http://localhost:3000/settings/upstox/callback"
+    upstox_redirect_uri: str = "http://localhost:3003/settings/upstox/callback"
     upstox_base_url: str = "https://api.upstox.com/v2"
 
     allow_live_trading: bool = False

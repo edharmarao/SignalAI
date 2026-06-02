@@ -11,7 +11,7 @@ big picture.
 ```
 .
 ├── apps/
-│   ├── web/                  Next.js 14 (App Router) frontend
+│   ├── web/                  Next.js 16 (App Router) frontend
 │   └── api/                  FastAPI backend
 ├── packages/
 │   ├── types/                Shared domain types (TS)
@@ -342,4 +342,3 @@ echo 'NEXT_PUBLIC_API_URL=http://localhost:8000' >> apps/web/.env.local
   emits `level: "signal"` rows.
 * **Email / Telegram delivery** → consume the `logs` stream from a
   worker, filter `level in ("signal","error")`, dispatch.
-

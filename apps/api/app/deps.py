@@ -1,7 +1,8 @@
 from __future__ import annotations
 from typing import Optional
 from fastapi import Depends, Header, HTTPException, status
-from jose import jwt, JWTError
+import jwt
+from jwt.exceptions import PyJWTError as JWTError
 from .config import get_settings
 
 

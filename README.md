@@ -1,12 +1,23 @@
 # Signal AI
 
-> Options trading **strategy builder** for NIFTY, BANKNIFTY, FINNIFTY and SENSEX.
-> Step-by-step UI, live JSON preview, paper-trading by default, optional Upstox
-> live execution.
+> A multi-desk trading platform for Indian markets: **equity strategies**, **options plays**,
+> and **mutual fund portfolio tracking** — all in one place.
+> Step-by-step strategy builder, live JSON preview, paper-trading by default,
+> optional Upstox live execution.
 >
 > **For education only. Trading involves risk.**
 
 📚 **Docs:** [architecture](./docs/architecture.md) · [implementation](./docs/implementation.md) · [requirements](./docs/requirements.md)
+
+---
+
+## 🖥️ Desks
+
+| Desk | Description |
+|---|---|
+| 📊 **Equity** | Index futures & equity strategies on NIFTY, BANKNIFTY, FINNIFTY — intraday and positional timeframes |
+| 🎯 **Options** | CE / PE directional plays on NIFTY & BANKNIFTY — weekly / monthly expiry, ATM ± strike selection |
+| 💰 **Mutual Funds** | Holdings tracker — NAV, XIRR, absolute returns, SIP schedule & category allocation |
 
 ---
 
@@ -31,7 +42,7 @@
 
 ```
 apps/
-  web/         # Next.js 14 (App Router) + Tailwind + Zustand
+  web/         # Next.js 16 (App Router) + React 19 + TypeScript 6 + Tailwind + Zustand
   api/         # FastAPI + pandas indicators + paper engine + backtester
 packages/
   types/       # Shared TS types (StrategyJSON, rows, etc.)
@@ -40,6 +51,19 @@ packages/
 supabase/
   schema.sql   # Tables + RLS policies
 ```
+
+---
+
+## ⚙️ Tech stack
+
+| Layer | Technology |
+|---|---|
+| **Frontend** | Next.js 16 (App Router), React 19, TypeScript 6, Tailwind CSS 3, Zustand 4 |
+| **Backend** | FastAPI 0.131+, Python **3.14t** (free-threaded / No-GIL), Pydantic v2 |
+| **Data** | pandas 2.3+, numpy 2.2+ (No-GIL builds), websockets 14+ |
+| **Auth / DB** | Supabase (magic-link auth + Postgres + RLS), PyJWT |
+| **Broker** | Upstox v2 REST + OAuth (optional; falls back to simulator) |
+| **Runtime** | Node ≥ 22.17.1 |
 
 ---
 
@@ -61,6 +85,8 @@ python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
+> **Python 3.14t (free-threaded)** is required. Download it from [python.org](https://www.python.org/downloads/) or use `pyenv`.
+
 ### 3. Configure env
 
 ```bash
@@ -81,10 +107,10 @@ security so each user only sees their own rows.
 
 ```bash
 # Terminal 1 — API
-npm run api          # uvicorn on :8000
+npm run api
 
 # Terminal 2 — Web
-npm run dev          # next on :3000
+npm run dev
 ```
 
 Open <http://localhost:3000>.
@@ -188,7 +214,7 @@ WS     /ws                       # live ticks (simulated by default)
 
 ---
 
-## 🧱 Architecture decisions / improvements over prompt
+## 🧱 Architecture decisions
 
 - **Single `strategy_json` JSONB column** with a versioned schema → painless
   migrations, no normalised join tables for every condition.
@@ -196,6 +222,9 @@ WS     /ws                       # live ticks (simulated by default)
   is still authoritative.
 - **Indicator engine is pure pandas/numpy** – the same code paths run for
   backtests and live paper trading; no duplication.
+- **Python 3.14t (free-threaded)** – pandas 2.3+ and numpy 2.2+ No-GIL builds
+  allow the indicator and paper engine to release the GIL for true multi-core
+  concurrency without extra processes.
 - **Live trading is gated by 4 independent layers** (env flag, strategy mode,
   per-order confirmation, broker presence) instead of a single boolean.
 - **In-memory Supabase fallback** keeps the API usable offline so you can
@@ -211,9 +240,10 @@ WS     /ws                       # live ticks (simulated by default)
 
 - Email + Telegram alert channels
 - Real-time Upstox `MarketDataFeed` integration
-- Per-leg multi-leg strategies
+- Per-leg multi-leg options strategies
 - Strategy versioning (history + diff)
 - Greek-aware exits (delta/gamma stops)
+- Equity holdings & portfolio P&L dashboard
 - Dockerfile + docker-compose for one-command boot
 
 ---

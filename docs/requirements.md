@@ -8,7 +8,7 @@ What you need installed and configured to develop and run the app.
 
 | Tool                    | Version                | Why                                  |
 | ----------------------- | ---------------------- | ------------------------------------ |
-| **Node.js**             | ≥ 18 (LTS recommended) | Next.js 14 + npm workspaces          |
+| **Node.js**             | ≥ 22.17.1              | Next.js 16 + npm workspaces          |
 | **npm**                 | ≥ 9                    | Workspace tooling                    |
 | **Python**              | ≥ 3.10 (3.11 / 3.12 ok) | FastAPI, pandas, websockets         |
 | **pip**                 | latest                 | Python deps                          |
@@ -27,8 +27,8 @@ Installed by `npm install` from the root `package.json` (workspaces).
 
 ### `apps/web` runtime
 
-* `next` 14 – App Router, RSC, route handlers
-* `react` 18, `react-dom` 18
+* `next` 16 – App Router, RSC, route handlers
+* `react` 19, `react-dom` 19
 * `tailwindcss`, `postcss`, `autoprefixer` – styling
 * `zustand` – tiny state stores (`auth`, `strategy`, `kill-switch`)
 * `@supabase/supabase-js` – Auth + Postgres client (browser)

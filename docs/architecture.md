@@ -11,7 +11,7 @@
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
 │                              Browser                                   │
-│  Next.js 14 (App Router) · React · Tailwind · Zustand                  │
+│  Next.js 16 (App Router) · React 19 · Tailwind · Zustand               │
 │  Pages: dashboard / strategies / new / details / trades / backtest /   │
 │         logs / settings / login                                        │
 └──────────────┬───────────────────────────────────────┬─────────────────┘
@@ -38,7 +38,7 @@ Two apps + three shared packages, glued by **npm workspaces**:
 
 | Path                  | Role                                                   |
 | --------------------- | ------------------------------------------------------ |
-| `apps/web`            | Next.js 14 frontend (App Router)                       |
+| `apps/web`            | Next.js 16 frontend (App Router)                       |
 | `apps/api`            | FastAPI Python backend                                 |
 | `packages/types`      | Shared TypeScript domain types (`StrategyJSON`, etc.)  |
 | `packages/utils`      | Validation, plain-English description, templates       |
