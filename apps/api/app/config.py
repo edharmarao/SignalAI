@@ -11,6 +11,12 @@ class Settings(BaseSettings):
     api_port: int = 8003
     allowed_origins: str = "http://localhost:3003"
 
+    # Redis
+    redis_host: str = "localhost"
+    redis_port: int = 6379
+    redis_password: str = ""
+    redis_db: int = 0
+
     # Single-user Basic Auth credentials (stored in .env, validated in-memory)
     api_username: str = "edrao"
     api_password: str = "chiru123"

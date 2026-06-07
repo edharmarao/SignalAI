@@ -7,9 +7,10 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Response
 from pydantic import BaseModel
 
 from ..config import get_settings
-from ..db import db_one, db_insert, new_id
+from ..db import db_insert, new_id
 from ..deps import get_current_user
 from ..services.upstox import UpstoxClient
+from ..services.redis_client import get_upstox_token
 
 router = APIRouter(prefix="/orders", tags=["orders"])
 _IDEMPOTENCY_WINDOW_SECONDS = 300
@@ -62,13 +63,10 @@ async def place(
             raise HTTPException(403, "Live trading disabled (ALLOW_LIVE_TRADING=false).")
         if not req.confirm_live:
             raise HTTPException(400, "Live orders require confirm_live=true.")
-        ba = db_one(
-            "SELECT * FROM broker_accounts WHERE user_id=%s AND is_active=1 LIMIT 1",
-            (user["id"],),
-        )
+        ba = get_upstox_token()
         if not ba:
-            raise HTTPException(400, "No active broker account. Connect Upstox first.")
-        client = UpstoxClient(ba["access_token"])
+            raise HTTPException(400, "No active Upstox token in Redis. Connect via GET /api/v1/broker/upstox/login-url")
+        client = UpstoxClient(ba)
         broker_resp = await client.place_order(
             {
                 "quantity": req.quantity,

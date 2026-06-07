@@ -215,18 +215,12 @@ _BARS_PER_DAY = {"5m": 75, "15m": 25, "1D": 1, "1W": 1 / 5, "1M": 1 / 21, "1Y": 
 # ── Upstox token + conversion helpers ────────────────────────────────────────
 
 def _get_upstox_token(user_id: str) -> Optional[str]:
-    """Fetch active Upstox access token for this user from broker_accounts table."""
+    """Fetch active Upstox access token from Redis."""
     try:
-        from ..db import db_one
-        row = db_one(
-            "SELECT access_token FROM broker_accounts "
-            "WHERE user_id=%s AND broker='upstox' AND is_active=1 "
-            "ORDER BY updated_at DESC LIMIT 1",
-            (user_id,),
-        )
-        return row["access_token"] if row else None
+        from ..services.redis_client import get_upstox_token
+        return get_upstox_token()
     except Exception as exc:
-        logger.warning("Could not fetch Upstox token for user %s: %s", user_id, exc)
+        logger.warning("Could not fetch Upstox token: %s", exc)
         return None
 
 

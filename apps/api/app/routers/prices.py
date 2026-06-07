@@ -1,21 +1,15 @@
 from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 from ..deps import get_current_user
-from ..db import db_one
 from ..services.upstox import UpstoxClient
+from ..services.redis_client import get_upstox_token
 from .instruments import INDEX_INSTRUMENT_KEYS
 
 router = APIRouter(prefix="/prices", tags=["prices"])
 
 
 def _broker_token(user_id: str) -> str | None:
-    row = db_one(
-        "SELECT access_token FROM broker_accounts "
-        "WHERE user_id=%s AND broker='upstox' AND is_active=1 "
-        "ORDER BY updated_at DESC LIMIT 1",
-        (user_id,),
-    )
-    return row["access_token"] if row else None
+    return get_upstox_token()
 
 
 @router.get("/ltp/{symbol}")

@@ -28,7 +28,8 @@ from ..models import (
     IntradayImportRequest,
 )
 from ..services.upstox import UpstoxClient
-from ..db import db_one, db_upsert
+from ..services.redis_client import get_upstox_token
+from ..db import db_upsert
 from .charts import NIFTY500_ISIN
 
 router = APIRouter(prefix="/upstox", tags=["upstox"])
@@ -40,14 +41,8 @@ _INTRADAY_INTERVAL_TYPES = frozenset({"minutes", "hours"})
 # ── Auth helpers ──────────────────────────────────────────────────────────────
 
 def _active_upstox_token(user_id: str) -> str | None:
-    """Return the most recently updated active Upstox token for this user."""
-    row = db_one(
-        "SELECT access_token FROM broker_accounts "
-        "WHERE user_id=%s AND broker='upstox' AND is_active=1 "
-        "ORDER BY updated_at DESC LIMIT 1",
-        (user_id,),
-    )
-    return row["access_token"] if row else None
+    """Return the active Upstox token from Redis (HGET upstox access_token)."""
+    return get_upstox_token()
 
 
 def _require_token(user: dict) -> str:
