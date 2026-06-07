@@ -1,4 +1,4 @@
-import { supabase } from "./supabase";
+import { auth } from "./auth";
 import { mockApi } from "./mock";
 
 const BASE =
@@ -22,16 +22,9 @@ export class ApiError extends Error {
   }
 }
 
-async function authHeader(): Promise<Record<string, string>> {
-  try {
-    const { data } = await supabase.auth.getSession();
-    const token = data.session?.access_token;
-    return token
-      ? { Authorization: `Bearer ${token}` }
-      : { Authorization: `Bearer demo-user` };
-  } catch {
-    return { Authorization: `Bearer demo-user` };
-  }
+function authHeader(): Record<string, string> {
+  const h = auth.getHeader();
+  return h ? { Authorization: `Basic ${h}` } : {};
 }
 
 function isRetryable(method: string, status: number): boolean {
@@ -68,7 +61,7 @@ export async function api<T = unknown>(
         signal: controller.signal,
         headers: {
           "Content-Type": "application/json",
-          ...(await authHeader()),
+          ...authHeader(),
           ...(init.headers ?? {}),
         },
         cache: "no-store",

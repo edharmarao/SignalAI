@@ -1,8 +1,10 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
+import base64
 
-from ..deps import decode_user_token
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+
+from ..deps import _validate
 from ..services.ws_manager import ws_manager
 
 router = APIRouter()
@@ -10,14 +12,18 @@ router = APIRouter()
 
 @router.websocket("/ws")
 async def ws_endpoint(websocket: WebSocket):
+    """WebSocket endpoint. Authenticate via ?token=base64(user:pass)."""
     token = websocket.query_params.get("token")
     if not token:
         await websocket.close(code=1008)
         return
 
     try:
-        decode_user_token(token)
-    except HTTPException:
+        decoded = base64.b64decode(token).decode("utf-8")
+        username, _, password = decoded.partition(":")
+        if not _validate(username, password):
+            raise ValueError("bad creds")
+    except Exception:
         await websocket.close(code=1008)
         return
 

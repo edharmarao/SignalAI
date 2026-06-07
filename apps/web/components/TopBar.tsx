@@ -31,7 +31,7 @@ export default function TopBar() {
         </Button>
         {user ? (
           <div className="flex items-center gap-2 text-sm text-slate-300">
-            <span className="hidden sm:inline">{user.email}</span>
+            <span className="hidden sm:inline">{user.id}</span>
             <Button variant="ghost" onClick={signOut}>
               Sign out
             </Button>

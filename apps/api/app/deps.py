@@ -1,62 +1,61 @@
 from __future__ import annotations
 
-import logging
 import os
-import time
+import secrets
 from typing import Optional
 
 from fastapi import Header, HTTPException, status
-import jwt
-from jwt.exceptions import PyJWTError as JWTError
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
 
 from .config import get_settings
 
-logger = logging.getLogger("signal_ai")
 _IS_DEV = os.getenv("ENVIRONMENT", "development") == "development"
+_security = HTTPBasic(auto_error=False)
 
 
-def decode_user_token(token: str) -> dict:
-    settings = get_settings()
-    if settings.supabase_jwt_secret:
-        try:
-            payload = jwt.decode(
-                token,
-                settings.supabase_jwt_secret,
-                algorithms=["HS256"],
-                options={"verify_aud": False},
-            )
-            exp = payload.get("exp")
-            if exp is None or int(exp) <= int(time.time()):
-                raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid or expired token")
-            return {"id": payload["sub"], "email": payload.get("email")}
-        except HTTPException:
-            raise
-        except JWTError as e:
-            logger.warning("JWT decode failed: %s", e)
-            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid or expired token")
-    if _IS_DEV:
-        logger.debug("Dev fallback: using token as user ID")
-        return {"id": token, "email": None}
-    raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Auth not configured on server")
+def _validate(username: str, password: str) -> bool:
+    """Constant-time comparison against in-memory env credentials."""
+    s = get_settings()
+    ok_user = secrets.compare_digest(username, s.api_username)
+    ok_pass = secrets.compare_digest(password, s.api_password)
+    return ok_user and ok_pass
+
+
+def _user_dict() -> dict:
+    s = get_settings()
+    return {"id": s.api_username, "email": s.api_username}
 
 
 def get_current_user(
     authorization: Optional[str] = Header(default=None),
     x_dev_user_id: Optional[str] = Header(default=None),
 ) -> dict:
-    """Decode Supabase JWT (HS256).
+    """Validate HTTP Basic Auth against env credentials (in-memory, zero latency).
 
-    In DEVELOPMENT only: if no Authorization header is present, accepts
-    X-Dev-User-Id header as fallback. Never allowed in production.
+    Accepts:
+      - Authorization: Basic <base64(user:pass)>
+      - In dev only: X-Dev-User-Id header (bypasses auth for quick testing)
     """
-    if authorization and authorization.lower().startswith("bearer "):
-        token = authorization.split(" ", 1)[1].strip()
-        return decode_user_token(token)
-
     if x_dev_user_id and _IS_DEV:
-        return {"id": x_dev_user_id, "email": None}
+        return {"id": x_dev_user_id, "email": x_dev_user_id}
 
-    raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Missing Authorization header")
+    if authorization:
+        scheme, _, encoded = authorization.partition(" ")
+        if scheme.lower() == "basic" and encoded:
+            import base64
+            try:
+                decoded = base64.b64decode(encoded).decode("utf-8")
+                username, _, password = decoded.partition(":")
+                if _validate(username, password):
+                    return _user_dict()
+            except Exception:
+                pass
+
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid credentials",
+        headers={"WWW-Authenticate": "Basic realm=\"Signal AI\""},
+    )
 
 
 def optional_user(

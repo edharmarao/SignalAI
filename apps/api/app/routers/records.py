@@ -1,73 +1,52 @@
 from __future__ import annotations
 from fastapi import APIRouter, Depends
 from ..deps import get_current_user
-from ..supabase_client import supabase
+from ..db import db_query
 
 router = APIRouter(tags=["records"])
 
 
 def _strategy_ids_for_desk(user_id: str, desk: str) -> set[str]:
-    res = (
-        supabase()
-        .table("strategies")
-        .select("id,strategy_json")
-        .eq("user_id", user_id)
-        .execute()
+    rows = db_query(
+        "SELECT id, strategy_json FROM strategies WHERE user_id=%s", (user_id,)
     )
     return {
-        row["id"]
-        for row in (res.data or [])
-        if (row.get("strategy_json") or {}).get("desk") == desk
+        r["id"] for r in rows
+        if (r.get("strategy_json") or {}).get("desk") == desk
     }
 
 
 @router.get("/trades")
 def list_trades(desk: str | None = None, user=Depends(get_current_user)):
-    res = (
-        supabase()
-        .table("trades")
-        .select("*")
-        .eq("user_id", user["id"])
-        .order("opened_at", desc=True)
-        .execute()
+    rows = db_query(
+        "SELECT * FROM trades WHERE user_id=%s ORDER BY opened_at DESC",
+        (user["id"],),
     )
-    rows = res.data or []
     if not desk:
         return rows
     ids = _strategy_ids_for_desk(user["id"], desk)
-    return [row for row in rows if row.get("strategy_id") in ids]
+    return [r for r in rows if r.get("strategy_id") in ids]
 
 
 @router.get("/orders")
 def list_orders(desk: str | None = None, user=Depends(get_current_user)):
-    res = (
-        supabase()
-        .table("orders")
-        .select("*")
-        .eq("user_id", user["id"])
-        .order("created_at", desc=True)
-        .execute()
+    rows = db_query(
+        "SELECT * FROM orders WHERE user_id=%s ORDER BY created_at DESC",
+        (user["id"],),
     )
-    rows = res.data or []
     if not desk:
         return rows
     ids = _strategy_ids_for_desk(user["id"], desk)
-    return [row for row in rows if row.get("strategy_id") in ids]
+    return [r for r in rows if r.get("strategy_id") in ids]
 
 
 @router.get("/logs")
 def list_logs(desk: str | None = None, user=Depends(get_current_user)):
-    res = (
-        supabase()
-        .table("logs")
-        .select("*")
-        .eq("user_id", user["id"])
-        .order("created_at", desc=True)
-        .limit(500)
-        .execute()
+    rows = db_query(
+        "SELECT * FROM logs WHERE user_id=%s ORDER BY created_at DESC LIMIT 500",
+        (user["id"],),
     )
-    rows = res.data or []
     if not desk:
         return rows
     ids = _strategy_ids_for_desk(user["id"], desk)
-    return [row for row in rows if not row.get("strategy_id") or row.get("strategy_id") in ids]
+    return [r for r in rows if not r.get("strategy_id") or r.get("strategy_id") in ids]

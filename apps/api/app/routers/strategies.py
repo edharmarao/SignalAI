@@ -1,32 +1,27 @@
 from __future__ import annotations
-import uuid
+import json
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from ..deps import get_current_user
 from ..models import StrategyCreate, StrategyUpdate
-from ..supabase_client import supabase
+from ..db import db_query, db_one, db_execute, db_insert, new_id
 from ..validation import validate_strategy
 
 router = APIRouter(prefix="/strategies", tags=["strategies"])
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
 
 @router.get("")
 def list_strategies(desk: str | None = None, user=Depends(get_current_user)):
-    res = (
-        supabase()
-        .table("strategies")
-        .select("*")
-        .eq("user_id", user["id"])
-        .order("created_at", desc=True)
-        .execute()
+    rows = db_query(
+        "SELECT * FROM strategies WHERE user_id=%s ORDER BY created_at DESC",
+        (user["id"],),
     )
-    rows = res.data or []
     if desk:
-        rows = [row for row in rows if (row.get("strategy_json") or {}).get("desk") == desk]
+        rows = [r for r in rows if (r.get("strategy_json") or {}).get("desk") == desk]
     return rows
 
 
@@ -36,89 +31,74 @@ def create_strategy(payload: StrategyCreate, user=Depends(get_current_user)):
     if errors:
         raise HTTPException(400, {"errors": errors})
     row = {
-        "id": str(uuid.uuid4()),
+        "id": new_id(),
         "user_id": user["id"],
         "name": payload.name,
         "strategy_json": payload.strategy_json.model_dump(),
-        "is_active": False,
+        "is_active": 0,
         "mode": payload.mode,
         "status": payload.status,
         "created_at": _now(),
         "updated_at": _now(),
     }
-    supabase().table("strategies").insert(row).execute()
+    db_insert("strategies", row)
+    # Return with strategy_json as dict (db_insert keeps it as dict)
     return row
 
 
 @router.get("/{strategy_id}")
 def get_strategy(strategy_id: str, user=Depends(get_current_user)):
-    res = (
-        supabase()
-        .table("strategies")
-        .select("*")
-        .eq("user_id", user["id"])
-        .eq("id", strategy_id)
-        .execute()
+    row = db_one(
+        "SELECT * FROM strategies WHERE user_id=%s AND id=%s LIMIT 1",
+        (user["id"], strategy_id),
     )
-    if not res.data:
+    if not row:
         raise HTTPException(404, "Not found")
-    return res.data[0]
+    return row
 
 
 @router.patch("/{strategy_id}")
 def update_strategy(strategy_id: str, payload: StrategyUpdate, user=Depends(get_current_user)):
-    update = {k: v for k, v in payload.model_dump(exclude_none=True).items()}
-    if "strategy_json" in update:
+    updates = {k: v for k, v in payload.model_dump(exclude_none=True).items()}
+    if "strategy_json" in updates:
         errors = validate_strategy(payload.strategy_json)  # type: ignore
         if errors:
             raise HTTPException(400, {"errors": errors})
-        update["strategy_json"] = payload.strategy_json.model_dump()  # type: ignore
-    update["updated_at"] = _now()
-    (
-        supabase()
-        .table("strategies")
-        .update(update)
-        .eq("user_id", user["id"])
-        .eq("id", strategy_id)
-        .execute()
+        updates["strategy_json"] = json.dumps(payload.strategy_json.model_dump())  # type: ignore
+    updates["updated_at"] = _now()
+    set_clause = ", ".join(f"`{k}`=%s" for k in updates)
+    db_execute(
+        f"UPDATE strategies SET {set_clause} WHERE user_id=%s AND id=%s",
+        list(updates.values()) + [user["id"], strategy_id],
     )
     return {"ok": True}
 
 
 @router.post("/{strategy_id}/duplicate")
 def duplicate_strategy(strategy_id: str, user=Depends(get_current_user)):
-    res = (
-        supabase()
-        .table("strategies")
-        .select("*")
-        .eq("user_id", user["id"])
-        .eq("id", strategy_id)
-        .execute()
+    src = db_one(
+        "SELECT * FROM strategies WHERE user_id=%s AND id=%s LIMIT 1",
+        (user["id"], strategy_id),
     )
-    if not res.data:
+    if not src:
         raise HTTPException(404, "Not found")
-    src = res.data[0]
     new_row = {
         **src,
-        "id": str(uuid.uuid4()),
+        "id": new_id(),
         "name": f"{src['name']} (Copy)",
-        "is_active": False,
+        "is_active": 0,
         "status": "draft",
         "created_at": _now(),
         "updated_at": _now(),
     }
-    supabase().table("strategies").insert(new_row).execute()
+    db_insert("strategies", new_row)
     return new_row
 
 
 @router.delete("/{strategy_id}")
 def delete_strategy(strategy_id: str, user=Depends(get_current_user)):
-    (
-        supabase()
-        .table("strategies")
-        .delete()
-        .eq("user_id", user["id"])
-        .eq("id", strategy_id)
-        .execute()
+    db_execute(
+        "DELETE FROM strategies WHERE user_id=%s AND id=%s",
+        (user["id"], strategy_id),
     )
     return {"ok": True}

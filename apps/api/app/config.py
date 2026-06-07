@@ -1,20 +1,28 @@
 from __future__ import annotations
-import os
 from functools import lru_cache
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    # Try root .env first, then local .env (when running from apps/api/)
+    model_config = SettingsConfigDict(env_file=("../../.env", ".env"), extra="ignore")
 
     api_host: str = "0.0.0.0"
     api_port: int = 8003
     allowed_origins: str = "http://localhost:3003"
 
-    supabase_url: str = ""
-    supabase_service_role_key: str = ""
-    supabase_jwt_secret: str = ""
+    # Single-user Basic Auth credentials (stored in .env, validated in-memory)
+    api_username: str = "edrao"
+    api_password: str = "chiru123"
 
+    # MySQL
+    mysql_host: str = "localhost"
+    mysql_port: int = 3306
+    mysql_user: str = "root"
+    mysql_password: str = ""
+    mysql_database: str = "signal_ai"
+
+    # Upstox
     upstox_client_id: str = ""
     upstox_client_secret: str = ""
     upstox_redirect_uri: str = "http://localhost:3003/settings/upstox/callback"

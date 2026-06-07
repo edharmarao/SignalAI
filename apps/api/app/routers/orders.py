@@ -7,37 +7,35 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Response
 from pydantic import BaseModel
 
 from ..config import get_settings
+from ..db import db_one, db_insert, new_id
 from ..deps import get_current_user
 from ..services.upstox import UpstoxClient
-from ..supabase_client import supabase
-
-# IMPORTANT: Order placement endpoints are NOT idempotent.
-# Clients must NOT retry failed order requests without implementing
-# idempotency keys. Re-sending can create duplicate live orders.
 
 router = APIRouter(prefix="/orders", tags=["orders"])
 _IDEMPOTENCY_WINDOW_SECONDS = 300
-# Single-process cache only. Use Redis or another shared store for multi-instance deployments.
 _idempotency_cache: dict[str, tuple[datetime, dict]] = {}
 
 
 class PlaceOrderRequest(BaseModel):
     strategy_id: str
     symbol: str
-    side: str  # BUY/SELL
+    side: str
     quantity: int
     price: float
     order_type: str = "MARKET"
     mode: str = "paper"
-    confirm_live: bool = False  # extra explicit confirmation for live
+    confirm_live: bool = False
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def _purge_expired_keys(now: datetime) -> None:
-    expired = [key for key, (created_at, _) in _idempotency_cache.items() if (now - created_at).total_seconds() > _IDEMPOTENCY_WINDOW_SECONDS]
+    expired = [
+        key for key, (created_at, _) in _idempotency_cache.items()
+        if (now - created_at).total_seconds() > _IDEMPOTENCY_WINDOW_SECONDS
+    ]
     for key in expired:
         _idempotency_cache.pop(key, None)
 
@@ -61,22 +59,16 @@ async def place(
     settings = get_settings()
     if req.mode == "live":
         if not settings.allow_live_trading:
-            raise HTTPException(403, "Live trading disabled by server config (ALLOW_LIVE_TRADING=false).")
+            raise HTTPException(403, "Live trading disabled (ALLOW_LIVE_TRADING=false).")
         if not req.confirm_live:
-            raise HTTPException(400, "Live orders require explicit confirm_live=true.")
-        ba = (
-            supabase()
-            .table("broker_accounts")
-            .select("*")
-            .eq("user_id", user["id"])
-            .eq("is_active", True)
-            .limit(1)
-            .execute()
+            raise HTTPException(400, "Live orders require confirm_live=true.")
+        ba = db_one(
+            "SELECT * FROM broker_accounts WHERE user_id=%s AND is_active=1 LIMIT 1",
+            (user["id"],),
         )
-        if not ba.data:
+        if not ba:
             raise HTTPException(400, "No active broker account. Connect Upstox first.")
-        token = ba.data[0]["access_token"]
-        client = UpstoxClient(token)
+        client = UpstoxClient(ba["access_token"])
         broker_resp = await client.place_order(
             {
                 "quantity": req.quantity,
@@ -96,10 +88,10 @@ async def place(
         status = "pending"
     else:
         broker_order_id = None
-        status = "filled"  # paper orders fill instantly at given price
+        status = "filled"
 
     row = {
-        "id": str(uuid.uuid4()),
+        "id": new_id(),
         "user_id": user["id"],
         "strategy_id": req.strategy_id,
         "trade_id": None,
@@ -113,7 +105,7 @@ async def place(
         "broker_order_id": broker_order_id,
         "created_at": _now(),
     }
-    supabase().table("orders").insert(row).execute()
+    db_insert("orders", row)
     if cache_key:
         _idempotency_cache[cache_key] = (now, row)
     return row

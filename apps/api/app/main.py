@@ -15,7 +15,8 @@ from fastapi.responses import JSONResponse
 
 from .config import get_settings
 from .middleware import RequestContextMiddleware, SecurityHeadersMiddleware
-from .routers import strategies, backtest, instruments, prices, orders, broker, records, ws, charts
+from .routers import strategies, backtest, instruments, prices, orders, broker, records, ws, charts, upstox as upstox_router
+from .routers.auth import router as auth_router
 
 logger = logging.getLogger("signal_ai")
 _START_TIME = time.time()
@@ -116,6 +117,7 @@ def health(request: Request):
     }
 
 
+app.include_router(auth_router, prefix="/api/v1")
 app.include_router(strategies.router, prefix="/api/v1")
 app.include_router(backtest.router, prefix="/api/v1")
 app.include_router(instruments.router, prefix="/api/v1")
@@ -125,4 +127,5 @@ app.include_router(prices.router, prefix="/api/v1")
 app.include_router(orders.router, prefix="/api/v1")
 app.include_router(broker.router, prefix="/api/v1")
 app.include_router(records.router, prefix="/api/v1")
+app.include_router(upstox_router.router, prefix="/api/v1")
 app.include_router(ws.router)

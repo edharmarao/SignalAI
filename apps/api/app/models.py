@@ -79,3 +79,36 @@ class LogCreate(BaseModel):
     level: Literal["info", "warn", "error", "signal"] = "info"
     event: str
     data: dict[str, Any] = {}
+
+
+# ── Upstox market-data models ─────────────────────────────────────────────────
+
+class CandleData(BaseModel):
+    time: str = Field(..., description="Candle timestamp (YYYY-MM-DD HH:MM:SS, IST naive)")
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: int
+    oi: int = 0
+
+
+class HistoricalCandleResponse(BaseModel):
+    status: str
+    candles: list[CandleData]
+
+
+class BulkHistoricalImportRequest(BaseModel):
+    stock_codes: list[str] = Field(..., description="e.g. ['RELIANCE', 'TCS', 'INFY']")
+    exchange: str = Field(..., description="NSE_EQ | BSE_EQ | NSE_FO | BSE_FO | MCX_FO")
+    from_date: str = Field(..., description="YYYY-MM-DD")
+    to_date: str = Field(..., description="YYYY-MM-DD")
+    interval_type: str = Field(..., description="minutes | hours | days | weeks | months")
+    interval_value: str = Field(..., description="e.g. 1, 5, 15, 30")
+
+
+class IntradayImportRequest(BaseModel):
+    stock_codes: list[str] = Field(..., description="e.g. ['RELIANCE', 'TCS']")
+    exchange: str = Field("NSE_EQ", description="NSE_EQ | BSE_EQ | NSE_FO | BSE_FO | MCX_FO")
+    interval_type: str = Field(..., description="minutes | hours (intraday only)")
+    interval_value: str = Field(..., description="e.g. 1, 5, 15")
