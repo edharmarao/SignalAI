@@ -521,7 +521,11 @@ export default function ORBStrategyBuilder({ editId }: { editId?: string }) {
   const [fromDate, setFromDate] = useState(() => defaultDates("5min").from);
   const [toDate, setToDate]   = useState(() => defaultDates("5min").to);
   const [qty, setQty]         = useState("1");
-  const [name, setName]       = useState("ORB Strategy");
+  const [name, setName] = useState(() => {
+    // Auto-generate a meaningful name based on defaults
+    const d = new Date().toLocaleDateString("en-IN", { day:"2-digit", month:"short" });
+    return `ORB 5min Intraday · ${d}`;
+  });
 
   // ── Configurable strategy params ──────────────────────────────────────────────
   const [orCandles, setOrCandles]           = useState(1);           // # candles forming OR
@@ -564,7 +568,41 @@ export default function ORBStrategyBuilder({ editId }: { editId?: string }) {
     const d = defaultDates(tf);
     setFromDate(d.from);
     setToDate(d.to);
-  }, [tf]);
+    // Auto-update strategy name to reflect timeframe + direction
+    const tfLabel = TIMEFRAMES.find(t => t.key === tf)?.label ?? tf;
+    const dirLabel = direction === "both" ? "Intraday" : direction === "long" ? "Long" : "Short";
+    const d2 = new Date().toLocaleDateString("en-IN", { day: "2-digit", month: "short" });
+    setName(`ORB ${tfLabel} ${dirLabel} · ${d2}`);
+  }, [tf, direction]);
+
+  // Load saved strategy when editing
+  useEffect(() => {
+    if (!editId) return;
+    api<{ name: string; strategy_json: any }>(`/strategies/${editId}`).then(row => {
+      const sj = row.strategy_json as any;
+      const c = sj?.orbConfig ?? {};
+      setName(row.name);
+      // Restore symbols
+      const syms: NSESymbol[] = (sj?.symbols ?? (sj?.symbol ? [sj.symbol] : []))
+        .filter(Boolean)
+        .map((s: string) => ({ symbol: s, company_name: "", industry: "" }));
+      if (syms.length > 0) { setSelectedSyms(syms); setActiveSymIdx(0); }
+      // Restore config
+      if (c.timeframe)         setTf(c.timeframe);
+      if (c.from_date)         setFromDate(c.from_date);
+      if (c.to_date)           setToDate(c.to_date);
+      if (c.qty)               setQty(String(c.qty));
+      if (c.or_candles)        setOrCandles(c.or_candles);
+      if (c.market_open)       setMarketOpen(c.market_open);
+      if (c.volume_multiplier) setVolMultiplier(c.volume_multiplier);
+      if (c.volume_lookback)   setVolLookback(c.volume_lookback);
+      if (c.direction)         setDirection(c.direction);
+      if (c.risk_reward)       setRiskReward(c.risk_reward);
+      if (typeof c.trailing_sl === "boolean") setTrailingSl(c.trailing_sl);
+      if (c.trail_factor)      setTrailFactor(c.trail_factor);
+      if (typeof c.eod_exit === "boolean")    setEodExit(c.eod_exit);
+    }).catch(console.error);
+  }, [editId]);
 
   // Fetch chart data from stock_data_<tf>
   const fetchChart = useCallback(async () => {
@@ -628,13 +666,16 @@ export default function ORBStrategyBuilder({ editId }: { editId?: string }) {
       const tfLabel = TIMEFRAMES.find(t => t.key === tf)?.label ?? tf;
       const orbConfig = {
         timeframe: tf, timeframeLabel: tfLabel, from_date: fromDate, to_date: toDate,
+        qty: parseInt(qty) || 1,
         or_candles: orCandles, market_open: marketOpen,
         volume_multiplier: volMultiplier, volume_lookback: volLookback,
         direction, risk_reward: riskReward,
         trailing_sl: trailingSl, trail_factor: trailFactor, eod_exit: eodExit,
       };
       const stratJson = {
-        version: 1, name, desk: "equity", symbol,
+        version: 1, name, desk: "equity",
+        symbols: selectedSyms.map(s => s.symbol),
+        symbol: selectedSyms[0]?.symbol ?? symbol,
         action: direction === "short" ? "SELL" : "BUY",
         candleTime: tf === "daily" ? "EOD" : tf === "5min" ? "5min" : tf === "15min" ? "15min" : "1H",
         quantity: parseInt(qty)||1, mode:"paper", status:"draft",

@@ -59,6 +59,11 @@ const I = {
       <path d="M21 21H3" />
     </svg>
   ),
+  live: (p: IconProps) => (
+    <svg viewBox="0 0 24 24" fill="currentColor" className={p.className}>
+      <circle cx="12" cy="12" r="5" />
+    </svg>
+  ),
 };
 
 type Desk = "equity" | "mutual-funds" | "options";
@@ -91,6 +96,7 @@ function equityNav() {
   return [
     { href: "/equity",                   label: "Overview",      icon: I.dashboard },
     { href: "/equity/strategies",         label: "Strategies",    icon: I.strategies },
+    { href: "/equity/live",               label: "Live Strategies", icon: I.live },
     { href: "/equity/strategies/new",     label: "New Strategy",  icon: I.create },
     { href: "/equity/trades",             label: "Trades",        icon: I.trades },
     { href: "/equity/orb-backtest",       label: "ORB Backtest",  icon: I.backtest },
