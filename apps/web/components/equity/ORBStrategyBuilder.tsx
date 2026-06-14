@@ -273,20 +273,67 @@ function ORBChart({ candles, trades, orCandles = 1 }: {
 
     // ── Trade markers ────────────────────────────────────────────────────────
     if (trades?.length) {
-      const markers = [
-        ...trades.filter(t => t.entryTime).map(t => ({
-          time: toSec(t.entryTime), position: "belowBar" as const, color: "#26a69a",
-          shape: "arrowUp" as const, size: 1,
-          text: `${t.side === "BUY" ? "▲ B" : "▼ S"} ${t.entryPrice.toFixed(2)}`,
-        })),
-        ...trades.filter(t => t.exitTime).map(t => ({
-          time: toSec(t.exitTime), position: "aboveBar" as const,
-          color: t.exitReason === "stop_loss" ? "#ef5350" : t.exitReason === "target" ? "#3b82f6" : "#f59e0b",
-          shape: "arrowDown" as const, size: 1,
-          text: `${t.exitReason === "stop_loss" ? "SL" : t.exitReason === "target" ? "TP" : "TR"} ${t.exitPrice.toFixed(2)}`,
-        })),
-      ].sort((a, b) => (a.time as number) - (b.time as number));
-      createSeriesMarkers(candleSeries, markers);
+      // Build a set of valid candle timestamps — only place markers on actual candles
+      const candleTimes = new Set(candles.map(r => toSec(r.time)));
+      const firstTime = Math.min(...candleTimes);
+      const lastTime  = Math.max(...candleTimes);
+
+      // Snap a marker time to nearest candle; return null if too far outside range
+      const snapToCandle = (sec: number): number | null => {
+        if (sec < firstTime || sec > lastTime) return null;
+        // find closest candle time
+        let best = -1, bestDist = Infinity;
+        candleTimes.forEach(t => { const d = Math.abs(t - sec); if (d < bestDist) { bestDist = d; best = t; } });
+        return best;
+      };
+
+      // Build raw markers, then deduplicate per candle-time+position to avoid vertical stacking
+      type RawMarker = { time: number; position: "belowBar" | "aboveBar"; color: string; shape: "arrowUp" | "arrowDown"; size: number; text: string; };
+      const raw: RawMarker[] = [
+        ...trades.filter(t => t.entryTime).flatMap(t => {
+          const snapped = snapToCandle(toSec(t.entryTime));
+          if (snapped === null) return [];
+          // BUY (long) = cyan arrow below bar; SELL (short) = orange arrow below bar
+          const isBuy = t.side === "BUY";
+          return [{ time: snapped, position: "belowBar" as const,
+            color: isBuy ? "#06b6d4" : "#f97316",
+            shape: "arrowUp" as const, size: 1,
+            text: `${isBuy ? "▲ LONG" : "▼ SHORT"} @${t.entryPrice.toFixed(2)}` }];
+        }),
+        ...trades.filter(t => t.exitTime).flatMap(t => {
+          const snapped = snapToCandle(toSec(t.exitTime));
+          if (snapped === null) return [];
+          const isBuy = t.side === "BUY";
+          const pnlPct = t.risk > 0 ? ((t.pnl / (t.entryPrice * 1)) * 100).toFixed(2) : "—";
+          const pnlStr = `${t.pnl >= 0 ? "+" : ""}${t.pnl.toFixed(0)} (${t.pnl >= 0 ? "+" : ""}${pnlPct}%)`;
+          // TP = emerald, SL = rose, Trailing/EOD = amber
+          const exitColor = t.exitReason === "stop_loss" ? "#f43f5e"
+            : t.exitReason === "target" ? "#10b981"
+            : "#f59e0b";
+          const exitLabel = t.exitReason === "stop_loss" ? "✖ SL"
+            : t.exitReason === "target" ? "✔ TP"
+            : t.trailingActive ? "↷ TR" : "◼ EOD";
+          return [{ time: snapped, position: "aboveBar" as const,
+            color: exitColor, shape: "arrowDown" as const, size: 1,
+            text: `${isBuy ? "↑" : "↓"} ${exitLabel} @${t.exitPrice.toFixed(2)} ${pnlStr}` }];
+        }),
+      ].sort((a, b) => a.time - b.time);
+
+      // Merge multiple markers on the same candle+position into one combined label
+      const dedupMap = new Map<string, RawMarker>();
+      for (const m of raw) {
+        const key = `${m.time}|${m.position}`;
+        if (dedupMap.has(key)) {
+          const existing = dedupMap.get(key)!;
+          const labels = new Set(existing.text.split(" | "));
+          labels.add(m.text);
+          existing.text = [...labels].join(" | ");
+          if (m.color === "#ef5350") existing.color = m.color;
+        } else {
+          dedupMap.set(key, { ...m });
+        }
+      }
+      createSeriesMarkers(candleSeries, ([...dedupMap.values()].sort((a, b) => a.time - b.time)) as any);
     }
 
     // ── Floating OHLCV + OR legend ───────────────────────────────────────────
