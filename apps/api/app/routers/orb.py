@@ -266,7 +266,7 @@ def orb_chart_data(
     timeframe: str = Query("5min", description="1min|5min|15min|25min|daily|weekly"),
     from_date: str = Query(..., description="YYYY-MM-DD"),
     to_date: str = Query(..., description="YYYY-MM-DD"),
-    limit: int = Query(500, ge=1, le=2000),
+    limit: int = Query(5000, ge=1, le=10000),
     user=Depends(get_current_user),
 ):
     """Fetch OHLCV candles directly from stock_data_<timeframe> for charting.

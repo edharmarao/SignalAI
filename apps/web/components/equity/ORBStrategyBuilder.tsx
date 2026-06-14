@@ -158,10 +158,11 @@ function buildOrLines(
   return { orh, orl, dayMap };
 }
 
-function ORBChart({ candles, trades, orCandles = 1 }: {
+function ORBChart({ candles, trades, orCandles = 1, jumpToTime }: {
   candles: OHLCVRow[];
   trades?: ORBTrade[];
   orCandles?: number;
+  jumpToTime?: number | null;   // UTC seconds — scroll chart to this day when set
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef     = useRef<IChartApi | null>(null);
@@ -388,9 +389,115 @@ function ORBChart({ candles, trades, orCandles = 1 }: {
     };
   }, [candles, trades, orCandles]);
 
+  // Scroll to show the full day's candles when jumpToTime changes
+  useEffect(() => {
+    if (!jumpToTime || !chartRef.current) return;
+    // Find the YYYY-MM-DD of the target time in IST
+    const targetDay = new Date(jumpToTime * 1000)
+      .toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" }); // YYYY-MM-DD
+    // Filter candles to that day to get exact first/last timestamps
+    const daySecs = candles
+      .map(r => toSec(r.time) as number)
+      .filter(s => new Date(s * 1000).toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" }) === targetDay)
+      .sort((a, b) => a - b);
+    if (daySecs.length === 0) return;
+    const pad = 3 * 60; // 3-minute padding on each side
+    chartRef.current.timeScale().setVisibleRange({
+      from: (daySecs[0] - pad) as UTCTimestamp,
+      to:   (daySecs[daySecs.length - 1] + pad) as UTCTimestamp,
+    });
+  }, [jumpToTime, candles]);
+
   return <div ref={containerRef} className="w-full h-full" />;
 }
 
+// ── Day Chart Modal — fetches a single day's candles on demand ─────────────────
+function DayChartModal({ symbol, trade, tf, orCandles, onClose }: {
+  symbol: string;
+  trade: ORBTrade;
+  tf: TFKey;
+  orCandles: number;
+  onClose: () => void;
+}) {
+  const [candles, setCandles] = useState<OHLCVRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError]     = useState<string|null>(null);
+
+  // Fetch just this day's candles
+  useEffect(() => {
+    setLoading(true); setError(null);
+    const day = trade.date; // YYYY-MM-DD
+    api<{ candles: OHLCVRow[] }>(
+      `/orb/chart-data?symbol=${encodeURIComponent(symbol)}&timeframe=${tf}&from_date=${day}&to_date=${day}&limit=500`
+    ).then(d => {
+      const rows = d.candles ?? [];
+      if (rows.length === 0) setError(`No candles for ${symbol} on ${day}`);
+      else setCandles(rows);
+    }).catch(e => setError(e.message))
+      .finally(() => setLoading(false));
+
+    // Close on Escape
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [symbol, trade.date, tf]);
+
+  const pnlColor = trade.pnl >= 0 ? "text-emerald-400" : "text-rose-400";
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
+      <div className="flex flex-col bg-[#131722] border border-slate-700 rounded-2xl shadow-2xl overflow-hidden"
+        style={{ width: "min(1200px, 95vw)", height: "min(720px, 92vh)" }}>
+
+        {/* Header */}
+        <div className="flex items-center gap-3 px-5 py-3 border-b border-slate-800 shrink-0">
+          <span className="font-bold text-amber-300 font-mono text-sm">{symbol}</span>
+          <span className="text-slate-500 text-xs">{trade.date} · {tf}</span>
+          <span className={`ml-2 inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold
+            ${trade.side === "BUY" ? "bg-cyan-900/40 text-cyan-400 border border-cyan-800/50" : "bg-orange-900/40 text-orange-400 border border-orange-800/50"}`}>
+            {trade.side === "BUY" ? "▲ LONG" : "▼ SHORT"}
+          </span>
+          {/* Trade summary */}
+          <div className="flex items-center gap-3 ml-3 text-[10px] font-mono">
+            <span className="text-slate-500">Entry <b className="text-slate-300">{trade.entryPrice.toFixed(2)}</b> @ {trade.entryTime?.slice(11,16)}</span>
+            <span className="text-slate-700">→</span>
+            <span className="text-slate-500">Exit <b className="text-slate-300">{trade.exitPrice.toFixed(2)}</b> @ {trade.exitTime?.slice(11,16)}</span>
+            <span className={`font-bold ${pnlColor}`}>{trade.pnl >= 0 ? "+" : ""}₹{trade.pnl.toFixed(2)} ({trade.pnl >= 0 ? "+" : ""}{((trade.pnl/trade.entryPrice)*100).toFixed(2)}%)</span>
+            <span className={`px-1.5 py-0.5 rounded text-[9px]
+              ${trade.exitReason === "stop_loss" ? "bg-yellow-900/40 text-yellow-400"
+              : trade.exitReason === "target" ? "bg-emerald-900/40 text-emerald-400"
+              : "bg-amber-900/40 text-amber-400"}`}>
+              {trade.exitReason === "stop_loss" ? "✖ SL" : trade.exitReason === "target" ? "✔ TP" : "↷ Trail"}
+            </span>
+          </div>
+          <button onClick={onClose}
+            className="ml-auto text-slate-500 hover:text-slate-200 text-xs px-3 py-1.5 rounded-lg hover:bg-slate-800 transition-colors">
+            ✕ Close
+          </button>
+        </div>
+
+        {/* Chart */}
+        <div className="flex-1 min-h-0">
+          {loading && (
+            <div className="flex items-center justify-center h-full text-slate-500 text-sm gap-2">
+              <svg className="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
+              </svg>
+              Loading {symbol} candles for {trade.date}…
+            </div>
+          )}
+          {!loading && error && (
+            <div className="flex items-center justify-center h-full text-rose-400 text-sm">{error}</div>
+          )}
+          {!loading && !error && candles.length > 0 && (
+            <ORBChart candles={candles} trades={[trade]} orCandles={orCandles} key={`day-${symbol}-${trade.date}`} />
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 
 function Stat({ label, value, sub }: { label: string; value: string; sub?: string }) {
@@ -430,6 +537,8 @@ export default function ORBStrategyBuilder({ editId }: { editId?: string }) {
   const [candles, setCandles]     = useState<OHLCVRow[]>([]);
   const [loadingChart, setLoadingChart] = useState(false);
   const [chartError, setChartError]     = useState<string|null>(null);
+  const [jumpToTime, setJumpToTime]     = useState<number|null>(null);
+  const [dayModal, setDayModal]         = useState<{ trade: ORBTrade; symbol: string } | null>(null);
 
   const [btResults, setBtResults] = useState<Map<string, BacktestResult | "loading" | string>>(new Map());
   const [btRunning, setBtRunning] = useState(false);
@@ -462,7 +571,7 @@ export default function ORBStrategyBuilder({ editId }: { editId?: string }) {
     setLoadingChart(true); setChartError(null); setCandles([]);
     try {
       const data = await api<{ candles: OHLCVRow[] }>(
-        `/orb/chart-data?symbol=${encodeURIComponent(symbol)}&timeframe=${tf}&from_date=${fromDate}&to_date=${toDate}&limit=500`
+        `/orb/chart-data?symbol=${encodeURIComponent(symbol)}&timeframe=${tf}&from_date=${fromDate}&to_date=${toDate}&limit=10000`
       );
       const rows = data.candles ?? [];
       if (rows.length === 0) {
@@ -691,7 +800,7 @@ export default function ORBStrategyBuilder({ editId }: { editId?: string }) {
                   <p className="text-[10px] text-slate-500">Volume Filter (×avg)</p>
                   <span className="text-[10px] font-mono font-bold text-amber-400">{volMultiplier.toFixed(1)}×</span>
                 </div>
-                <input type="range" min={0.5} max={20} step={0.5} value={volMultiplier}
+                <input type="range" min={0.5} max={50} step={0.5} value={volMultiplier}
                   onChange={e => setVolMultiplier(Number(e.target.value))}
                   className="w-full accent-amber-500 h-1"/>
                 <div className="flex justify-between text-[9px] text-slate-700 mt-0.5"><span>0.5×</span><span>5×</span></div>
@@ -875,7 +984,7 @@ export default function ORBStrategyBuilder({ editId }: { editId?: string }) {
                 </div>
               </div>
             ) : candles.length > 0 ? (
-              <ORBChart candles={candles} trades={chartTrades} orCandles={orCandles} key={`${symbol}-${tf}-${activePane}-${orCandles}`} />
+              <ORBChart candles={candles} trades={chartTrades} orCandles={orCandles} jumpToTime={jumpToTime} key={`${symbol}-${tf}-${activePane}-${orCandles}`} />
             ) : !loadingChart ? (
               <div className="flex items-center justify-center h-full">
                 <p className="text-slate-600 text-sm">Select a symbol to load chart data</p>
@@ -951,7 +1060,10 @@ export default function ORBStrategyBuilder({ editId }: { editId?: string }) {
                           </thead>
                           <tbody>
                             {t.trades.map((tr, i) => (
-                              <tr key={i} className={`border-b border-slate-800/40 ${tr.pnl>0 ? "hover:bg-emerald-950/20" : "hover:bg-rose-950/20"} transition-colors`}>
+                              <tr key={i}
+                                title="Click to view this day's chart"
+                                onClick={() => setDayModal({ trade: tr, symbol: activeBtSymbol! })}
+                                className={`border-b border-slate-800/40 cursor-pointer ${tr.pnl>0 ? "hover:bg-emerald-950/20" : "hover:bg-rose-950/20"} transition-colors`}>
                                 <td className="py-1 pr-3 text-slate-400">{tr.date}</td>
                                 <td className="py-1 pr-3">
                                   {tr.side === "BUY"
@@ -1033,10 +1145,22 @@ export default function ORBStrategyBuilder({ editId }: { editId?: string }) {
               candles={candles}
               trades={chartTrades}
               orCandles={orCandles}
+              jumpToTime={jumpToTime}
               key={`fs-${symbol}-${tf}-${activePane}-${orCandles}`}
             />
           </div>
         </div>
+      )}
+
+      {/* ── Day chart modal ───────────────────────────────────────────────────── */}
+      {dayModal && (
+        <DayChartModal
+          symbol={dayModal.symbol}
+          trade={dayModal.trade}
+          tf={tf}
+          orCandles={orCandles}
+          onClose={() => setDayModal(null)}
+        />
       )}
     </div>
   );

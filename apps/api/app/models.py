@@ -129,7 +129,7 @@ class ORBBacktestRequest(BaseModel):
     # ── Configurable strategy parameters ──────────────────────────────────────
     or_candles: int = Field(1, ge=1, le=10, description="Number of candles forming the Opening Range")
     market_open: str = Field("09:15", description="Market open time HH:MM (IST)")
-    volume_multiplier: float = Field(2.0, ge=0.5, le=10.0, description="Breakout volume must be >= this × avg volume")
+    volume_multiplier: float = Field(2.0, ge=0.5, le=50.0, description="Breakout volume must be >= this × avg volume")
     volume_lookback: int = Field(20, ge=5, le=100, description="Candles used to compute average volume")
     direction: Literal["both", "long", "short"] = Field("both", description="Trade direction filter")
     risk_reward: float = Field(1.0, ge=0.5, le=10.0, description="Target = entry ± risk × risk_reward")
