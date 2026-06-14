@@ -7,112 +7,13 @@ import React, {
   useCallback,
   useMemo,
 } from "react";
-import Highcharts from "highcharts/highstock";
 import { istToMs } from "@/lib/highcharts";
-import "@/lib/highcharts";
 import { api } from "@/lib/api";
-
-// ─── Module-level HC loader (runs once) ────────────────────────────────────────
-// Modules are loaded in dependency order: base indicators first, then dependants.
-// Parallel groups are safe; slow-stochastic must come after stochastic.
-let _hcLoadPromise: Promise<void> | null = null;
-function loadHcModules(): Promise<void> {
-  if (_hcLoadPromise) return _hcLoadPromise;
-
-  async function applyMod(p: Promise<{ default?: unknown }>) {
-    const m = await p;
-    const fn = (m as any).default;
-    if (typeof fn === "function") fn(Highcharts);
-  }
-
-  _hcLoadPromise = (async () => {
-    // Group 1: core modules (independent)
-    await Promise.all([
-      applyMod(import("highcharts/modules/drag-panes")),
-      applyMod(import("highcharts/modules/annotations")),
-      applyMod(import("highcharts/modules/annotations-advanced")),
-      applyMod(import("highcharts/modules/stock-tools")),
-      applyMod(import("highcharts/modules/full-screen")),
-      applyMod(import("highcharts/modules/mouse-wheel-zoom")),
-      applyMod(import("highcharts/modules/price-indicator")),
-      applyMod(import("highcharts/modules/heikinashi")),
-      applyMod(import("highcharts/modules/hollowcandlestick")),
-    ]);
-
-    // Group 2: base indicator module (must be before all indicators)
-    await applyMod(import("highcharts/indicators/indicators"));
-
-    // Group 3: independent indicators
-    await Promise.all([
-      applyMod(import("highcharts/indicators/bollinger-bands")),
-      applyMod(import("highcharts/indicators/macd")),
-      applyMod(import("highcharts/indicators/rsi")),
-      applyMod(import("highcharts/indicators/vwap")),
-      applyMod(import("highcharts/indicators/atr")),
-      applyMod(import("highcharts/indicators/cci")),
-      applyMod(import("highcharts/indicators/momentum")),
-      applyMod(import("highcharts/indicators/obv")),
-      applyMod(import("highcharts/indicators/wma")),
-      applyMod(import("highcharts/indicators/dema")),
-      applyMod(import("highcharts/indicators/tema")),
-      applyMod(import("highcharts/indicators/psar")),
-      applyMod(import("highcharts/indicators/supertrend")),
-      applyMod(import("highcharts/indicators/ichimoku-kinko-hyo")),
-      applyMod(import("highcharts/indicators/pivot-points")),
-      applyMod(import("highcharts/indicators/price-channel")),
-      applyMod(import("highcharts/indicators/keltner-channels")),
-      applyMod(import("highcharts/indicators/zigzag")),
-      applyMod(import("highcharts/indicators/williams-r")),
-      applyMod(import("highcharts/indicators/aroon")),
-      applyMod(import("highcharts/indicators/roc")),
-      applyMod(import("highcharts/indicators/ao")),
-      applyMod(import("highcharts/indicators/mfi")),
-      applyMod(import("highcharts/indicators/dmi")),
-    ]);
-
-    // Group 4: stochastic must be loaded before slow-stochastic
-    await applyMod(import("highcharts/indicators/stochastic"));
-    await applyMod(import("highcharts/indicators/slow-stochastic"));
-
-    // Volume-width plugin: scales candlestick/column width proportional to volume
-    // Based on: https://www.highcharts.com/demo/stock/candlestick-volume-width
-    (Highcharts as any).addEvent(
-      (Highcharts as any).seriesTypes.column,
-      "afterColumnTranslate",
-      function (this: any) {
-        const series = this;
-        if (series.options.baseVolume && series.is("column") && series.points) {
-          const volumeSeries = series.chart.get(series.options.baseVolume);
-          if (volumeSeries) {
-            const processedYData = (volumeSeries as any).getColumn("y", true);
-            if (processedYData) {
-              const maxVolume = (volumeSeries as any).dataMax;
-              const metrics = series.getColumnMetrics();
-              const baseWidth = metrics.width;
-              series.points.forEach((point: any, i: number) => {
-                const volume = processedYData[i];
-                const scale = volume / maxVolume;
-                const width = baseWidth * scale;
-                if (point.shapeArgs) {
-                  point.shapeArgs.x =
-                    point.shapeArgs.x - width / 2 + point.shapeArgs.width / 2;
-                  point.shapeArgs.width = width;
-                }
-              });
-            }
-          }
-        }
-      }
-    );
-
-    Highcharts.setOptions({
-      chart: { style: { fontFamily: "Inter, ui-sans-serif, system-ui" } },
-      colors: ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6"],
-    });
-  })();
-
-  return _hcLoadPromise;
-}
+import {
+  createChart, ColorType, CrosshairMode, LineStyle,
+  CandlestickSeries, HistogramSeries, LineSeries, AreaSeries, BarSeries,
+  type IChartApi, type ISeriesApi, type LogicalRange, type UTCTimestamp,
+} from "lightweight-charts";
 
 // ─── Types ──────────────────────────────────────────────────────────────────────
 interface CandleRaw {
@@ -163,7 +64,7 @@ interface StockChartProps {
   onHover: (v: OHLCVInfo | null) => void;
   activeToolRef: React.MutableRefObject<string>;
   pendingClickRef: React.MutableRefObject<{ x: number; y: number; x2?: number; y2?: number } | null>;
-  chartInstanceRef: React.MutableRefObject<Highcharts.StockChart | null>;
+  chartInstanceRef: React.MutableRefObject<IChartApi | null>;
 }
 
 // ─── Constants ──────────────────────────────────────────────────────────────────
@@ -274,334 +175,395 @@ function indicatorLabel(def: IndicatorDef, customParams?: Record<string, unknown
   return base;
 }
 
-function buildYAxes(oscInstances: IndicatorInstance[]): Highcharts.YAxisOptions[] {
-  const VOL_PCT = 10;
-  const OSC_PCT = 18; // taller panes — easier to read
-  const oscCount = oscInstances.length;
-  const priceH = Math.max(30, 100 - VOL_PCT - oscCount * OSC_PCT);
-  const volTop = priceH + 1;
+const TV = {
+  bg: "#131722",
+  up: "#26a69a",
+  down: "#ef5350",
+  upVol: "rgba(38,166,154,0.5)",
+  downVol: "rgba(239,83,80,0.5)",
+  grid: "#1e2030",
+  border: "#2a2e39",
+  text: "#d1d4dc",
+  axisLabel: "#787b86",
+};
 
-  const axes: Highcharts.YAxisOptions[] = [
-    {
-      height: `${priceH}%`,
-      labels: {
-        align: "right", x: -5,
-        style: { color: "#475569", fontSize: "10px" },
-        formatter(this: Highcharts.AxisLabelsFormatterContextObject) {
-          return (this.value as number).toFixed(1);
-        },
-      },
-      gridLineColor: "#1a2130",
-      lineColor: "#1a2130",
-      crosshair: {
-        snap: false,
-        label: {
-          enabled: true,
-          backgroundColor: "#1e3a5f",
-          borderColor: "#3b82f6",
-          style: { color: "#e2e8f0", fontSize: "10px" },
-          formatter(value: number) { return value.toFixed(1); },
-        } as any,
-      },
-      ...({ lastVisiblePrice: { enabled: true, label: { enabled: true, backgroundColor: "#1e3a5f", style: { color: "#e2e8f0" }, formatter(value: number) { return value.toFixed(1); } } } } as any),
-      resize: { enabled: true, lineWidth: 2, lineColor: "#1e293b" } as any,
-    },
-    {
-      top: `${volTop}%`,
-      height: `${VOL_PCT - 1}%`,
-      offset: 0,
-      labels: {
-        align: "right", x: -5,
-        style: { color: "#475569", fontSize: "9px" },
-        formatter(this: Highcharts.AxisLabelsFormatterContextObject) {
-          return fmtVol(this.value as number);
-        },
-      },
-      gridLineColor: "#111827",
-    },
-  ];
+interface CalcPoint { time: UTCTimestamp; value: number; }
+interface ChartDrawing { id: string; kind: string; points: Array<{ time: UTCTimestamp; price: number }>; text?: string; }
 
-  oscInstances.forEach((inst, i) => {
-    const def = INDICATOR_CATALOG.find((d) => d.id === inst.defId)!;
-    const top = volTop + VOL_PCT + i * OSC_PCT;
-    const paneH = OSC_PCT - 1;
-    const plotLines: Highcharts.YAxisPlotLinesOptions[] = [];
-    const plotBands: Highcharts.YAxisPlotBandsOptions[] = [];
-
-    if (def.hcType === "rsi") {
-      const ob = Number(inst.params.overbought ?? 70);
-      const os = Number(inst.params.oversold ?? 30);
-      plotBands.push(
-        { from: ob, to: 100, color: "rgba(239,68,68,0.06)", label: { text: "OB", style: { color: "#ef4444", fontSize: "8px" }, align: "left", x: 4 } },
-        { from: 0, to: os, color: "rgba(34,197,94,0.06)", label: { text: "OS", style: { color: "#22c55e", fontSize: "8px" }, align: "left", x: 4 } },
-      );
-      plotLines.push(
-        { value: ob, color: "#ef4444", dashStyle: "Dash" as any, width: 1, zIndex: 5, label: { text: String(ob), align: "right", x: -4, style: { color: "#ef4444", fontSize: "9px" } } },
-        { value: 50, color: "#334155", dashStyle: "Dot" as any, width: 1, zIndex: 5 },
-        { value: os, color: "#22c55e", dashStyle: "Dash" as any, width: 1, zIndex: 5, label: { text: String(os), align: "right", x: -4, style: { color: "#22c55e", fontSize: "9px" } } },
-      );
-    }
-    if (def.hcType === "stochastic" || def.hcType === "slowstochastic") {
-      plotBands.push(
-        { from: 80, to: 100, color: "rgba(239,68,68,0.06)" },
-        { from: 0, to: 20, color: "rgba(34,197,94,0.06)" },
-      );
-      plotLines.push(
-        { value: 80, color: "#ef4444", dashStyle: "Dash" as any, width: 1, zIndex: 5, label: { text: "80", align: "right", x: -4, style: { color: "#ef4444", fontSize: "9px" } } },
-        { value: 20, color: "#22c55e", dashStyle: "Dash" as any, width: 1, zIndex: 5, label: { text: "20", align: "right", x: -4, style: { color: "#22c55e", fontSize: "9px" } } },
-      );
-    }
-    if (def.hcType === "williamsr") {
-      plotBands.push(
-        { from: -20, to: 0, color: "rgba(239,68,68,0.06)" },
-        { from: -100, to: -80, color: "rgba(34,197,94,0.06)" },
-      );
-      plotLines.push(
-        { value: -20, color: "#ef4444", dashStyle: "Dash" as any, width: 1, zIndex: 5, label: { text: "-20", align: "right", x: -4, style: { color: "#ef4444", fontSize: "9px" } } },
-        { value: -80, color: "#22c55e", dashStyle: "Dash" as any, width: 1, zIndex: 5, label: { text: "-80", align: "right", x: -4, style: { color: "#22c55e", fontSize: "9px" } } },
-      );
-    }
-    if (def.hcType === "cci") {
-      plotBands.push(
-        { from: 100, to: 999, color: "rgba(239,68,68,0.06)" },
-        { from: -999, to: -100, color: "rgba(34,197,94,0.06)" },
-      );
-      plotLines.push(
-        { value: 100, color: "#ef4444", dashStyle: "Dash" as any, width: 1, zIndex: 5, label: { text: "100", align: "right", x: -4, style: { color: "#ef4444", fontSize: "9px" } } },
-        { value: 0, color: "#334155", dashStyle: "Dot" as any, width: 1, zIndex: 5 },
-        { value: -100, color: "#22c55e", dashStyle: "Dash" as any, width: 1, zIndex: 5, label: { text: "-100", align: "right", x: -4, style: { color: "#22c55e", fontSize: "9px" } } },
-      );
-    }
-    if (def.hcType === "macd" || def.hcType === "ao" || def.hcType === "momentum" || def.hcType === "roc") {
-      plotLines.push(
-        { value: 0, color: "#475569", dashStyle: "Solid" as any, width: 1, zIndex: 5 },
-      );
-    }
-    if (def.hcType === "mfi") {
-      plotBands.push(
-        { from: 80, to: 100, color: "rgba(239,68,68,0.06)" },
-        { from: 0, to: 20, color: "rgba(34,197,94,0.06)" },
-      );
-      plotLines.push(
-        { value: 80, color: "#ef4444", dashStyle: "Dash" as any, width: 1, zIndex: 5, label: { text: "80", align: "right", x: -4, style: { color: "#ef4444", fontSize: "9px" } } },
-        { value: 20, color: "#22c55e", dashStyle: "Dash" as any, width: 1, zIndex: 5, label: { text: "20", align: "right", x: -4, style: { color: "#22c55e", fontSize: "9px" } } },
-      );
-    }
-
-    axes.push({
-      top: `${top}%`,
-      height: `${paneH}%`,
-      offset: 0,
-      labels: {
-        align: "right", x: -5,
-        style: { color: "#475569", fontSize: "9px" },
-        formatter(this: Highcharts.AxisLabelsFormatterContextObject) {
-          return (this.value as number).toFixed(1);
-        },
-      },
-      title: {
-        text: indicatorLabel(def, inst.params),
-        style: { color: inst.color, fontSize: "9px", fontWeight: "600" },
-        rotation: 0,
-        x: 5,
-        align: "high",
-      } as any,
-      gridLineColor: "#111827",
-      lineColor: "#1e293b",
-      lineWidth: 1,
-      plotLines: plotLines.length ? plotLines : undefined,
-      plotBands: plotBands.length ? plotBands : undefined,
-      resize: { enabled: true, lineWidth: 3, lineColor: "#334155" } as any,
-    });
-  });
-
-  return axes;
+function msToSec(ms: number): UTCTimestamp {
+  return Math.floor(ms / 1000) as UTCTimestamp;
 }
 
-function buildIndicatorSeries(def: IndicatorDef, yAxisIdx: number, customParams?: Record<string, unknown>, instanceId?: string, instanceColor?: string): Record<string, unknown> {
-  const merged = { ...def.params, ...(customParams ?? {}) };
-  // Strip UI-only keys that Highcharts doesn't understand
-  const { overbought: _ob, oversold: _os, ...mergedParams } = merged as any;
-  const color = instanceColor ?? def.color;
-  const base: Record<string, unknown> = {
-    id: instanceId ?? def.id,
-    type: def.hcType,
-    linkedTo: "ohlc",
-    yAxis: yAxisIdx,
-    name: indicatorLabel(def, customParams),
-    color,
-    lineWidth: 1.5,
-    params: mergedParams,
-    dataGrouping: { enabled: false },
-    showInLegend: true,
+function baseChartOptions(el: HTMLDivElement, showTimeScale = true) {
+  return {
+    width: el.clientWidth,
+    height: el.clientHeight,
+    layout: {
+      background: { type: ColorType.Solid, color: TV.bg },
+      textColor: TV.text,
+      fontFamily: "'Inter', ui-sans-serif, system-ui",
+      fontSize: 12,
+    },
+    grid: {
+      vertLines: { color: TV.grid },
+      horzLines: { color: TV.grid },
+    },
+    crosshair: {
+      mode: CrosshairMode.Normal,
+      vertLine: { color: "#758696", width: 1 as const, labelBackgroundColor: "#1e222d" },
+      horzLine: { color: "#758696", width: 1 as const, labelBackgroundColor: "#1e222d" },
+    },
+    rightPriceScale: { borderColor: TV.border },
+    leftPriceScale: { visible: false },
+    timeScale: {
+      borderColor: TV.border,
+      timeVisible: true,
+      secondsVisible: false,
+      visible: showTimeScale,
+      tickMarkFormatter: (time: UTCTimestamp) => new Date((time as number) * 1000).toLocaleTimeString("en-IN", {
+        timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit", hour12: false,
+      }),
+    },
+    localization: {
+      timeFormatter: (time: UTCTimestamp) => new Date((time as number) * 1000).toLocaleString("en-IN", {
+        timeZone: "Asia/Kolkata", day: "2-digit", month: "short", year: "numeric",
+        hour: "2-digit", minute: "2-digit", hour12: false,
+      }),
+    },
+    handleScroll: { mouseWheel: true, pressedMouseMove: true },
+    handleScale: { mouseWheel: true, pinch: true },
   };
-
-  if (def.hcType === "bb") {
-    return {
-      ...base, fillOpacity: 0.07,
-      topLine: { styles: { lineColor: color, lineWidth: 1 } },
-      bottomLine: { styles: { lineColor: color, lineWidth: 1 } },
-    };
-  }
-  if (def.hcType === "macd") {
-    return {
-      ...base, lineWidth: 0,
-      macdLine: { styles: { lineColor: "#10b981", lineWidth: 1.5 } },
-      signalLine: { styles: { lineColor: "#f59e0b", lineWidth: 1.5 } },
-      histogram: { color: "#22c55e", negativeColor: "#ef4444" },
-    };
-  }
-  if (def.hcType === "stochastic" || def.hcType === "slowstochastic") {
-    return { ...base, smoothedLine: { styles: { lineColor: "#f59e0b", lineWidth: 1.5 } } };
-  }
-  if (def.hcType === "supertrend") {
-    return {
-      ...base,
-      risingTrendColor: "#22c55e",
-      fallingTrendColor: "#ef4444",
-      changeTrendLine: { styles: { lineWidth: 1 } },
-    };
-  }
-  if (def.hcType === "ikh") {
-    return {
-      ...base,
-      tenkanLine: { styles: { lineColor: "#38bdf8", lineWidth: 1 } },
-      kijunLine: { styles: { lineColor: "#f59e0b", lineWidth: 1 } },
-      chikouLine: { styles: { lineColor: "#4ade80", lineWidth: 1 } },
-      senkouSpanA: { styles: { lineColor: "#22c55e", lineWidth: 1 } },
-      senkouSpanB: { styles: { lineColor: "#ef4444", lineWidth: 1 } },
-    };
-  }
-  return base;
 }
 
-// ─── Annotation drawing helpers ─────────────────────────────────────────────────
-function drawHLine(chart: Highcharts.StockChart, _x: number, y: number) {
-  (chart as any).addAnnotation({
-    type: "infinityLine",
-    typeOptions: { type: "horizontalLine", points: [{ x: 0, y, xAxis: 0, yAxis: 0 }] },
-    shapeOptions: { stroke: "#f59e0b", strokeWidth: 1.5, dashStyle: "Dash" },
-    draggable: "y",
+function sma(data: number[], period: number): number[] {
+  return data.map((_, i) => i < period - 1 ? NaN : data.slice(i - period + 1, i + 1).reduce((a, b) => a + b, 0) / period);
+}
+
+function ema(data: number[], period: number): number[] {
+  const k = 2 / (period + 1);
+  const out: number[] = [];
+  data.forEach((v, i) => out.push(i === 0 ? v : v * k + out[i - 1] * (1 - k)));
+  return out;
+}
+
+function wma(data: number[], period: number): number[] {
+  const denom = period * (period + 1) / 2;
+  return data.map((_, i) => {
+    if (i < period - 1) return NaN;
+    let sum = 0;
+    for (let j = 0; j < period; j++) sum += data[i - period + 1 + j] * (j + 1);
+    return sum / denom;
   });
 }
 
-function drawVLine(chart: Highcharts.StockChart, x: number, y: number) {
-  (chart as any).addAnnotation({
-    type: "infinityLine",
-    typeOptions: { type: "verticalLine", points: [{ x, y, xAxis: 0, yAxis: 0 }] },
-    shapeOptions: { stroke: "#94a3b8", strokeWidth: 1.5, dashStyle: "Dash" },
-    draggable: "x",
+function dema(data: number[], period: number): number[] {
+  const e1 = ema(data, period);
+  const e2 = ema(e1, period);
+  return e1.map((v, i) => 2 * v - e2[i]);
+}
+
+function tema(data: number[], period: number): number[] {
+  const e1 = ema(data, period);
+  const e2 = ema(e1, period);
+  const e3 = ema(e2, period);
+  return e1.map((v, i) => 3 * v - 3 * e2[i] + e3[i]);
+}
+
+function rsi(data: number[], period = 14): number[] {
+  if (data.length <= period) return data.map(() => NaN);
+  const out: number[] = new Array(period).fill(NaN);
+  let avgGain = 0;
+  let avgLoss = 0;
+  for (let i = 1; i <= period; i++) {
+    const diff = data[i] - data[i - 1];
+    avgGain += Math.max(diff, 0) / period;
+    avgLoss += Math.max(-diff, 0) / period;
+  }
+  out.push(100 - 100 / (1 + avgGain / Math.max(avgLoss, 1e-10)));
+  for (let i = period + 1; i < data.length; i++) {
+    const diff = data[i] - data[i - 1];
+    avgGain = (avgGain * (period - 1) + Math.max(diff, 0)) / period;
+    avgLoss = (avgLoss * (period - 1) + Math.max(-diff, 0)) / period;
+    out.push(100 - 100 / (1 + avgGain / Math.max(avgLoss, 1e-10)));
+  }
+  return out.slice(0, data.length);
+}
+
+function macd(data: number[], fast = 12, slow = 26, sig = 9) {
+  const fastEma = ema(data, fast);
+  const slowEma = ema(data, slow);
+  const ml = fastEma.map((v, i) => v - slowEma[i]);
+  const sl = ema(ml, sig);
+  const hist = ml.map((v, i) => v - sl[i]);
+  return { ml, sl, hist };
+}
+
+function bbands(data: number[], period = 20, stdDev = 2) {
+  const mid = sma(data, period);
+  const upper = mid.map((m, i) => {
+    if (isNaN(m)) return NaN;
+    const sample = data.slice(i - period + 1, i + 1);
+    const variance = sample.reduce((acc, v) => acc + (v - m) ** 2, 0) / period;
+    return m + stdDev * Math.sqrt(variance);
+  });
+  const lower = mid.map((m, i) => {
+    if (isNaN(m)) return NaN;
+    const sample = data.slice(i - period + 1, i + 1);
+    const variance = sample.reduce((acc, v) => acc + (v - m) ** 2, 0) / period;
+    return m - stdDev * Math.sqrt(variance);
+  });
+  return { upper, mid, lower };
+}
+
+function vwapCalc(candles: CandleRaw[]): number[] {
+  let cumPV = 0;
+  let cumV = 0;
+  return candles.map((c) => {
+    const tp = (c.h + c.l + c.c) / 3;
+    cumPV += tp * c.v;
+    cumV += c.v;
+    return cumV ? cumPV / cumV : NaN;
   });
 }
 
-function drawTrendLine(chart: Highcharts.StockChart, p1: { x: number; y: number }, p2: { x: number; y: number }) {
-  (chart as any).addAnnotation({
-    shapes: [{
-      type: "path",
-      points: [
-        { x: p1.x, y: p1.y, xAxis: 0, yAxis: 0 },
-        { x: p2.x, y: p2.y, xAxis: 0, yAxis: 0 },
-      ],
-      stroke: "#3b82f6",
-      strokeWidth: 1.5,
-      fill: "none",
-    }],
-    draggable: "xy",
+function atrCalc(candles: CandleRaw[], period = 14): number[] {
+  const tr = candles.map((c, i) => i === 0 ? c.h - c.l : Math.max(c.h - c.l, Math.abs(c.h - candles[i - 1].c), Math.abs(c.l - candles[i - 1].c)));
+  const atr: number[] = [];
+  tr.forEach((v, i) => {
+    if (i < period - 1) atr.push(NaN);
+    else if (i === period - 1) atr.push(tr.slice(0, period).reduce((a, b) => a + b, 0) / period);
+    else atr.push((atr[i - 1] * (period - 1) + v) / period);
+  });
+  return atr;
+}
+
+function supertrendCalc(candles: CandleRaw[], period = 10, mult = 3): number[] {
+  const atr = atrCalc(candles, period);
+  const out: number[] = [];
+  let dir = 1;
+  for (let i = 0; i < candles.length; i++) {
+    if (isNaN(atr[i])) { out.push(NaN); continue; }
+    const hl2 = (candles[i].h + candles[i].l) / 2;
+    const upper = hl2 + mult * atr[i];
+    const lower = hl2 - mult * atr[i];
+    if (i === 0 || isNaN(out[i - 1])) { out.push(lower); continue; }
+    if (candles[i].c > out[i - 1]) dir = 1;
+    else if (candles[i].c < out[i - 1]) dir = -1;
+    out.push(dir === 1 ? lower : upper);
+  }
+  return out;
+}
+
+function stochCalc(candles: CandleRaw[], period = 14, smooth = 3) {
+  const k = candles.map((c, i) => {
+    if (i < period - 1) return NaN;
+    const slice = candles.slice(i - period + 1, i + 1);
+    const highest = Math.max(...slice.map((x) => x.h));
+    const lowest = Math.min(...slice.map((x) => x.l));
+    return highest === lowest ? 0 : ((c.c - lowest) / (highest - lowest)) * 100;
+  });
+  const d = sma(k.map((v) => isNaN(v) ? 0 : v), smooth).map((v, i) => isNaN(k[i]) ? NaN : v);
+  return { k, d };
+}
+
+function cciCalc(candles: CandleRaw[], period = 20): number[] {
+  const tp = candles.map((c) => (c.h + c.l + c.c) / 3);
+  const avg = sma(tp, period);
+  return tp.map((v, i) => {
+    if (i < period - 1 || isNaN(avg[i])) return NaN;
+    const slice = tp.slice(i - period + 1, i + 1);
+    const md = slice.reduce((acc, n) => acc + Math.abs(n - avg[i]), 0) / period;
+    return md ? (v - avg[i]) / (0.015 * md) : 0;
   });
 }
 
-function drawRay(chart: Highcharts.StockChart, p1: { x: number; y: number }, p2: { x: number; y: number }) {
-  const xMax = (chart.xAxis[0] as any).dataMax ?? p2.x * 2;
-  const slope = (p2.y - p1.y) / (p2.x - p1.x || 1);
-  const yEnd = p1.y + slope * (xMax - p1.x);
-  (chart as any).addAnnotation({
-    shapes: [{
-      type: "path",
-      points: [
-        { x: p1.x, y: p1.y, xAxis: 0, yAxis: 0 },
-        { x: xMax, y: yEnd, xAxis: 0, yAxis: 0 },
-      ],
-      stroke: "#10b981",
-      strokeWidth: 1.5,
-      fill: "none",
-    }],
-    draggable: "xy",
+function momentumCalc(data: number[], period = 10): number[] {
+  return data.map((v, i) => i < period ? NaN : v - data[i - period]);
+}
+
+function obvCalc(candles: CandleRaw[]): number[] {
+  let obv = 0;
+  return candles.map((c, i) => {
+    if (i === 0) return 0;
+    if (c.c > candles[i - 1].c) obv += c.v;
+    else if (c.c < candles[i - 1].c) obv -= c.v;
+    return obv;
   });
 }
 
-function drawFibonacci(chart: Highcharts.StockChart, p1: { x: number; y: number }, p2: { x: number; y: number }) {
-  const levels = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1];
-  const diff = p2.y - p1.y;
-  levels.forEach((lvl) => {
-    const y = p2.y - diff * lvl;
-    (chart as any).addAnnotation({
-      type: "infinityLine",
-      typeOptions: { type: "horizontalLine", points: [{ x: p1.x, y, xAxis: 0, yAxis: 0 }] },
-      shapeOptions: { stroke: "#a78bfa", strokeWidth: 1, dashStyle: "Dot" },
-      labels: [{ point: { x: p2.x, y, xAxis: 0, yAxis: 0 }, text: `${(lvl * 100).toFixed(1)}%`, style: { color: "#a78bfa", fontSize: "9px" } }],
-      draggable: "y",
+function willrCalc(candles: CandleRaw[], period = 14): number[] {
+  return candles.map((c, i) => {
+    if (i < period - 1) return NaN;
+    const slice = candles.slice(i - period + 1, i + 1);
+    const hh = Math.max(...slice.map((x) => x.h));
+    const ll = Math.min(...slice.map((x) => x.l));
+    return hh === ll ? 0 : ((hh - c.c) / (hh - ll)) * -100;
+  });
+}
+
+function rocCalc(data: number[], period = 10): number[] {
+  return data.map((v, i) => i < period || data[i - period] === 0 ? NaN : ((v - data[i - period]) / data[i - period]) * 100);
+}
+
+function aroonCalc(candles: CandleRaw[], period = 25) {
+  const up: number[] = [];
+  const down: number[] = [];
+  candles.forEach((_, i) => {
+    if (i < period - 1) { up.push(NaN); down.push(NaN); return; }
+    const slice = candles.slice(i - period + 1, i + 1);
+    let hiIdx = 0;
+    let loIdx = 0;
+    slice.forEach((c, idx) => {
+      if (c.h >= slice[hiIdx].h) hiIdx = idx;
+      if (c.l <= slice[loIdx].l) loIdx = idx;
     });
+    up.push(((period - 1 - (slice.length - 1 - hiIdx)) / (period - 1)) * 100);
+    down.push(((period - 1 - (slice.length - 1 - loIdx)) / (period - 1)) * 100);
+  });
+  return { up, down };
+}
+
+function aoCalc(candles: CandleRaw[]): number[] {
+  const mid = candles.map((c) => (c.h + c.l) / 2);
+  const s5 = sma(mid, 5);
+  const s34 = sma(mid, 34);
+  return mid.map((_, i) => s5[i] - s34[i]);
+}
+
+function mfiCalc(candles: CandleRaw[], period = 14): number[] {
+  const tp = candles.map((c) => (c.h + c.l + c.c) / 3);
+  const flow = candles.map((c, i) => tp[i] * c.v * (i === 0 ? 0 : tp[i] >= tp[i - 1] ? 1 : -1));
+  return candles.map((_, i) => {
+    if (i < period) return NaN;
+    const slice = flow.slice(i - period + 1, i + 1);
+    const pos = slice.filter((v) => v > 0).reduce((a, b) => a + b, 0);
+    const neg = Math.abs(slice.filter((v) => v < 0).reduce((a, b) => a + b, 0));
+    return neg ? 100 - 100 / (1 + pos / neg) : 100;
   });
 }
 
-function drawRectangle(chart: Highcharts.StockChart, p1: { x: number; y: number }, p2: { x: number; y: number }) {
-  (chart as any).addAnnotation({
-    shapes: [{
-      type: "rect",
-      point: { x: Math.min(p1.x, p2.x), y: Math.max(p1.y, p2.y), xAxis: 0, yAxis: 0 },
-      width: Math.abs(p2.x - p1.x),
-      height: Math.abs(p2.y - p1.y),
-      stroke: "#f59e0b",
-      strokeWidth: 1.5,
-      fill: "rgba(245,158,11,0.06)",
-    }],
-    draggable: "xy",
+function dmiCalc(candles: CandleRaw[], period = 14) {
+  const plusDM = candles.map((c, i) => {
+    if (i === 0) return 0;
+    const upMove = c.h - candles[i - 1].h;
+    const downMove = candles[i - 1].l - c.l;
+    return upMove > downMove && upMove > 0 ? upMove : 0;
   });
-}
-
-function drawLabel(chart: Highcharts.StockChart, x: number, y: number, text: string) {
-  (chart as any).addAnnotation({
-    labels: [{
-      point: { x, y, xAxis: 0, yAxis: 0 },
-      text,
-      style: { color: "#e2e8f0", fontSize: "11px" },
-      backgroundColor: "rgba(30,41,59,0.85)",
-      borderColor: "#475569",
-      padding: 4,
-    }],
-    draggable: "xy",
+  const minusDM = candles.map((c, i) => {
+    if (i === 0) return 0;
+    const upMove = c.h - candles[i - 1].h;
+    const downMove = candles[i - 1].l - c.l;
+    return downMove > upMove && downMove > 0 ? downMove : 0;
   });
-}
-
-function drawPitchfork(chart: Highcharts.StockChart, p1: { x: number; y: number }, p2: { x: number; y: number }, p3: { x: number; y: number }) {
-  // Draw Andrews Pitchfork as 3 rays using basic shapes
-  const mid = { x: (p2.x + p3.x) / 2, y: (p2.y + p3.y) / 2 };
-  const xMax = (chart.xAxis[0] as any).dataMax ?? p1.x * 2;
-
-  function extendRay(a: { x: number; y: number }, b: { x: number; y: number }) {
-    const slope = (b.y - a.y) / (b.x - a.x || 1);
-    return { x: xMax, y: a.y + slope * (xMax - a.x) };
-  }
-
-  const midEnd = extendRay(p1, mid);
-  const upperEnd = extendRay(p2, { x: p2.x + (mid.x - p1.x), y: p2.y + (mid.y - p1.y) });
-  const lowerEnd = extendRay(p3, { x: p3.x + (mid.x - p1.x), y: p3.y + (mid.y - p1.y) });
-
-  [[p1, midEnd], [p2, upperEnd], [p3, lowerEnd]].forEach(([a, b]) => {
-    (chart as any).addAnnotation({
-      shapes: [{
-        type: "path",
-        points: [
-          { x: a.x, y: a.y, xAxis: 0, yAxis: 0 },
-          { x: b.x, y: b.y, xAxis: 0, yAxis: 0 },
-        ],
-        stroke: "#f97316",
-        strokeWidth: 1.5,
-        fill: "none",
-      }],
-      draggable: "xy",
+  const roll = (arr: number[]) => {
+    const out: number[] = [];
+    arr.forEach((v, i) => {
+      if (i < period - 1) out.push(NaN);
+      else if (i === period - 1) out.push(arr.slice(0, period).reduce((a, b) => a + b, 0));
+      else out.push(out[i - 1] - out[i - 1] / period + v);
     });
+    return out;
+  };
+  const pdm = roll(plusDM);
+  const mdm = roll(minusDM);
+  const atr = atrCalc(candles, period);
+  const plus = atr.map((a, i) => isNaN(a) || !pdm[i] ? NaN : (pdm[i] / (a * period)) * 100);
+  const minus = atr.map((a, i) => isNaN(a) || !mdm[i] ? NaN : (mdm[i] / (a * period)) * 100);
+  const dx = plus.map((p, i) => isNaN(p) || isNaN(minus[i]) || p + minus[i] === 0 ? NaN : (Math.abs(p - minus[i]) / (p + minus[i])) * 100);
+  const adx = ema(dx.map((v) => isNaN(v) ? 0 : v), period).map((v, i) => isNaN(dx[i]) ? NaN : v);
+  return { plus, minus, adx };
+}
+
+function psarCalc(candles: CandleRaw[], step = 0.02, maxStep = 0.2): number[] {
+  if (!candles.length) return [];
+  let bull = true;
+  let af = step;
+  let ep = candles[0].h;
+  let sar = candles[0].l;
+  const out = [sar];
+  for (let i = 1; i < candles.length; i++) {
+    sar = sar + af * (ep - sar);
+    const c = candles[i];
+    if (bull) {
+      sar = Math.min(sar, candles[i - 1].l, candles[Math.max(i - 2, 0)].l);
+      if (c.l < sar) {
+        bull = false;
+        sar = ep;
+        ep = c.l;
+        af = step;
+      } else if (c.h > ep) {
+        ep = c.h;
+        af = Math.min(af + step, maxStep);
+      }
+    } else {
+      sar = Math.max(sar, candles[i - 1].h, candles[Math.max(i - 2, 0)].h);
+      if (c.h > sar) {
+        bull = true;
+        sar = ep;
+        ep = c.h;
+        af = step;
+      } else if (c.l < ep) {
+        ep = c.l;
+        af = Math.min(af + step, maxStep);
+      }
+    }
+    out.push(sar);
+  }
+  return out;
+}
+
+function priceChannelCalc(candles: CandleRaw[], period = 20) {
+  const upper = candles.map((_, i) => i < period - 1 ? NaN : Math.max(...candles.slice(i - period + 1, i + 1).map((c) => c.h)));
+  const lower = candles.map((_, i) => i < period - 1 ? NaN : Math.min(...candles.slice(i - period + 1, i + 1).map((c) => c.l)));
+  return { upper, lower };
+}
+
+function keltnerCalc(candles: CandleRaw[], period = 20, mult = 2) {
+  const middle = ema(candles.map((c) => c.c), period);
+  const atr = atrCalc(candles, period);
+  return {
+    middle,
+    upper: middle.map((m, i) => isNaN(m) || isNaN(atr[i]) ? NaN : m + mult * atr[i]),
+    lower: middle.map((m, i) => isNaN(m) || isNaN(atr[i]) ? NaN : m - mult * atr[i]),
+  };
+}
+
+function ichimokuCalc(candles: CandleRaw[]) {
+  const rollingMid = (period: number) => candles.map((_, i) => {
+    if (i < period - 1) return NaN;
+    const slice = candles.slice(i - period + 1, i + 1);
+    return (Math.max(...slice.map((c) => c.h)) + Math.min(...slice.map((c) => c.l))) / 2;
   });
+  const tenkan = rollingMid(9);
+  const kijun = rollingMid(26);
+  const senkouA = tenkan.map((v, i) => isNaN(v) || isNaN(kijun[i]) ? NaN : (v + kijun[i]) / 2);
+  const senkouB = rollingMid(52);
+  const chikou = candles.map((c) => c.c);
+  return { tenkan, kijun, senkouA, senkouB, chikou };
+}
+
+function heikinAshiCalc(candles: CandleRaw[]): CandleRaw[] {
+  return candles.map((c, i) => {
+    const close = (c.o + c.h + c.l + c.c) / 4;
+    const open = i === 0 ? (c.o + c.c) / 2 : ((candles[i - 1] as any).__haOpen + (candles[i - 1] as any).__haClose) / 2;
+    const high = Math.max(c.h, open, close);
+    const low = Math.min(c.l, open, close);
+    const out = { ...c, o: open, h: high, l: low, c: close } as CandleRaw & { __haOpen?: number; __haClose?: number };
+    out.__haOpen = open;
+    out.__haClose = close;
+    return out;
+  }).map(({ __haOpen, __haClose, ...rest }) => rest as CandleRaw);
+}
+
+function calcPivots(candles: CandleRaw[]) {
+  const last = candles[candles.length - 1];
+  if (!last) return null;
+  const pp = (last.h + last.l + last.c) / 3;
+  return { pp, r1: 2 * pp - last.l, s1: 2 * pp - last.h };
+}
+
+function asLinePoints(candles: CandleRaw[], values: number[]): CalcPoint[] {
+  return candles.map((c, i) => ({ time: msToSec(c.t), value: values[i] })).filter((p) => Number.isFinite(p.value));
 }
 
 // ─── Sub-components ──────────────────────────────────────────────────────────────
@@ -722,7 +684,7 @@ function OHLCVBar({ symbol, tf, ohlcv }: { symbol: string; tf: string; ohlcv: OH
 function TimePeriodBar({ value, onChange, chartRef, candles }: {
   value: TP;
   onChange: (v: TP) => void;
-  chartRef: React.MutableRefObject<Highcharts.StockChart | null>;
+  chartRef: React.MutableRefObject<IChartApi | null>;
   candles: CandleRaw[];
 }) {
   const [customFrom, setCustomFrom] = useState("");
@@ -730,28 +692,31 @@ function TimePeriodBar({ value, onChange, chartRef, candles }: {
 
   function applyCustomRange() {
     if (!chartRef.current || !customFrom) return;
-    const fromMs = istToMs(customFrom + " 00:00:00");
-    const toMs = customTo ? istToMs(customTo + " 23:59:59") : Date.now();
-    chartRef.current.xAxis[0].setExtremes(fromMs, toMs, true);
+    const from = msToSec(istToMs(customFrom + " 00:00:00"));
+    const to = msToSec(customTo ? istToMs(customTo + " 23:59:59") : (candles[candles.length - 1]?.t ?? Date.now()));
+    chartRef.current.timeScale().setVisibleRange({ from, to });
   }
 
   function handlePeriod(key: TP) {
     onChange(key);
-    if (!chartRef.current) return;
+    const chart = chartRef.current;
+    const last = candles[candles.length - 1];
+    if (!chart || !last) return;
     const tp = TIME_PERIODS.find((p) => p.key === key)!;
-    const xAxis = chartRef.current.xAxis[0];
+    const to = msToSec(last.t);
     if (tp.days >= 9999) {
-      xAxis.setExtremes(undefined, undefined, true);
-    } else if (tp.key === "YTD") {
-      const jan1 = new Date(new Date().getFullYear(), 0, 1).getTime();
-      xAxis.setExtremes(jan1, undefined, true);
-    } else {
-      xAxis.setExtremes(Date.now() - tp.days * 86400000, undefined, true);
+      chart.timeScale().resetTimeScale();
+      return;
     }
+    if (tp.key === "YTD") {
+      const lastDate = new Date(last.t);
+      const from = msToSec(new Date(lastDate.getFullYear(), 0, 1).getTime());
+      chart.timeScale().setVisibleRange({ from, to });
+      return;
+    }
+    const from = msToSec(last.t - tp.days * 86400000);
+    chart.timeScale().setVisibleRange({ from, to });
   }
-
-  // suppress unused warning — candles available for future use
-  void candles;
 
   return (
     <div className="flex items-center gap-1 px-3 py-1.5 border-t border-[#1a2130] shrink-0 flex-wrap">
@@ -954,239 +919,478 @@ function IndicatorSettingsModal({ def, currentParams, currentColor, onSave, onCl
 
 // ─── StockChart ──────────────────────────────────────────────────────────────────
 function StockChart({
-  candles, symbol, chartType, instances, onHover,
+  candles, symbol, chartType, instances, timePeriod, onHover,
   activeToolRef, pendingClickRef, chartInstanceRef,
 }: StockChartProps) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const annotationsRef = useRef<unknown[]>([]);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const mainRef = useRef<HTMLDivElement>(null);
+  const paneRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const chartsRef = useRef<Record<string, IChartApi>>({});
   const callbackRef = useRef(onHover);
+  const priceLinesRef = useRef<any[]>([]);
+  const drawingsRef = useRef<ChartDrawing[]>([]);
+  const [drawVersion, setDrawVersion] = useState(0);
+
+  const overlayInstances = useMemo(
+    () => instances.filter((inst) => !INDICATOR_CATALOG.find((d) => d.id === inst.defId)?.isOsc),
+    [instances]
+  );
+  const oscInstances = useMemo(
+    () => instances.filter((inst) => INDICATOR_CATALOG.find((d) => d.id === inst.defId)?.isOsc),
+    [instances]
+  );
 
   useEffect(() => { callbackRef.current = onHover; }, [onHover]);
+  void timePeriod;
+
+  const redrawSvg = useCallback(() => setDrawVersion((v) => v + 1), []);
 
   useEffect(() => {
-    if (!containerRef.current || candles.length === 0) return;
+    const mainEl = mainRef.current;
+    if (!mainEl || candles.length === 0) return;
 
-    if (chartInstanceRef.current) {
-      annotationsRef.current =
-        (chartInstanceRef.current as any).annotations?.map((a: any) => a.options) ?? [];
-      chartInstanceRef.current.destroy();
-      chartInstanceRef.current = null;
+    Object.values(chartsRef.current).forEach((chart) => chart.remove());
+    chartsRef.current = {};
+    chartInstanceRef.current = null;
+    priceLinesRef.current = [];
+
+    const sourceCandles = chartType === "heikinashi" ? heikinAshiCalc(candles) : candles;
+    const candleMap = new Map(sourceCandles.map((c) => [msToSec(c.t) as number, c]));
+    const closes = sourceCandles.map((c) => c.c);
+
+    const mainChart = createChart(mainEl, baseChartOptions(mainEl, oscInstances.length === 0));
+    chartsRef.current.main = mainChart;
+    chartInstanceRef.current = mainChart;
+    (chartInstanceRef.current as any).__containerEl = rootRef.current;
+
+    let primarySeries: ISeriesApi<any>;
+    if (chartType === "line") {
+      const series = mainChart.addSeries(LineSeries, {
+        color: "#3b82f6",
+        lineWidth: 2,
+      });
+      series.priceScale().applyOptions({ scaleMargins: { top: 0.05, bottom: 0.28 } });
+      series.setData(sourceCandles.map((c) => ({ time: msToSec(c.t), value: c.c })));
+      primarySeries = series as ISeriesApi<any>;
+    } else if (chartType === "ohlc") {
+      const series = mainChart.addSeries(BarSeries, {
+        upColor: TV.up,
+        downColor: TV.down,
+      });
+      series.priceScale().applyOptions({ scaleMargins: { top: 0.05, bottom: 0.28 } });
+      series.setData(sourceCandles.map((c) => ({ time: msToSec(c.t), open: c.o, high: c.h, low: c.l, close: c.c })));
+      primarySeries = series as ISeriesApi<any>;
+    } else {
+      const series = mainChart.addSeries(CandlestickSeries, {
+        upColor: TV.up,
+        downColor: TV.down,
+        borderUpColor: TV.up,
+        borderDownColor: TV.down,
+        wickUpColor: TV.up,
+        wickDownColor: TV.down,
+      });
+      series.priceScale().applyOptions({ scaleMargins: { top: 0.05, bottom: 0.28 } });
+      series.setData(sourceCandles.map((c) => ({ time: msToSec(c.t), open: c.o, high: c.h, low: c.l, close: c.c })));
+      primarySeries = series as ISeriesApi<any>;
+    }
+    (chartInstanceRef.current as any).__primarySeries = primarySeries;
+
+    const volSeries = mainChart.addSeries(HistogramSeries, {
+      priceScaleId: "vol",
+      priceFormat: { type: "volume" },
+      priceLineVisible: false,
+      lastValueVisible: false,
+    });
+    mainChart.priceScale("vol").applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
+    volSeries.setData(sourceCandles.map((c) => ({
+      time: msToSec(c.t),
+      value: c.v,
+      color: c.c >= c.o ? TV.upVol : TV.downVol,
+    })));
+
+    const addLine = (values: number[], color: string, lineWidth: 1 | 2 = 2) => {
+      const line = mainChart.addSeries(LineSeries, { color, lineWidth, lastValueVisible: false, priceLineVisible: false });
+      line.setData(asLinePoints(sourceCandles, values));
+      return line;
+    };
+
+    overlayInstances.forEach((inst) => {
+      const def = INDICATOR_CATALOG.find((d) => d.id === inst.defId);
+      if (!def) return;
+      const p = inst.params as Record<string, number | string>;
+      switch (inst.defId) {
+        case "ema": addLine(ema(closes, Number(p.period ?? 20)), inst.color); break;
+        case "sma": addLine(sma(closes, Number(p.period ?? 20)), inst.color); break;
+        case "wma": addLine(wma(closes, Number(p.period ?? 20)), inst.color); break;
+        case "dema": addLine(dema(closes, Number(p.period ?? 20)), inst.color); break;
+        case "tema": addLine(tema(closes, Number(p.period ?? 20)), inst.color); break;
+        case "supertrend": addLine(supertrendCalc(sourceCandles, Number(p.period ?? 10), Number(p.multiplier ?? 3)), inst.color); break;
+        case "vwap": addLine(vwapCalc(sourceCandles), inst.color); break;
+        case "bb": {
+          const { upper, mid, lower } = bbands(closes, Number(p.period ?? 20), Number(p.standardDeviation ?? 2));
+          const upperLine = addLine(upper, inst.color);
+          addLine(mid, "#94a3b8", 1);
+          addLine(lower, inst.color);
+          const band = mainChart.addSeries(AreaSeries, {
+            lineColor: "transparent",
+            topColor: "rgba(100,116,139,0.18)",
+            bottomColor: "rgba(100,116,139,0.02)",
+            lastValueVisible: false,
+            priceLineVisible: false,
+          });
+          band.setData(asLinePoints(sourceCandles, upper));
+          void upperLine;
+          break;
+        }
+        case "psar": addLine(psarCalc(sourceCandles), inst.color, 1); break;
+        case "pc": {
+          const { upper, lower } = priceChannelCalc(sourceCandles, Number(p.period ?? 20));
+          addLine(upper, inst.color);
+          addLine(lower, inst.color);
+          break;
+        }
+        case "keltner": {
+          const { middle, upper, lower } = keltnerCalc(sourceCandles, Number(p.period ?? 20), Number(p.multiplierATR ?? 2));
+          addLine(middle, "#94a3b8", 1);
+          addLine(upper, inst.color);
+          addLine(lower, inst.color);
+          break;
+        }
+        case "ikh": {
+          const { tenkan, kijun, senkouA, senkouB, chikou } = ichimokuCalc(sourceCandles);
+          addLine(tenkan, "#38bdf8", 1);
+          addLine(kijun, "#f59e0b", 1);
+          addLine(senkouA, "#22c55e", 1);
+          addLine(senkouB, "#ef4444", 1);
+          addLine(chikou, inst.color, 1);
+          break;
+        }
+        case "pivots": {
+          const pivots = calcPivots(sourceCandles);
+          if (!pivots) break;
+          [
+            { price: pivots.pp, color: "#94a3b8", title: "PP" },
+            { price: pivots.r1, color: TV.up, title: "R1" },
+            { price: pivots.s1, color: TV.down, title: "S1" },
+          ].forEach((line) => priceLinesRef.current.push((primarySeries as any).createPriceLine({
+            price: line.price,
+            color: line.color,
+            lineWidth: 1,
+            lineStyle: LineStyle.Dashed,
+            axisLabelVisible: true,
+            title: line.title,
+          })));
+          break;
+        }
+        default:
+          break;
+      }
+    });
+
+    if (instances.some((inst) => inst.defId === "zigzag")) {
+      // intentionally skipped
     }
 
-    const oscInstances = instances.filter(
-      (inst) => INDICATOR_CATALOG.find((d) => d.id === inst.defId)?.isOsc
-    );
-    const overlayInstances = instances.filter(
-      (inst) => !INDICATOR_CATALOG.find((d) => d.id === inst.defId)?.isOsc
-    );
-    const yAxes = buildYAxes(oscInstances);
-    const ohlcData = candles.map((c) => [c.t, c.o, c.h, c.l, c.c]);
-    // Volume column bars (green/red based on price direction)
-    const volData = candles.map((c) => ({
-      x: c.t, y: c.v,
-      color: c.c >= c.o ? "rgba(34,197,94,0.55)" : "rgba(239,68,68,0.55)",
-    }));
-    const volMap = new Map(candles.map((c) => [c.t, c.v]));
+    mainEl.style.position = "relative";
+    const legend = document.createElement("div");
+    legend.style.cssText = `position:absolute;top:8px;left:12px;z-index:12;pointer-events:none;font-family:'Inter',system-ui;font-size:12px;color:${TV.text};background:rgba(19,23,34,0.9);padding:4px 10px;border-radius:4px;border:1px solid ${TV.border};line-height:1.8;`;
+    mainEl.appendChild(legend);
 
-    const indicatorSeries: Record<string, unknown>[] = [];
-    overlayInstances.forEach((inst) => {
-      const def = INDICATOR_CATALOG.find((d) => d.id === inst.defId)!;
-      indicatorSeries.push(buildIndicatorSeries(def, 0, inst.params, inst.instanceId, inst.color));
-    });
-    oscInstances.forEach((inst, i) => {
-      const def = INDICATOR_CATALOG.find((d) => d.id === inst.defId)!;
-      indicatorSeries.push(buildIndicatorSeries(def, 2 + i, inst.params, inst.instanceId, inst.color));
-    });
-
-    const chart = Highcharts.stockChart(containerRef.current, {
-      accessibility: { enabled: false },
-      chart: {
-        backgroundColor: "#0e1117",
-        animation: false,
-        panning: { enabled: true, type: "x" },
-        zooming: { type: "x", mouseWheel: { enabled: true } } as any,
-        margin: [0, 60, 0, 0],
-        events: {
-          click(e: any) {
-            const tool = activeToolRef.current;
-            const x = e.xAxis?.[0]?.value;
-            const y = e.yAxis?.[0]?.value;
-            if (x == null || y == null) return;
-
-            if (tool === "erase") {
-              const anns: any[] = [...((this as any).annotations ?? [])];
-              anns.forEach((a) => { try { a?.destroy?.(); } catch {} });
-              annotationsRef.current = [];
-              return;
-            }
-            if (tool === "hline") { drawHLine(this as any, x, y); return; }
-            if (tool === "vline") { drawVLine(this as any, x, y); return; }
-            if (tool === "label") {
-              const text = window.prompt("Label text:");
-              if (text) drawLabel(this as any, x, y, text);
-              return;
-            }
-
-            const pending = pendingClickRef.current;
-            if (!pending) {
-              pendingClickRef.current = { x, y };
-            } else {
-              pendingClickRef.current = null;
-              if (tool === "trendline") drawTrendLine(this as any, pending, { x, y });
-              else if (tool === "ray") drawRay(this as any, pending, { x, y });
-              else if (tool === "fib") drawFibonacci(this as any, pending, { x, y });
-              else if (tool === "rect") drawRectangle(this as any, pending, { x, y });
-              else if (tool === "pitchfork") {
-                if ((pending as any).x2 != null) {
-                  drawPitchfork(this as any, { x: pending.x, y: pending.y }, { x: (pending as any).x2, y: (pending as any).y2 }, { x, y });
-                } else {
-                  pendingClickRef.current = { x: pending.x, y: pending.y, x2: x, y2: y } as any;
-                }
-              }
-            }
-          },
-        },
-      },
-      title: { text: undefined },
-      stockTools: { gui: { enabled: false } } as any,
-      xAxis: [{
-        crosshair: { snap: false, color: "rgba(148,163,184,0.2)", dashStyle: "Dash", width: 1 },
-        labels: { style: { color: "#475569", fontSize: "10px" } },
-        lineColor: "#1a2130",
-        tickColor: "#1a2130",
-        gridLineColor: "#1a2130",
-        // Default view: last 3 months ending at the latest candle (or today)
-        max: ohlcData.length > 0 ? ohlcData[ohlcData.length - 1][0] : Date.now(),
-        min: ohlcData.length > 0
-          ? ohlcData[ohlcData.length - 1][0] - 90 * 24 * 60 * 60 * 1000
-          : Date.now() - 90 * 24 * 60 * 60 * 1000,
-      }],
-      yAxis: yAxes,
-      tooltip: {
-        split: true,
-        backgroundColor: "#1e293b",
-        borderColor: "#334155",
-        style: { color: "#e2e8f0", fontSize: "11px" },
-        shadow: false,
-        valueDecimals: 1,
-      },
-      legend: {
-        enabled: true,
-        align: "left",
-        verticalAlign: "top",
-        itemStyle: { color: "#94a3b8", fontSize: "11px", fontWeight: "normal" },
-        itemHoverStyle: { color: "#e2e8f0" },
-        itemHiddenStyle: { color: "#334155" },
-        symbolWidth: 14,
-        symbolHeight: 2,
-      },
-      plotOptions: {
-        series: { animation: false, showInLegend: true },
-        candlestick: { color: "#ef4444", upColor: "#22c55e", lineColor: "#ef4444", upLineColor: "#22c55e" },
-        ohlc: { color: "#ef4444", upColor: "#22c55e" },
-      },
-      series: [
-        {
-          id: "ohlc",
-          type: (chartType === "candlestick-volwidth" ? "candlestick" : chartType) as any,
-          name: symbol,
-          data: ohlcData,
-          yAxis: 0,
-          ...(chartType === "candlestick-volwidth" ? { baseVolume: "vol" } : {}),
-          dataGrouping: { enabled: false },
-          point: {
-            events: {
-              mouseOver(this: any) {
-                callbackRef.current({
-                  t: this.x,
-                  o: this.open ?? this.y,
-                  h: this.high ?? this.y,
-                  l: this.low ?? this.y,
-                  c: this.close ?? this.y,
-                  v: volMap.get(this.x) ?? 0,
-                  pct: (this.open ?? 0) > 0
-                    ? (((this.close ?? this.y) - (this.open ?? this.y)) / (this.open ?? this.y)) * 100
-                    : 0,
-                });
-              },
-            },
-          },
-          zIndex: 2,
-        } as any,
-        {
-          id: "vol",
-          type: "column",
-          name: "Volume",
-          data: volData,
-          yAxis: 1,
-          ...(chartType === "candlestick-volwidth" ? { baseVolume: "vol" } : {}),
-          dataGrouping: { enabled: false },
-          showInLegend: true,
-          borderWidth: 0,
-          pointPadding: 0,
-          groupPadding: 0,
-          opacity: 0.7,
-          tooltip: {
-            pointFormatter(this: any) {
-              const v: number = this.y;
-              let label: string;
-              if (v >= 1e7) label = (v / 1e7).toFixed(2) + " Cr";
-              else if (v >= 1e5) label = (v / 1e5).toFixed(2) + " L";
-              else if (v >= 1e3) label = (v / 1e3).toFixed(1) + " K";
-              else label = String(v);
-              return `<span style="color:${this.color}">●</span> Volume: <b>${label}</b><br/>`;
-            },
-          },
-        } as any,
-        ...indicatorSeries,
-      ],
-      navigator: {
-        enabled: true,
-        height: 50,
-        maskFill: "rgba(15,23,42,0.7)",
-        outlineColor: "#1e293b",
-        handles: { backgroundColor: "#1e3a5f", borderColor: "#3b82f6" },
-        series: { color: "#3b82f6", lineColor: "#3b82f6", lineWidth: 1, type: "line" } as any,
-        xAxis: { labels: { style: { color: "#475569", fontSize: "9px" } } },
-      },
-      rangeSelector: { enabled: false },
-      scrollbar: {
-        enabled: true,
-        barBackgroundColor: "#1e293b",
-        rifleColor: "#334155",
-        buttonBackgroundColor: "#0e1117",
-        trackBackgroundColor: "#0e1117",
-        barBorderRadius: 2,
-        buttonBorderRadius: 1,
-        height: 10,
-      },
-      credits: { enabled: false },
-      annotations: [],
-    } as any);
-
-    annotationsRef.current.forEach((opts) => {
-      try { (chart as any).addAnnotation(opts); } catch {}
+    mainChart.subscribeCrosshairMove((param) => {
+      if (!param.time) {
+        callbackRef.current(null);
+        legend.innerHTML = "";
+        return;
+      }
+      const candle = candleMap.get(param.time as number);
+      if (!candle) return;
+      const pct = candle.o ? ((candle.c - candle.o) / candle.o) * 100 : 0;
+      callbackRef.current({ t: candle.t, o: candle.o, h: candle.h, l: candle.l, c: candle.c, v: candle.v, pct });
+      const chg = candle.c - candle.o;
+      const col = chg >= 0 ? TV.up : TV.down;
+      const ts = new Date((param.time as number) * 1000).toLocaleString("en-IN", {
+        timeZone: "Asia/Kolkata", day: "2-digit", month: "short", year: "numeric",
+        hour: "2-digit", minute: "2-digit", hour12: false,
+      });
+      legend.innerHTML = `<span style="color:${TV.axisLabel};font-size:11px">${ts}</span>&nbsp;&nbsp;`
+        + `<span style="color:${col}">O</span>&nbsp;<b>${candle.o.toFixed(2)}</b>&nbsp;`
+        + `<span style="color:${col}">H</span>&nbsp;<b>${candle.h.toFixed(2)}</b>&nbsp;`
+        + `<span style="color:${col}">L</span>&nbsp;<b>${candle.l.toFixed(2)}</b>&nbsp;`
+        + `<span style="color:${col}">C</span>&nbsp;<b>${candle.c.toFixed(2)}</b>&nbsp;&nbsp;`
+        + `<span style="color:${col};font-weight:700">${chg >= 0 ? "▲" : "▼"} ${Math.abs(chg).toFixed(2)} (${pct.toFixed(2)}%)</span>`
+        + `&nbsp;&nbsp;<span style="color:${TV.axisLabel}">Vol</span>&nbsp;<b>${fmtVol(candle.v)}</b>`;
     });
 
-    const el = containerRef.current;
+    const paneCharts: IChartApi[] = [];
+    oscInstances.forEach((inst, index) => {
+      const el = paneRefs.current[inst.instanceId];
+      if (!el) return;
+      const def = INDICATOR_CATALOG.find((d) => d.id === inst.defId);
+      if (!def) return;
+      const p = inst.params as Record<string, number | number[]>;
+      const paneChart = createChart(el, baseChartOptions(el, index === oscInstances.length - 1));
+      chartsRef.current[inst.instanceId] = paneChart;
+      paneCharts.push(paneChart);
+      const addPaneLine = (values: number[], color: string, width: 1 | 2 = 2) => {
+        const line = paneChart.addSeries(LineSeries, { color, lineWidth: width, lastValueVisible: false, priceLineVisible: false });
+        line.setData(asLinePoints(sourceCandles, values));
+        return line;
+      };
+      switch (inst.defId) {
+        case "rsi": {
+          const values = rsi(closes, Number((p as any).period ?? 14));
+          const line = addPaneLine(values, inst.color);
+          line.createPriceLine({ price: Number((p as any).overbought ?? 70), color: TV.down, lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: true, title: "OB" });
+          line.createPriceLine({ price: 50, color: TV.axisLabel, lineWidth: 1, lineStyle: LineStyle.Dotted, axisLabelVisible: false, title: "" });
+          line.createPriceLine({ price: Number((p as any).oversold ?? 30), color: TV.up, lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: true, title: "OS" });
+          break;
+        }
+        case "macd": {
+          const { ml, sl, hist } = macd(closes, Number((p as any).shortPeriod ?? 12), Number((p as any).longPeriod ?? 26), Number((p as any).signalPeriod ?? 9));
+          const histSeries = paneChart.addSeries(HistogramSeries, { priceLineVisible: false, lastValueVisible: false });
+          histSeries.setData(sourceCandles.map((c, i) => ({ time: msToSec(c.t), value: hist[i], color: hist[i] >= 0 ? TV.upVol : TV.downVol })).filter((d) => Number.isFinite(d.value)));
+          addPaneLine(ml, "#3b82f6");
+          const signal = addPaneLine(sl, "#f97316");
+          signal.createPriceLine({ price: 0, color: TV.axisLabel, lineWidth: 1, lineStyle: LineStyle.Dotted, axisLabelVisible: false, title: "" });
+          break;
+        }
+        case "stoch":
+        case "sstoch": {
+          const periods = Array.isArray((p as any).periods) ? ((p as any).periods as number[]) : [14, 3];
+          const { k, d } = stochCalc(sourceCandles, Number(periods[0] ?? 14), Number(periods[1] ?? 3));
+          const kLine = addPaneLine(k, inst.color);
+          addPaneLine(d, "#f59e0b");
+          kLine.createPriceLine({ price: 80, color: TV.down, lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: true, title: "80" });
+          kLine.createPriceLine({ price: 20, color: TV.up, lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: true, title: "20" });
+          break;
+        }
+        case "cci": {
+          const line = addPaneLine(cciCalc(sourceCandles, Number((p as any).period ?? 20)), inst.color);
+          line.createPriceLine({ price: 100, color: TV.down, lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: true, title: "+100" });
+          line.createPriceLine({ price: -100, color: TV.up, lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: true, title: "-100" });
+          break;
+        }
+        case "mom": addPaneLine(momentumCalc(closes, Number((p as any).period ?? 10)), inst.color).createPriceLine({ price: 0, color: TV.axisLabel, lineWidth: 1, lineStyle: LineStyle.Dotted, axisLabelVisible: false, title: "" }); break;
+        case "obv": addPaneLine(obvCalc(sourceCandles), inst.color); break;
+        case "willr": {
+          const line = addPaneLine(willrCalc(sourceCandles, Number((p as any).period ?? 14)), inst.color);
+          line.createPriceLine({ price: -20, color: TV.down, lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: true, title: "-20" });
+          line.createPriceLine({ price: -80, color: TV.up, lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: true, title: "-80" });
+          break;
+        }
+        case "atr": addPaneLine(atrCalc(sourceCandles, Number((p as any).period ?? 14)), inst.color); break;
+        case "roc": addPaneLine(rocCalc(closes, Number((p as any).period ?? 10)), inst.color).createPriceLine({ price: 0, color: TV.axisLabel, lineWidth: 1, lineStyle: LineStyle.Dotted, axisLabelVisible: false, title: "" }); break;
+        case "aroon": {
+          const { up, down } = aroonCalc(sourceCandles, Number((p as any).period ?? 25));
+          addPaneLine(up, inst.color);
+          addPaneLine(down, "#f97316");
+          break;
+        }
+        case "ao": {
+          const hist = aoCalc(sourceCandles);
+          const histSeries = paneChart.addSeries(HistogramSeries, { priceLineVisible: false, lastValueVisible: false });
+          histSeries.setData(sourceCandles.map((c, i) => ({ time: msToSec(c.t), value: hist[i], color: hist[i] >= 0 ? TV.upVol : TV.downVol })).filter((d) => Number.isFinite(d.value)));
+          break;
+        }
+        case "mfi": {
+          const line = addPaneLine(mfiCalc(sourceCandles, Number((p as any).period ?? 14)), inst.color);
+          line.createPriceLine({ price: 80, color: TV.down, lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: true, title: "80" });
+          line.createPriceLine({ price: 20, color: TV.up, lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: true, title: "20" });
+          break;
+        }
+        case "dmi": {
+          const { plus, minus, adx } = dmiCalc(sourceCandles, Number((p as any).period ?? 14));
+          addPaneLine(plus, "#22c55e");
+          addPaneLine(minus, "#ef4444");
+          addPaneLine(adx, inst.color);
+          break;
+        }
+        default:
+          break;
+      }
+    });
+
+    const allCharts = [mainChart, ...paneCharts];
+    let syncing = false;
+    const syncHandlers = allCharts.map((chart) => {
+      const handler = (range: LogicalRange | null) => {
+        if (!range || syncing) return;
+        syncing = true;
+        allCharts.forEach((target) => {
+          if (target !== chart) target.timeScale().setVisibleLogicalRange(range);
+        });
+        syncing = false;
+        redrawSvg();
+      };
+      chart.timeScale().subscribeVisibleLogicalRangeChange(handler);
+      return { chart, handler };
+    });
+
+    allCharts.forEach((chart) => chart.timeScale().fitContent());
+    const initialRange = mainChart.timeScale().getVisibleLogicalRange();
+    if (initialRange) paneCharts.forEach((chart) => chart.timeScale().setVisibleLogicalRange(initialRange));
+
+    const clearDrawings = () => {
+      priceLinesRef.current.forEach((line) => {
+        try { (primarySeries as any).removePriceLine(line); } catch {}
+      });
+      priceLinesRef.current = [];
+      drawingsRef.current = [];
+      pendingClickRef.current = null;
+      redrawSvg();
+    };
+    (chartInstanceRef.current as any).__clearDrawings = clearDrawings;
+
+    const handleClick = (event: MouseEvent) => {
+      const tool = activeToolRef.current;
+      if (tool === "cursor") return;
+      if (tool === "erase") { clearDrawings(); return; }
+      const rect = mainEl.getBoundingClientRect();
+      const x = event.clientX - rect.left;
+      const y = event.clientY - rect.top;
+      const time = mainChart.timeScale().coordinateToTime(x);
+      const price = (primarySeries as any).coordinateToPrice(y);
+      if (time == null || price == null) return;
+      const point = { time: time as UTCTimestamp, price: Number(price) };
+
+      if (tool === "hline") {
+        priceLinesRef.current.push((primarySeries as any).createPriceLine({
+          price: point.price,
+          color: "#f59e0b",
+          lineWidth: 1,
+          lineStyle: LineStyle.Dashed,
+          axisLabelVisible: true,
+          title: "H",
+        }));
+        redrawSvg();
+        return;
+      }
+      if (tool === "label") {
+        const text = window.prompt("Label text:");
+        if (text) drawingsRef.current.push({ id: `${Date.now()}-${Math.random()}`, kind: "label", points: [point], text });
+        redrawSvg();
+        return;
+      }
+      if (tool === "vline") {
+        drawingsRef.current.push({ id: `${Date.now()}-${Math.random()}`, kind: "vline", points: [point] });
+        redrawSvg();
+        return;
+      }
+
+      const pending = pendingClickRef.current;
+      if (!pending) {
+        pendingClickRef.current = { x: point.time as number, y: point.price };
+        redrawSvg();
+        return;
+      }
+      if (tool === "pitchfork" && pending.x2 == null) {
+        pendingClickRef.current = { ...pending, x2: point.time as number, y2: point.price };
+        redrawSvg();
+        return;
+      }
+      pendingClickRef.current = null;
+      const points = [{ time: pending.x as UTCTimestamp, price: pending.y }];
+      if (pending.x2 != null && pending.y2 != null) points.push({ time: pending.x2 as UTCTimestamp, price: pending.y2 });
+      points.push(point);
+      drawingsRef.current.push({ id: `${Date.now()}-${Math.random()}`, kind: tool, points });
+      redrawSvg();
+    };
+    mainEl.addEventListener("click", handleClick);
+
     const handleLeave = () => callbackRef.current(null);
-    el.addEventListener("mouseleave", handleLeave);
+    mainEl.addEventListener("mouseleave", handleLeave);
 
-    chartInstanceRef.current = chart;
+    const resizeObservers: ResizeObserver[] = [];
+    const resizeTargets: Array<{ el: HTMLDivElement; chart: IChartApi }> = [
+      { el: mainEl, chart: mainChart },
+      ...paneCharts.map((chart, index) => ({ el: paneRefs.current[oscInstances[index].instanceId]!, chart })),
+    ];
+    resizeTargets.forEach(({ el, chart }) => {
+      const ro = new ResizeObserver(() => {
+        chart.applyOptions({ width: el.clientWidth, height: el.clientHeight });
+        redrawSvg();
+      });
+      ro.observe(el);
+      resizeObservers.push(ro);
+    });
+
+    redrawSvg();
+
     return () => {
-      el.removeEventListener("mouseleave", handleLeave);
-      chart.destroy();
+      mainEl.removeEventListener("click", handleClick);
+      mainEl.removeEventListener("mouseleave", handleLeave);
+      if (mainEl.contains(legend)) mainEl.removeChild(legend);
+      syncHandlers.forEach(({ chart, handler }) => chart.timeScale().unsubscribeVisibleLogicalRangeChange(handler));
+      resizeObservers.forEach((ro) => ro.disconnect());
+      Object.values(chartsRef.current).forEach((chart) => chart.remove());
+      chartsRef.current = {};
       chartInstanceRef.current = null;
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [candles, symbol, chartType, instances]);
+  }, [candles, symbol, chartType, instances, onHover, activeToolRef, pendingClickRef, chartInstanceRef, oscInstances, overlayInstances, redrawSvg]);
 
-  return <div ref={containerRef} className="w-full h-full" style={{ minHeight: 400 }} />;
+  const renderDrawing = (drawing: ChartDrawing) => {
+    const chart = chartInstanceRef.current;
+    if (!chart) return null;
+    const mainSeries = ((chart as any).__primarySeries ?? null) as any;
+    const series = mainSeries;
+    if (!series) return null;
+    const xOf = (time: UTCTimestamp) => chart.timeScale().timeToCoordinate(time) ?? 0;
+    const yOf = (price: number) => series.priceToCoordinate(price) ?? 0;
+    const pts = drawing.points.map((p) => ({ x: xOf(p.time), y: yOf(p.price) }));
+    const stroke = drawing.kind === "fib" ? "#a78bfa" : drawing.kind === "rect" ? "#f59e0b" : drawing.kind === "ray" ? "#10b981" : drawing.kind === "pitchfork" ? "#f97316" : "#3b82f6";
+    if (drawing.kind === "vline") return <line key={drawing.id} x1={pts[0]?.x} y1={0} x2={pts[0]?.x} y2="100%" stroke="#94a3b8" strokeDasharray="4 4" />;
+    if (drawing.kind === "label") return <text key={drawing.id} x={pts[0]?.x + 6} y={pts[0]?.y - 6} fill="#e2e8f0" fontSize="11">{drawing.text}</text>;
+    if (drawing.kind === "rect" && pts[1]) return <rect key={drawing.id} x={Math.min(pts[0].x, pts[1].x)} y={Math.min(pts[0].y, pts[1].y)} width={Math.abs(pts[1].x - pts[0].x)} height={Math.abs(pts[1].y - pts[0].y)} fill="rgba(245,158,11,0.08)" stroke={stroke} strokeWidth="1.5" />;
+    if (drawing.kind === "fib" && pts[1]) {
+      const levels = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1];
+      return <g key={drawing.id}>{levels.map((lvl) => {
+        const y = pts[1].y - (pts[1].y - pts[0].y) * lvl;
+        return <line key={lvl} x1={Math.min(pts[0].x, pts[1].x)} y1={y} x2={mainRef.current?.clientWidth ?? pts[1].x} y2={y} stroke="#a78bfa" strokeDasharray="4 4" strokeWidth="1" />;
+      })}</g>;
+    }
+    if (drawing.kind === "pitchfork" && pts[2]) {
+      const midX = (pts[1].x + pts[2].x) / 2;
+      const midY = (pts[1].y + pts[2].y) / 2;
+      const dx = (mainRef.current?.clientWidth ?? pts[2].x) - pts[0].x;
+      const slope = (midY - pts[0].y) / ((midX - pts[0].x) || 1);
+      const midEndY = pts[0].y + slope * dx;
+      return <g key={drawing.id}>
+        <line x1={pts[0].x} y1={pts[0].y} x2={mainRef.current?.clientWidth ?? pts[2].x} y2={midEndY} stroke={stroke} strokeWidth="1.5" />
+        <line x1={pts[1].x} y1={pts[1].y} x2={mainRef.current?.clientWidth ?? pts[2].x} y2={pts[1].y + slope * ((mainRef.current?.clientWidth ?? pts[2].x) - pts[1].x)} stroke={stroke} strokeWidth="1.5" />
+        <line x1={pts[2].x} y1={pts[2].y} x2={mainRef.current?.clientWidth ?? pts[2].x} y2={pts[2].y + slope * ((mainRef.current?.clientWidth ?? pts[2].x) - pts[2].x)} stroke={stroke} strokeWidth="1.5" />
+      </g>;
+    }
+    if (drawing.kind === "ray" && pts[1]) {
+      const endX = mainRef.current?.clientWidth ?? pts[1].x;
+      const slope = (pts[1].y - pts[0].y) / ((pts[1].x - pts[0].x) || 1);
+      return <line key={drawing.id} x1={pts[0].x} y1={pts[0].y} x2={endX} y2={pts[0].y + slope * (endX - pts[0].x)} stroke={stroke} strokeWidth="1.5" />;
+    }
+    if (pts[1]) return <line key={drawing.id} x1={pts[0].x} y1={pts[0].y} x2={pts[1].x} y2={pts[1].y} stroke={stroke} strokeWidth="1.5" />;
+    return null;
+  };
+
+  return (
+    <div ref={rootRef} className="flex h-full flex-col">
+      <div ref={mainRef} className="relative min-h-0 flex-1">
+        <svg className="pointer-events-none absolute inset-0 z-10" width="100%" height="100%" viewBox={`0 0 ${mainRef.current?.clientWidth ?? 1} ${mainRef.current?.clientHeight ?? 1}`} preserveAspectRatio="none">
+          {drawingsRef.current.map(renderDrawing)}
+        </svg>
+      </div>
+      {oscInstances.map((inst) => {
+        const def = INDICATOR_CATALOG.find((d) => d.id === inst.defId);
+        return (
+          <div key={inst.instanceId} className="h-[120px] shrink-0 border-t border-[#1a2130] relative">
+            <div className="absolute left-3 top-2 z-10 text-[10px] font-semibold text-slate-400">{def ? indicatorLabel(def, inst.params) : inst.defId.toUpperCase()}</div>
+            <div ref={(el) => { paneRefs.current[inst.instanceId] = el; }} className="h-full w-full" />
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
 // ─── Charts Page ─────────────────────────────────────────────────────────────────
 export default function ChartsPage() {
-  const [hcReady, setHcReady] = useState(false);
   const [symbols, setSymbols] = useState<SymbolItem[]>(DUMMY_SYMBOLS);
   const [symbol, setSymbol] = useState<string>("RELIANCE");
   const [candlePeriod, setCandlePeriod] = useState<TF>("1W");
@@ -1194,7 +1398,6 @@ export default function ChartsPage() {
   const [timePeriod, setTimePeriod] = useState<TP>("1Y");
   const [candles, setCandles] = useState<CandleRaw[]>([]);
   const [loading, setLoading] = useState(false);
-  const [isDemo, setIsDemo] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [instances, setInstances] = useState<IndicatorInstance[]>([]);
   const [settingsTarget, setSettingsTarget] = useState<string | null>(null); // instanceId
@@ -1206,11 +1409,7 @@ export default function ChartsPage() {
   const [chartTypeOpen, setChartTypeOpen] = useState(false);
   const activeToolRef = useRef("cursor");
   const pendingClickRef = useRef<{ x: number; y: number; x2?: number; y2?: number } | null>(null);
-  const chartInstanceRef = useRef<Highcharts.StockChart | null>(null);
-
-  useEffect(() => {
-    loadHcModules().then(() => setHcReady(true)).catch(console.error);
-  }, []);
+  const chartInstanceRef = useRef<IChartApi | null>(null);
 
   useEffect(() => {
     api<SymbolItem[]>("/charts/symbols").then(setSymbols).catch(() => {});
@@ -1219,7 +1418,6 @@ export default function ChartsPage() {
   const fetchCandles = useCallback(async (sym: string, tf: TF) => {
     setLoading(true);
     setError(null);
-    setIsDemo(false);
     try {
       const data = await api<{ candles: CandleRaw[] }>(
         `/charts/candles?symbol=${sym}&timeframe=${tf}&limit=2000`
@@ -1262,9 +1460,7 @@ export default function ChartsPage() {
   }
 
   function clearAnnotations() {
-    if (!chartInstanceRef.current) return;
-    const anns: any[] = [...((chartInstanceRef.current as any).annotations ?? [])];
-    anns.forEach((a) => { try { a?.destroy?.(); } catch {} });
+    (chartInstanceRef.current as any)?.__clearDrawings?.();
   }
 
   const defaultOhlcv = useMemo<OHLCVInfo | null>(() => {
@@ -1383,7 +1579,12 @@ export default function ChartsPage() {
             🗑 Clear
           </button>
           <button
-            onClick={() => (chartInstanceRef.current as any)?.fullscreen?.toggle()}
+            onClick={() => {
+              const el = (chartInstanceRef.current as any)?.__containerEl as HTMLElement | undefined;
+              if (!el) return;
+              if (document.fullscreenElement) document.exitFullscreen();
+              else el.requestFullscreen();
+            }}
             className="w-7 h-7 flex items-center justify-center rounded bg-[#1e293b] hover:bg-[#253347] text-slate-400 hover:text-slate-200 border border-[#334155] transition-colors text-sm"
             title="Fullscreen"
           >
@@ -1430,7 +1631,7 @@ export default function ChartsPage() {
                   <span className="text-slate-500 text-xs">Loading {symbol}…</span>
                 </div>
               </div>
-            ) : hcReady && candles.length > 0 ? (
+            ) : candles.length > 0 ? (
               <StockChart
                 candles={candles}
                 symbol={symbol}
@@ -1442,9 +1643,9 @@ export default function ChartsPage() {
                 pendingClickRef={pendingClickRef}
                 chartInstanceRef={chartInstanceRef}
               />
-            ) : !loading && !hcReady ? (
+            ) : !loading ? (
               <div className="absolute inset-0 flex items-center justify-center">
-                <span className="text-slate-600 text-xs">Initializing chart engine…</span>
+                <span className="text-slate-600 text-xs">No candle data available.</span>
               </div>
             ) : null}
           </div>

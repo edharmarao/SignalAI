@@ -1,14 +1,19 @@
 "use client";
 /**
  * ORBStrategyBuilder
- * Symbols loaded from nse_eq_symbols (DB). Chart data from stock_data_<timeframe>.
+ * Chart powered by TradingView Lightweight Charts v5.
+ * Symbols from nse_eq_symbols (DB), data from stock_data_<timeframe>.
  */
 import { useEffect, useRef, useState, useCallback } from "react";
-import Highcharts from "highcharts/highstock";
-import { istToMs } from "@/lib/highcharts";
-import "@/lib/highcharts";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
+import { istToMs } from "@/lib/highcharts";
+import {
+  createChart, ColorType, CrosshairMode, LineStyle,
+  CandlestickSeries, HistogramSeries, LineSeries,
+  createSeriesMarkers,
+  type IChartApi, type UTCTimestamp,
+} from "lightweight-charts";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 interface NSESymbol { symbol: string; company_name: string; industry: string; }
@@ -94,80 +99,252 @@ function SymbolPicker({ symbol, onSelect }: { symbol: string; onSelect: (s: NSES
   );
 }
 
-// ── Chart ──────────────────────────────────────────────────────────────────────
-function ORBChart({ candles, trades }: { candles: OHLCVRow[]; trades?: ORBTrade[] }) {
-  const ref  = useRef<HTMLDivElement>(null);
-  const chart = useRef<Highcharts.StockChart | null>(null);
+// ── TradingView Lightweight Chart ─────────────────────────────────────────────
+function toSec(t: string): UTCTimestamp {
+  return Math.floor(istToMs(t) / 1000) as UTCTimestamp;
+}
+function formatVol(v: number): string {
+  if (v >= 1e7) return `${(v/1e7).toFixed(2)} Cr`;
+  if (v >= 1e5) return `${(v/1e5).toFixed(2)} L`;
+  if (v >= 1e3) return `${(v/1e3).toFixed(1)} K`;
+  return String(v);
+}
 
-  // Parse "2025-01-01 09:15:00" (IST from DB) → epoch ms
-  const toMs = istToMs;
+// Build per-day OR High / OR Low as LineSeries segments (no cross-day bleed)
+// Uses whitespace entries between days so lines only span within each trading day.
+function buildOrLines(
+  candles: OHLCVRow[],
+  orCandles: number,
+): {
+  orh: ({ time: UTCTimestamp; value: number } | { time: UTCTimestamp })[];
+  orl: ({ time: UTCTimestamp; value: number } | { time: UTCTimestamp })[];
+  dayMap: Map<string, { orHigh: number; orLow: number }>;
+} {
+  // Group candles by calendar day
+  const days = new Map<string, OHLCVRow[]>();
+  for (const r of candles) {
+    const day = r.time.slice(0, 10);
+    if (!days.has(day)) days.set(day, []);
+    days.get(day)!.push(r);
+  }
+
+  const dayMap = new Map<string, { orHigh: number; orLow: number }>();
+  const orh: ({ time: UTCTimestamp; value: number } | { time: UTCTimestamp })[] = [];
+  const orl: ({ time: UTCTimestamp; value: number } | { time: UTCTimestamp })[] = [];
+
+  for (const [day, rows] of days) {
+    const sorted = [...rows].sort((a, b) => a.time.localeCompare(b.time));
+    const orSlice = sorted.slice(0, orCandles);
+    if (orSlice.length === 0) continue;
+
+    const orHigh = Math.max(...orSlice.map(r => r.high));
+    const orLow  = Math.min(...orSlice.map(r => r.low));
+    dayMap.set(day, { orHigh, orLow });
+
+    const firstSec = toSec(sorted[0].time);
+    const lastSec  = toSec(sorted[sorted.length - 1].time);
+    // gap: 1 second after last candle → whitespace entry breaks line between days
+    const gapSec   = (lastSec as number + 1) as UTCTimestamp;
+
+    orh.push({ time: firstSec, value: orHigh });
+    orh.push({ time: lastSec,  value: orHigh });
+    orh.push({ time: gapSec });               // whitespace gap — no line between days
+
+    orl.push({ time: firstSec, value: orLow  });
+    orl.push({ time: lastSec,  value: orLow  });
+    orl.push({ time: gapSec });
+  }
+
+  return { orh, orl, dayMap };
+}
+
+function ORBChart({ candles, trades, orCandles = 1 }: {
+  candles: OHLCVRow[];
+  trades?: ORBTrade[];
+  orCandles?: number;
+}) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const chartRef     = useRef<IChartApi | null>(null);
 
   useEffect(() => {
-    chart.current?.destroy(); chart.current = null;
-    if (!ref.current || candles.length === 0) return;
+    const el = containerRef.current;
+    if (!el) return;
+    chartRef.current?.remove();
+    chartRef.current = null;
+    if (candles.length === 0) return;
 
-    const series: Highcharts.SeriesOptionsType[] = [
-      {
-        type: "candlestick", id: "candle", name: "Price",
-        data: candles.map(r => [toMs(r.time), r.open, r.high, r.low, r.close]),
-        color: "#f43f5e", upColor: "#10b981", lineColor: "#f43f5e", upLineColor: "#10b981",
-        dataGrouping: { enabled: false },
-      } as Highcharts.SeriesCandlestickOptions,
-      {
-        type: "column", name: "Volume", id: "volume", yAxis: 1,
-        data: candles.map(r => [toMs(r.time), r.volume]),
-        color: "#334155", dataGrouping: { enabled: false },
-      } as Highcharts.SeriesColumnOptions,
-    ];
+    const chart = createChart(el, {
+      width:  el.clientWidth,
+      height: el.clientHeight,
+      layout: {
+        background: { type: ColorType.Solid, color: "#131722" },
+        textColor:  "#d1d4dc",
+        fontFamily: "'Inter', ui-sans-serif, system-ui",
+        fontSize:   12,
+      },
+      grid: {
+        vertLines: { color: "#1e2030" },
+        horzLines: { color: "#1e2030" },
+      },
+      crosshair: {
+        mode: CrosshairMode.Normal,
+        vertLine: { color: "#758696", width: 1, labelBackgroundColor: "#1e222d" },
+        horzLine: { color: "#758696", width: 1, labelBackgroundColor: "#1e222d" },
+      },
+      rightPriceScale: { borderColor: "#2a2e39" },
+      leftPriceScale:  { visible: false },
+      timeScale: {
+        borderColor:    "#2a2e39",
+        timeVisible:    true,
+        secondsVisible: false,
+        tickMarkFormatter: (time: UTCTimestamp) => {
+          const d = new Date((time as number) * 1000);
+          return d.toLocaleTimeString("en-IN", {
+            timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit", hour12: false,
+          });
+        },
+      },
+      localization: {
+        timeFormatter: (time: UTCTimestamp) => {
+          const d = new Date((time as number) * 1000);
+          return d.toLocaleString("en-IN", {
+            timeZone: "Asia/Kolkata", day: "2-digit", month: "short", year: "numeric",
+            hour: "2-digit", minute: "2-digit", hour12: false,
+          });
+        },
+      },
+      handleScroll: { mouseWheel: true, pressedMouseMove: true },
+      handleScale:  { mouseWheel: true, pinch: true },
+    });
+    chartRef.current = chart;
 
+    // ── Candlestick ─────────────────────────────────────────────────────────
+    const candleSeries = chart.addSeries(CandlestickSeries, {
+      upColor: "#26a69a", downColor: "#ef5350",
+      borderUpColor: "#26a69a", borderDownColor: "#ef5350",
+      wickUpColor: "#26a69a", wickDownColor: "#ef5350",
+      priceScaleId: "right",
+      priceLineVisible: false,
+      lastValueVisible: false,
+    });
+    candleSeries.priceScale().applyOptions({ scaleMargins: { top: 0.05, bottom: 0.28 } });
+    candleSeries.setData(candles.map(r => ({
+      time: toSec(r.time), open: r.open, high: r.high, low: r.low, close: r.close,
+    })));
+
+    // ── Volume histogram ────────────────────────────────────────────────────
+    const volSeries = chart.addSeries(HistogramSeries, {
+      color: "#26a69a", priceFormat: { type: "volume" }, priceScaleId: "vol",
+      lastValueVisible: false, priceLineVisible: false,
+    });
+    chart.priceScale("vol").applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
+    volSeries.setData(candles.map(r => ({
+      time: toSec(r.time), value: r.volume,
+      color: r.close >= r.open ? "rgba(38,166,154,0.5)" : "rgba(239,83,80,0.5)",
+    })));
+
+    // ── Per-day ORH / ORL line segments ─────────────────────────────────────
+    // Using whitespace-gapped LineSeries so lines only appear within each day.
+    const { orh, orl, dayMap } = buildOrLines(candles, orCandles);
+
+    const orhSeries = chart.addSeries(LineSeries, {
+      color: "rgba(38,166,154,0.8)",
+      lineWidth: 1,
+      lineStyle: LineStyle.Dashed,
+      priceScaleId: "right",
+      crosshairMarkerVisible: false,
+      lastValueVisible: false,
+      priceLineVisible: false,
+    });
+    orhSeries.priceScale().applyOptions({ scaleMargins: { top: 0.05, bottom: 0.28 } });
+    orhSeries.setData(orh as any);
+
+    const orlSeries = chart.addSeries(LineSeries, {
+      color: "rgba(239,83,80,0.8)",
+      lineWidth: 1,
+      lineStyle: LineStyle.Dashed,
+      priceScaleId: "right",
+      crosshairMarkerVisible: false,
+      lastValueVisible: false,
+      priceLineVisible: false,
+    });
+    orlSeries.priceScale().applyOptions({ scaleMargins: { top: 0.05, bottom: 0.28 } });
+    orlSeries.setData(orl as any);
+
+    // ── Trade markers ────────────────────────────────────────────────────────
     if (trades?.length) {
-      series.push({
-        type: "flags", name: "Entries", onSeries: "candle", shape: "arrowUp", yAxis: 0,
-        color: "#10b981", fillColor: "#10b981", style: { color: "#fff", fontSize: "9px" },
-        data: trades.filter(t => t.entryTime).map(t => ({ x: toMs(t.entryTime), title: t.side === "BUY" ? "B" : "S" })),
-        dataGrouping: { enabled: false },
-      } as any);
-      series.push({
-        type: "flags", name: "Exits", onSeries: "candle", shape: "arrowDown", yAxis: 0,
-        data: trades.filter(t => t.exitTime).map(t => ({
-          x: toMs(t.exitTime), title: t.exitReason.slice(0,3).toUpperCase(),
-          color: t.exitReason === "stop_loss" ? "#f43f5e" : t.exitReason === "target" ? "#3b82f6" : "#f97316",
-          fillColor: t.exitReason === "stop_loss" ? "#f43f5e" : t.exitReason === "target" ? "#3b82f6" : "#f97316",
+      const markers = [
+        ...trades.filter(t => t.entryTime).map(t => ({
+          time: toSec(t.entryTime), position: "belowBar" as const, color: "#26a69a",
+          shape: "arrowUp" as const, size: 1,
+          text: `${t.side === "BUY" ? "▲ B" : "▼ S"} ${t.entryPrice.toFixed(2)}`,
         })),
-        style: { color: "#fff", fontSize: "9px" }, dataGrouping: { enabled: false },
-      } as any);
+        ...trades.filter(t => t.exitTime).map(t => ({
+          time: toSec(t.exitTime), position: "aboveBar" as const,
+          color: t.exitReason === "stop_loss" ? "#ef5350" : t.exitReason === "target" ? "#3b82f6" : "#f59e0b",
+          shape: "arrowDown" as const, size: 1,
+          text: `${t.exitReason === "stop_loss" ? "SL" : t.exitReason === "target" ? "TP" : "TR"} ${t.exitPrice.toFixed(2)}`,
+        })),
+      ].sort((a, b) => (a.time as number) - (b.time as number));
+      createSeriesMarkers(candleSeries, markers);
     }
 
-    chart.current = Highcharts.stockChart(ref.current, {
-      accessibility: { enabled: false },
-      chart: { backgroundColor: "#020617", margin: [0,60,30,0], style: { fontFamily:"inherit" } },
-      title: { text: undefined },
-      rangeSelector: { enabled: false }, navigator: { enabled: false }, scrollbar: { enabled: false },
-      xAxis: { type:"datetime", lineColor:"#1e293b", tickColor:"#1e293b", gridLineColor:"#0f172a", labels:{ style:{color:"#475569"} }, crosshair:{color:"#334155"} },
-      yAxis: [
-        { height:"75%", top:"0%", offset:0, lineWidth:1, lineColor:"#1e293b", gridLineColor:"#0f172a", labels:{align:"right",x:-5,style:{color:"#475569"}} },
-        { height:"20%", top:"78%", offset:0, lineWidth:1, lineColor:"#1e293b", gridLineColor:"#0f172a", labels:{align:"right",x:-5,style:{color:"#475569"}} },
-      ],
-      series,
-      tooltip: { split:false, shared:true, backgroundColor:"#1e293b", borderColor:"#334155", style:{color:"#e2e8f0"} },
-      legend: { enabled: false }, credits: { enabled: false },
+    // ── Floating OHLCV + OR legend ───────────────────────────────────────────
+    el.style.position = "relative";
+    const legend = document.createElement("div");
+    legend.style.cssText = "position:absolute;top:8px;left:12px;z-index:10;pointer-events:none;font-family:'Inter',system-ui;font-size:12px;color:#d1d4dc;background:rgba(19,23,34,0.9);padding:4px 10px;border-radius:4px;border:1px solid #2a2e39;line-height:1.8;";
+    el.appendChild(legend);
+
+    chart.subscribeCrosshairMove((param) => {
+      if (!param.time || !param.seriesData) { legend.innerHTML = ""; return; }
+      const cd = param.seriesData.get(candleSeries) as any;
+      const vd = param.seriesData.get(volSeries) as any;
+      if (!cd) { legend.innerHTML = ""; return; }
+      const { open: o, high: h, low: l, close: c } = cd;
+      const chg = c - o;
+      const pct = ((chg / o) * 100).toFixed(2);
+      const col = chg >= 0 ? "#26a69a" : "#ef5350";
+      const ts = new Date((param.time as number) * 1000).toLocaleString("en-IN", {
+        timeZone: "Asia/Kolkata", day: "2-digit", month: "short", year: "numeric",
+        hour: "2-digit", minute: "2-digit", hour12: false,
+      });
+      // Find OR values for this candle's day
+      const day = new Date((param.time as number) * 1000)
+        .toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" }); // YYYY-MM-DD
+      const or = dayMap.get(day);
+      legend.innerHTML =
+        `<span style="color:#787b86;font-size:11px">${ts}</span>&nbsp;&nbsp;`
+        + `<span style="color:${col}">O</span>&nbsp;<b>${o.toFixed(2)}</b>&nbsp;`
+        + `<span style="color:${col}">H</span>&nbsp;<b>${h.toFixed(2)}</b>&nbsp;`
+        + `<span style="color:${col}">L</span>&nbsp;<b>${l.toFixed(2)}</b>&nbsp;`
+        + `<span style="color:${col}">C</span>&nbsp;<b>${c.toFixed(2)}</b>&nbsp;&nbsp;`
+        + `<span style="color:${col};font-weight:700">${chg >= 0 ? "▲" : "▼"} ${Math.abs(chg).toFixed(2)} (${pct}%)</span>`
+        + (vd ? `&nbsp;&nbsp;<span style="color:#787b86">Vol</span>&nbsp;<b>${formatVol(vd.value)}</b>` : "")
+        + (or
+          ? `&nbsp;&nbsp;<span style="color:#26a69a;font-size:10px">ORH&nbsp;<b>${or.orHigh.toFixed(2)}</b></span>`
+            + `&nbsp;<span style="color:#ef5350;font-size:10px">ORL&nbsp;<b>${or.orLow.toFixed(2)}</b></span>`
+          : "");
     });
 
-    // Force reflow so Highcharts picks up the actual container height
-    chart.current.reflow();
+    chart.timeScale().fitContent();
 
-    return () => { chart.current?.destroy(); chart.current = null; };
-  }, [candles, trades]);
+    const ro = new ResizeObserver(() => {
+      if (el) chart.applyOptions({ width: el.clientWidth, height: el.clientHeight });
+    });
+    ro.observe(el);
 
-  // Reflow on window resize
-  useEffect(() => {
-    const onResize = () => chart.current?.reflow();
-    window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
-  }, []);
+    return () => {
+      ro.disconnect();
+      if (el.contains(legend)) el.removeChild(legend);
+      chart.remove();
+      chartRef.current = null;
+    };
+  }, [candles, trades, orCandles]);
 
-  return <div ref={ref} className="w-full h-full" />;
+  return <div ref={containerRef} className="w-full h-full" />;
 }
+
+
 
 function Stat({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
@@ -182,12 +359,25 @@ function Stat({ label, value, sub }: { label: string; value: string; sub?: strin
 // ── Main ───────────────────────────────────────────────────────────────────────
 export default function ORBStrategyBuilder({ editId }: { editId?: string }) {
   const router = useRouter();
+
+  // ── Basic params ─────────────────────────────────────────────────────────────
   const [selectedSym, setSelectedSym] = useState<NSESymbol>({ symbol: "RELIANCE", company_name: "Reliance Industries", industry: "" });
   const [tf, setTf]         = useState<TFKey>("5min");
   const [fromDate, setFromDate] = useState(() => defaultDates("5min").from);
   const [toDate, setToDate]   = useState(() => defaultDates("5min").to);
   const [qty, setQty]         = useState("1");
   const [name, setName]       = useState("ORB Strategy");
+
+  // ── Configurable strategy params ──────────────────────────────────────────────
+  const [orCandles, setOrCandles]           = useState(1);           // # candles forming OR
+  const [marketOpen, setMarketOpen]         = useState("09:15");     // IST HH:MM
+  const [volMultiplier, setVolMultiplier]   = useState(2.0);         // volume filter ×
+  const [volLookback, setVolLookback]       = useState(20);          // vol avg periods
+  const [direction, setDirection]           = useState<"both"|"long"|"short">("both");
+  const [riskReward, setRiskReward]         = useState(1.0);         // target = entry ± risk × RR
+  const [trailingSl, setTrailingSl]         = useState(true);        // trailing SL enabled
+  const [trailFactor, setTrailFactor]       = useState(1.0);         // trail at n× risk
+  const [eodExit, setEodExit]               = useState(true);        // exit at EOD
 
   const [candles, setCandles]     = useState<OHLCVRow[]>([]);
   const [loadingChart, setLoadingChart] = useState(false);
@@ -235,7 +425,19 @@ export default function ORBStrategyBuilder({ editId }: { editId?: string }) {
     try {
       const res = await api<BacktestResult>("/orb/backtest", {
         method: "POST",
-        body: JSON.stringify({ symbol, timeframe: tf, from_date: fromDate, to_date: toDate, qty: parseInt(qty)||1 }),
+        body: JSON.stringify({
+          symbol, timeframe: tf, from_date: fromDate, to_date: toDate,
+          qty: parseInt(qty) || 1,
+          or_candles: orCandles,
+          market_open: marketOpen,
+          volume_multiplier: volMultiplier,
+          volume_lookback: volLookback,
+          direction,
+          risk_reward: riskReward,
+          trailing_sl: trailingSl,
+          trail_factor: trailFactor,
+          eod_exit: eodExit,
+        }),
       });
       setBtResult(res); setActivePane("backtest");
     } catch (e: any) { setBtError(e.message); }
@@ -246,15 +448,26 @@ export default function ORBStrategyBuilder({ editId }: { editId?: string }) {
     setSaving(true); setSaveError(null);
     try {
       const tfLabel = TIMEFRAMES.find(t => t.key === tf)?.label ?? tf;
+      const orbConfig = {
+        timeframe: tf, timeframeLabel: tfLabel, from_date: fromDate, to_date: toDate,
+        or_candles: orCandles, market_open: marketOpen,
+        volume_multiplier: volMultiplier, volume_lookback: volLookback,
+        direction, risk_reward: riskReward,
+        trailing_sl: trailingSl, trail_factor: trailFactor, eod_exit: eodExit,
+      };
       const stratJson = {
         version: 1, name, desk: "equity", symbol,
-        action: "BUY",
+        action: direction === "short" ? "SELL" : "BUY",
         candleTime: tf === "daily" ? "EOD" : tf === "5min" ? "5min" : tf === "15min" ? "15min" : "1H",
         quantity: parseInt(qty)||1, mode:"paper", status:"draft",
         strategyType:"price_action", priceActionType:"orb",
-        orbConfig: { timeframe: tf, timeframeLabel: tfLabel, from_date: fromDate, to_date: toDate },
-        entry: { logic:"AND", conditions:[{ type:"orb_breakout" }] },
-        exit: { logic:"OR", conditions:[{ type:"stop_loss",value:0 },{ type:"target",value:0 },{ type:"trailing_stop_loss",value:0 }] },
+        orbConfig,
+        entry: { logic:"AND", conditions:[{ type:"orb_breakout", direction }] },
+        exit: { logic:"OR", conditions:[
+          { type:"stop_loss" },
+          { type:"target", value: riskReward },
+          ...(trailingSl ? [{ type:"trailing_stop_loss", value: trailFactor }] : []),
+        ]},
         risk: { maxLossPerDay:5000, maxTradesPerDay:3, maxOpenPositions:1 },
       };
       if (editId) {
@@ -298,27 +511,17 @@ export default function ORBStrategyBuilder({ editId }: { editId?: string }) {
 
       <div className="flex flex-1 min-h-0">
         {/* Left config panel */}
-        <div className="w-64 shrink-0 border-r border-slate-800 overflow-y-auto p-4 space-y-4 bg-slate-950">
-          <div className="bg-amber-500/5 border border-amber-500/20 rounded-xl p-3 space-y-1">
-            <p className="text-xs font-bold text-amber-400">Opening Range Breakout</p>
-            <p className="text-[10px] text-slate-500 leading-relaxed">
-              Entry when price breaks first-candle high/low with 2× avg volume. SL = candle low/high. TP = 1:1 R:R. Trailing SL after TP.
-            </p>
-          </div>
+        <div className="w-72 shrink-0 border-r border-slate-800 overflow-y-auto p-4 space-y-4 bg-slate-950">
 
-          {/* Symbol — from nse_eq_symbols */}
+          {/* Symbol */}
           <div>
             <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1.5">Symbol <span className="text-slate-700 font-normal normal-case">(NSE · 750 stocks)</span></p>
             <SymbolPicker symbol={symbol} onSelect={setSelectedSym} />
-            {selectedSym.company_name && (
-              <p className="text-[10px] text-slate-600 mt-1 truncate">{selectedSym.company_name}</p>
-            )}
-            {selectedSym.industry && (
-              <p className="text-[9px] text-slate-700 truncate">{selectedSym.industry}</p>
-            )}
+            {selectedSym.company_name && <p className="text-[10px] text-slate-600 mt-1 truncate">{selectedSym.company_name}</p>}
+            {selectedSym.industry && <p className="text-[9px] text-slate-700 truncate">{selectedSym.industry}</p>}
           </div>
 
-          {/* Timeframe — matches stock_data_* tables */}
+          {/* Timeframe */}
           <div>
             <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1.5">Timeframe</p>
             <div className="grid grid-cols-2 gap-1">
@@ -328,9 +531,7 @@ export default function ORBStrategyBuilder({ editId }: { editId?: string }) {
                     ? "bg-amber-500 text-slate-900"
                     : "bg-slate-900 border border-slate-800 text-slate-500 hover:border-slate-600"}`}>
                   <span>{t.label}</span>
-                  <span className={`text-[8px] font-mono ${t.key === tf ? "text-slate-700" : "text-slate-700"}`}>
-                    {t.table.replace("stock_data_","")}
-                  </span>
+                  <span className="text-[8px] font-mono text-slate-700">{t.table.replace("stock_data_","")}</span>
                 </button>
               ))}
             </div>
@@ -347,26 +548,159 @@ export default function ORBStrategyBuilder({ editId }: { editId?: string }) {
             </div>
           </div>
 
-          {/* Quantity */}
+          {/* ── Entry Config ─────────────────────────────────────────────────── */}
+          <div className="border border-slate-800 rounded-xl overflow-hidden">
+            <div className="bg-slate-900/60 px-3 py-2 border-b border-slate-800">
+              <p className="text-[10px] font-bold text-amber-400 uppercase tracking-widest">Entry Rules</p>
+            </div>
+            <div className="p-3 space-y-3">
+
+              {/* OR Candles */}
+              <div>
+                <div className="flex justify-between mb-1">
+                  <p className="text-[10px] text-slate-500">Opening Range Candles</p>
+                  <span className="text-[10px] font-mono font-bold text-amber-400">{orCandles}</span>
+                </div>
+                <input type="range" min={1} max={6} step={1} value={orCandles}
+                  onChange={e => setOrCandles(Number(e.target.value))}
+                  className="w-full accent-amber-500 h-1"/>
+                <div className="flex justify-between text-[9px] text-slate-700 mt-0.5"><span>1 candle</span><span>6 candles</span></div>
+                <p className="text-[9px] text-slate-600 mt-1">OR = high/low of first {orCandles} candle{orCandles>1?"s":""} after {marketOpen}</p>
+              </div>
+
+              {/* Market open time */}
+              <div>
+                <p className="text-[10px] text-slate-500 mb-1">Market Open Time (IST)</p>
+                <input type="time" value={marketOpen} onChange={e => setMarketOpen(e.target.value)}
+                  className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-amber-500"/>
+              </div>
+
+              {/* Volume multiplier */}
+              <div>
+                <div className="flex justify-between mb-1">
+                  <p className="text-[10px] text-slate-500">Volume Filter (×avg)</p>
+                  <span className="text-[10px] font-mono font-bold text-amber-400">{volMultiplier.toFixed(1)}×</span>
+                </div>
+                <input type="range" min={0.5} max={5} step={0.5} value={volMultiplier}
+                  onChange={e => setVolMultiplier(Number(e.target.value))}
+                  className="w-full accent-amber-500 h-1"/>
+                <div className="flex justify-between text-[9px] text-slate-700 mt-0.5"><span>0.5×</span><span>5×</span></div>
+              </div>
+
+              {/* Volume lookback */}
+              <div>
+                <div className="flex justify-between mb-1">
+                  <p className="text-[10px] text-slate-500">Volume Avg Lookback</p>
+                  <span className="text-[10px] font-mono font-bold text-amber-400">{volLookback} candles</span>
+                </div>
+                <input type="range" min={5} max={50} step={5} value={volLookback}
+                  onChange={e => setVolLookback(Number(e.target.value))}
+                  className="w-full accent-amber-500 h-1"/>
+                <div className="flex justify-between text-[9px] text-slate-700 mt-0.5"><span>5</span><span>50</span></div>
+              </div>
+
+              {/* Direction */}
+              <div>
+                <p className="text-[10px] text-slate-500 mb-1.5">Trade Direction</p>
+                <div className="grid grid-cols-3 gap-1">
+                  {(["long","short","both"] as const).map(d => (
+                    <button key={d} onClick={() => setDirection(d)}
+                      className={`py-1.5 rounded-lg text-[10px] font-bold capitalize transition-all ${d === direction
+                        ? d === "long" ? "bg-emerald-500/20 border border-emerald-500/50 text-emerald-400"
+                          : d === "short" ? "bg-rose-500/20 border border-rose-500/50 text-rose-400"
+                          : "bg-amber-500/20 border border-amber-500/50 text-amber-400"
+                        : "bg-slate-900 border border-slate-800 text-slate-500 hover:border-slate-600"}`}>
+                      {d === "long" ? "▲ Long" : d === "short" ? "▼ Short" : "⇅ Both"}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* ── Exit Config ───────────────────────────────────────────────────── */}
+          <div className="border border-slate-800 rounded-xl overflow-hidden">
+            <div className="bg-slate-900/60 px-3 py-2 border-b border-slate-800">
+              <p className="text-[10px] font-bold text-blue-400 uppercase tracking-widest">Exit Rules</p>
+            </div>
+            <div className="p-3 space-y-3">
+
+              {/* Risk:Reward */}
+              <div>
+                <div className="flex justify-between mb-1">
+                  <p className="text-[10px] text-slate-500">Risk : Reward Ratio</p>
+                  <span className="text-[10px] font-mono font-bold text-blue-400">1 : {riskReward.toFixed(1)}</span>
+                </div>
+                <input type="range" min={0.5} max={5} step={0.5} value={riskReward}
+                  onChange={e => setRiskReward(Number(e.target.value))}
+                  className="w-full accent-blue-500 h-1"/>
+                <div className="flex justify-between text-[9px] text-slate-700 mt-0.5"><span>1:0.5</span><span>1:5</span></div>
+                <div className="flex gap-1 mt-1.5 flex-wrap">
+                  {[0.5,1,1.5,2,3].map(v => (
+                    <button key={v} onClick={() => setRiskReward(v)}
+                      className={`px-2 py-0.5 rounded text-[9px] font-bold transition-all ${riskReward===v?"bg-blue-500/20 text-blue-400 border border-blue-500/40":"bg-slate-900 border border-slate-800 text-slate-600 hover:text-slate-400"}`}>
+                      1:{v}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Trailing SL toggle */}
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-[10px] text-slate-400 font-medium">Trailing Stop-Loss</p>
+                  <p className="text-[9px] text-slate-600">Activates after target is hit</p>
+                </div>
+                <button onClick={() => setTrailingSl(s => !s)}
+                  className={`relative w-10 h-5 rounded-full transition-colors ${trailingSl ? "bg-emerald-500" : "bg-slate-700"}`}>
+                  <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all ${trailingSl ? "left-[22px]" : "left-0.5"}`}/>
+                </button>
+              </div>
+
+              {/* Trail factor (only if trailing enabled) */}
+              {trailingSl && (
+                <div>
+                  <div className="flex justify-between mb-1">
+                    <p className="text-[10px] text-slate-500">Trail Factor (× Risk)</p>
+                    <span className="text-[10px] font-mono font-bold text-emerald-400">{trailFactor.toFixed(1)}×</span>
+                  </div>
+                  <input type="range" min={0.5} max={3} step={0.5} value={trailFactor}
+                    onChange={e => setTrailFactor(Number(e.target.value))}
+                    className="w-full accent-emerald-500 h-1"/>
+                  <div className="flex justify-between text-[9px] text-slate-700 mt-0.5"><span>0.5×</span><span>3×</span></div>
+                </div>
+              )}
+
+              {/* EOD exit */}
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-[10px] text-slate-400 font-medium">Force Exit at EOD</p>
+                  <p className="text-[9px] text-slate-600">Close all positions at day end</p>
+                </div>
+                <button onClick={() => setEodExit(s => !s)}
+                  className={`relative w-10 h-5 rounded-full transition-colors ${eodExit ? "bg-emerald-500" : "bg-slate-700"}`}>
+                  <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all ${eodExit ? "left-[22px]" : "left-0.5"}`}/>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* ── Position Sizing ─────────────────────────────────────────────── */}
           <div>
             <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1.5">Quantity</p>
             <input type="number" min="1" value={qty} onChange={e => setQty(e.target.value)}
               className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-emerald-500"/>
           </div>
 
-          {/* Rules */}
-          <div className="border border-slate-800 rounded-xl p-3 space-y-2 text-[10px] text-slate-500">
-            <p className="font-bold text-slate-400 uppercase tracking-widest text-[9px]">Rules</p>
-            {[
-              ["🟡","OR = 1st candle at 09:15"],
-              ["🟢","Volume ≥ 2× 20-candle avg"],
-              ["🔵","Enter at close of breakout candle"],
-              ["🔴","SL = candle low / high"],
-              ["🟣","Target = 1:1 R:R"],
-              ["🔵","Trailing SL after target"],
-            ].map(([icon,text]) => (
-              <div key={text} className="flex items-start gap-2"><span>{icon}</span><span>{text}</span></div>
-            ))}
+          {/* Live config summary */}
+          <div className="bg-slate-900/50 border border-slate-800 rounded-xl p-3 space-y-1.5 text-[9px] text-slate-600">
+            <p className="font-bold text-slate-500 text-[9px] uppercase tracking-widest mb-2">Active Config</p>
+            <p>📐 OR = <span className="text-slate-400">{orCandles} candle{orCandles>1?"s":""} from {marketOpen}</span></p>
+            <p>📊 Volume = <span className="text-slate-400">{volMultiplier}× avg of {volLookback} bars</span></p>
+            <p>↕️ Direction = <span className="text-slate-400 capitalize">{direction}</span></p>
+            <p>🎯 R:R = <span className="text-slate-400">1 : {riskReward}</span></p>
+            <p>⚡ Trailing = <span className={trailingSl ? "text-emerald-500" : "text-slate-600"}>{trailingSl ? `Yes (${trailFactor}× risk)` : "Off"}</span></p>
+            <p>🔚 EOD exit = <span className={eodExit ? "text-emerald-500" : "text-slate-600"}>{eodExit ? "Yes" : "No"}</span></p>
           </div>
 
           {/* Run backtest */}
@@ -418,7 +752,7 @@ export default function ORBStrategyBuilder({ editId }: { editId?: string }) {
                 </div>
               </div>
             ) : candles.length > 0 ? (
-              <ORBChart candles={candles} trades={chartTrades} key={`${symbol}-${tf}-${activePane}`} />
+              <ORBChart candles={candles} trades={chartTrades} orCandles={orCandles} key={`${symbol}-${tf}-${activePane}-${orCandles}`} />
             ) : !loadingChart ? (
               <div className="flex items-center justify-center h-full">
                 <p className="text-slate-600 text-sm">Select a symbol to load chart data</p>

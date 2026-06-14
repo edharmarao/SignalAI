@@ -3,11 +3,15 @@
  * SwingStrategyBuilder — uses nse_eq_symbols for symbol picker, stock_data_* for chart.
  */
 import { useEffect, useRef, useState, useCallback } from "react";
-import Highcharts from "highcharts/highstock";
 import { istToMs } from "@/lib/highcharts";
-import "@/lib/highcharts";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
+import {
+  createChart, ColorType, CrosshairMode,
+  CandlestickSeries, HistogramSeries,
+  createSeriesMarkers,
+  type IChartApi, type UTCTimestamp,
+} from "lightweight-charts";
 
 interface NSESymbol { symbol: string; company_name: string; industry: string; }
 interface OHLCVRow { time: string; open: number; high: number; low: number; close: number; volume: number; }
@@ -91,61 +95,167 @@ function computeSwings(rows: OHLCVRow[], lookback: number) {
   return { highs, lows };
 }
 
+const TV = {
+  bg: "#131722",
+  up: "#26a69a",
+  down: "#ef5350",
+  upVol: "rgba(38,166,154,0.5)",
+  downVol: "rgba(239,83,80,0.5)",
+  grid: "#1e2030",
+  border: "#2a2e39",
+  text: "#d1d4dc",
+  axisLabel: "#787b86",
+};
+
+function toSec(t: string): UTCTimestamp {
+  return Math.floor(istToMs(t) / 1000) as UTCTimestamp;
+}
+
+function formatVol(v: number): string {
+  if (v >= 1e7) return `${(v / 1e7).toFixed(2)} Cr`;
+  if (v >= 1e5) return `${(v / 1e5).toFixed(2)} L`;
+  if (v >= 1e3) return `${(v / 1e3).toFixed(1)} K`;
+  return String(v);
+}
+
 function SwingChart({ candles, lookback }: { candles: OHLCVRow[]; lookback: number }) {
   const ref = useRef<HTMLDivElement>(null);
-  const chart = useRef<Highcharts.StockChart | null>(null);
+  const chart = useRef<IChartApi | null>(null);
 
   useEffect(() => {
-    chart.current?.destroy(); chart.current = null;
-    if (!ref.current || candles.length === 0) return;
-
-    const toMs = istToMs;
+    const el = ref.current;
+    chart.current?.remove();
+    chart.current = null;
+    if (!el || candles.length === 0) return;
     const { highs, lows } = computeSwings(candles, lookback);
 
-    chart.current = Highcharts.stockChart(ref.current, {
-      accessibility: { enabled: false },
-      chart: { backgroundColor: "#020617", margin: [0,60,30,0], style: { fontFamily:"inherit" } },
-      title: { text: undefined },
-      rangeSelector: { enabled: false }, navigator: { enabled: false }, scrollbar: { enabled: false },
-      xAxis: {
-        type: "datetime", lineColor: "#1e293b", tickColor: "#1e293b", gridLineColor: "#0f172a",
-        labels: { style: { color: "#475569" } }, crosshair: { color: "#334155" },
+    const nextChart = createChart(el, {
+      width: el.clientWidth,
+      height: el.clientHeight,
+      layout: {
+        background: { type: ColorType.Solid, color: TV.bg },
+        textColor: TV.text,
+        fontFamily: "'Inter', ui-sans-serif, system-ui",
+        fontSize: 12,
       },
-      yAxis: [{
-        height: "100%", top: "0%", offset: 0,
-        lineWidth: 1, lineColor: "#1e293b", gridLineColor: "#0f172a",
-        labels: { align: "right", x: -5, style: { color: "#475569" } },
-      }],
-      series: [
-        {
-          type: "candlestick", id: "candle", name: "Price",
-          data: candles.map(r => [toMs(r.time), r.open, r.high, r.low, r.close]),
-          color: "#f43f5e", upColor: "#10b981", lineColor: "#f43f5e", upLineColor: "#10b981",
-          dataGrouping: { enabled: false },
-        } as Highcharts.SeriesCandlestickOptions,
-        {
-          type: "scatter", name: "Swing High",
-          data: highs.map(p => [p.x, p.y]),
-          marker: { symbol: "triangle-down", radius: 5, fillColor: "#f43f5e", lineWidth: 0 },
-          yAxis: 0, enableMouseTracking: true,
-          dataGrouping: { enabled: false },
-          tooltip: { pointFormat: "Swing High: {point.y:.2f}<br/>" },
-        } as Highcharts.SeriesScatterOptions,
-        {
-          type: "scatter", name: "Swing Low",
-          data: lows.map(p => [p.x, p.y]),
-          marker: { symbol: "triangle", radius: 5, fillColor: "#10b981", lineWidth: 0 },
-          yAxis: 0, enableMouseTracking: true,
-          dataGrouping: { enabled: false },
-          tooltip: { pointFormat: "Swing Low: {point.y:.2f}<br/>" },
-        } as Highcharts.SeriesScatterOptions,
-      ],
-      tooltip: { split: false, shared: false, backgroundColor: "#1e293b", borderColor: "#334155", style: { color: "#e2e8f0" } },
-      legend: { enabled: false },
-      credits: { enabled: false },
+      grid: {
+        vertLines: { color: TV.grid },
+        horzLines: { color: TV.grid },
+      },
+      crosshair: {
+        mode: CrosshairMode.Normal,
+        vertLine: { color: "#758696", width: 1 as const, labelBackgroundColor: "#1e222d" },
+        horzLine: { color: "#758696", width: 1 as const, labelBackgroundColor: "#1e222d" },
+      },
+      rightPriceScale: { borderColor: TV.border },
+      timeScale: {
+        borderColor: TV.border,
+        timeVisible: true,
+        secondsVisible: false,
+        tickMarkFormatter: (time: UTCTimestamp) =>
+          new Date((time as number) * 1000).toLocaleTimeString("en-IN", {
+            timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit", hour12: false,
+          }),
+      },
+      localization: {
+        timeFormatter: (time: UTCTimestamp) =>
+          new Date((time as number) * 1000).toLocaleString("en-IN", {
+            timeZone: "Asia/Kolkata", day: "2-digit", month: "short", year: "numeric",
+            hour: "2-digit", minute: "2-digit", hour12: false,
+          }),
+      },
+      handleScroll: { mouseWheel: true, pressedMouseMove: true },
+      handleScale: { mouseWheel: true, pinch: true },
+    });
+    chart.current = nextChart;
+
+    const candleSeries = nextChart.addSeries(CandlestickSeries, {
+      upColor: TV.up,
+      downColor: TV.down,
+      borderUpColor: TV.up,
+      borderDownColor: TV.down,
+      wickUpColor: TV.up,
+      wickDownColor: TV.down,
+    });
+    candleSeries.priceScale().applyOptions({ scaleMargins: { top: 0.05, bottom: 0.28 } });
+    candleSeries.setData(candles.map((r) => ({
+      time: toSec(r.time),
+      open: r.open,
+      high: r.high,
+      low: r.low,
+      close: r.close,
+    })));
+
+    const volSeries = nextChart.addSeries(HistogramSeries, {
+      priceScaleId: "vol",
+      priceFormat: { type: "volume" },
+    });
+    nextChart.priceScale("vol").applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
+    volSeries.setData(candles.map((r) => ({
+      time: toSec(r.time),
+      value: r.volume,
+      color: r.close >= r.open ? TV.upVol : TV.downVol,
+    })));
+
+    const markers = [
+      ...highs.map((p) => ({
+        time: Math.floor(p.x / 1000) as UTCTimestamp,
+        position: "aboveBar" as const,
+        color: TV.down,
+        shape: "arrowDown" as const,
+        text: `SH ${p.y.toFixed(2)}`,
+        size: 1,
+      })),
+      ...lows.map((p) => ({
+        time: Math.floor(p.x / 1000) as UTCTimestamp,
+        position: "belowBar" as const,
+        color: TV.up,
+        shape: "arrowUp" as const,
+        text: `SL ${p.y.toFixed(2)}`,
+        size: 1,
+      })),
+    ].sort((a, b) => (a.time as number) - (b.time as number));
+    createSeriesMarkers(candleSeries, markers);
+
+    el.style.position = "relative";
+    const legend = document.createElement("div");
+    legend.style.cssText = `position:absolute;top:8px;left:12px;z-index:10;pointer-events:none;font-family:'Inter',system-ui;font-size:12px;color:${TV.text};background:rgba(19,23,34,0.9);padding:4px 10px;border-radius:4px;border:1px solid ${TV.border};line-height:1.8;`;
+    el.appendChild(legend);
+
+    nextChart.subscribeCrosshairMove((param) => {
+      if (!param.time) { legend.innerHTML = ""; return; }
+      const cd = param.seriesData.get(candleSeries) as { open: number; high: number; low: number; close: number } | undefined;
+      const vd = param.seriesData.get(volSeries) as { value: number } | undefined;
+      if (!cd) { legend.innerHTML = ""; return; }
+      const chg = cd.close - cd.open;
+      const pct = cd.open ? ((chg / cd.open) * 100).toFixed(2) : "0.00";
+      const col = chg >= 0 ? TV.up : TV.down;
+      const ts = new Date((param.time as number) * 1000).toLocaleString("en-IN", {
+        timeZone: "Asia/Kolkata", day: "2-digit", month: "short", year: "numeric",
+        hour: "2-digit", minute: "2-digit", hour12: false,
+      });
+      legend.innerHTML = `<span style="color:${TV.axisLabel};font-size:11px">${ts}</span>&nbsp;&nbsp;`
+        + `<span style="color:${col}">O</span>&nbsp;<b>${cd.open.toFixed(2)}</b>&nbsp;`
+        + `<span style="color:${col}">H</span>&nbsp;<b>${cd.high.toFixed(2)}</b>&nbsp;`
+        + `<span style="color:${col}">L</span>&nbsp;<b>${cd.low.toFixed(2)}</b>&nbsp;`
+        + `<span style="color:${col}">C</span>&nbsp;<b>${cd.close.toFixed(2)}</b>&nbsp;&nbsp;`
+        + `<span style="color:${col};font-weight:700">${chg >= 0 ? "▲" : "▼"} ${Math.abs(chg).toFixed(2)} (${pct}%)</span>`
+        + (vd ? `&nbsp;&nbsp;<span style="color:${TV.axisLabel}">Vol</span>&nbsp;<b>${formatVol(vd.value)}</b>` : "");
     });
 
-    return () => { chart.current?.destroy(); chart.current = null; };
+    nextChart.timeScale().fitContent();
+
+    const ro = new ResizeObserver(() => {
+      nextChart.applyOptions({ width: el.clientWidth, height: el.clientHeight });
+    });
+    ro.observe(el);
+
+    return () => {
+      ro.disconnect();
+      if (el.contains(legend)) el.removeChild(legend);
+      nextChart.remove();
+      chart.current = null;
+    };
   }, [candles, lookback]);
 
   return <div ref={ref} className="w-full h-full" />;

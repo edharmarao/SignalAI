@@ -125,6 +125,18 @@ class ORBBacktestRequest(BaseModel):
     from_date: str = Field(..., description="YYYY-MM-DD")
     to_date: str = Field(..., description="YYYY-MM-DD")
     qty: int = Field(1, ge=1, le=50000, description="Quantity per trade")
+
+    # ── Configurable strategy parameters ──────────────────────────────────────
+    or_candles: int = Field(1, ge=1, le=10, description="Number of candles forming the Opening Range")
+    market_open: str = Field("09:15", description="Market open time HH:MM (IST)")
+    volume_multiplier: float = Field(2.0, ge=0.5, le=10.0, description="Breakout volume must be >= this × avg volume")
+    volume_lookback: int = Field(20, ge=5, le=100, description="Candles used to compute average volume")
+    direction: Literal["both", "long", "short"] = Field("both", description="Trade direction filter")
+    risk_reward: float = Field(1.0, ge=0.5, le=10.0, description="Target = entry ± risk × risk_reward")
+    trailing_sl: bool = Field(True, description="Enable trailing stop-loss after target is hit")
+    trail_factor: float = Field(1.0, ge=0.1, le=5.0, description="Trailing SL trails at trail_factor × risk behind price")
+    eod_exit: bool = Field(True, description="Force exit at end-of-day if not already closed")
+
     candles: Optional[list[dict[str, Any]]] = Field(
         default=None,
         description="Optional OHLCV list to override DB fetch. Each item: {time, open, high, low, close, volume}.",

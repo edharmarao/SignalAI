@@ -72,6 +72,15 @@ def orb_backtest(req: ORBBacktestRequest, user=Depends(get_current_user)):
             to_date=req.to_date,
             qty=req.qty,
             df=df,
+            or_candles=req.or_candles,
+            market_open=req.market_open,
+            volume_multiplier=req.volume_multiplier,
+            volume_lookback=req.volume_lookback,
+            direction=req.direction,
+            risk_reward=req.risk_reward,
+            trailing_sl=req.trailing_sl,
+            trail_factor=req.trail_factor,
+            eod_exit=req.eod_exit,
         )
     except ValueError as e:
         raise HTTPException(404, str(e))

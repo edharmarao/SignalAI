@@ -93,6 +93,7 @@ function equityNav() {
     { href: "/equity/strategies",         label: "Strategies",    icon: I.strategies },
     { href: "/equity/strategies/new",     label: "New Strategy",  icon: I.create },
     { href: "/equity/trades",             label: "Trades",        icon: I.trades },
+    { href: "/equity/orb-backtest",       label: "ORB Backtest",  icon: I.backtest },
     { href: "/equity/backtest",           label: "Backtest",      icon: I.backtest },
     { href: "/equity/logs",               label: "Logs",          icon: I.logs },
   ];

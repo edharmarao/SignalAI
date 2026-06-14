@@ -60,9 +60,9 @@ TIMEFRAME_INTERVAL: dict[str, tuple[str, str]] = {
     "eod":   ("days", "1"),
 }
 
-VOLUME_AVG_PERIODS = 20       # candles used to compute average volume
-VOLUME_MULTIPLIER  = 2.0      # breakout candle must have >= this × avg volume
-MARKET_OPEN        = "09:15"  # IST market open (string HH:MM)
+VOLUME_AVG_PERIODS = 20       # candles used to compute average volume (default)
+VOLUME_MULTIPLIER  = 2.0      # breakout candle must have >= this × avg volume (default)
+MARKET_OPEN        = "09:15"  # IST market open (string HH:MM, default)
 
 
 # ── Data fetching ─────────────────────────────────────────────────────────────
@@ -213,17 +213,29 @@ def _hhmm(ts: pd.Timestamp) -> str:
     return ts.strftime("%H:%M")
 
 
-def _compute_avg_volume(series: pd.Series, idx: int) -> float:
-    """Rolling average of prior VOLUME_AVG_PERIODS candles before *idx*."""
-    start = max(0, idx - VOLUME_AVG_PERIODS)
+def _compute_avg_volume(series: pd.Series, idx: int, lookback: int = VOLUME_AVG_PERIODS) -> float:
+    """Rolling average of prior *lookback* candles before *idx*."""
+    start = max(0, idx - lookback)
     window = series.iloc[start:idx]
     return float(window.mean()) if len(window) > 0 else 0.0
 
 
-def detect_orb_signals(df: pd.DataFrame, symbol: str, timeframe: str) -> list[ORBSignal]:
+def detect_orb_signals(
+    df: pd.DataFrame,
+    symbol: str,
+    timeframe: str,
+    *,
+    or_candles: int = 1,
+    market_open: str = MARKET_OPEN,
+    volume_multiplier: float = VOLUME_MULTIPLIER,
+    volume_lookback: int = VOLUME_AVG_PERIODS,
+    direction: str = "both",
+    risk_reward: float = 1.0,
+) -> list[ORBSignal]:
     """Scan all trading days in *df* and build ORBSignal objects.
 
-    The Opening Range is the FIRST candle of each day at or after MARKET_OPEN.
+    The Opening Range is the first ``or_candles`` candle(s) at or after
+    ``market_open`` each day.  All rule parameters are configurable.
     """
     signals: list[ORBSignal] = []
     df = df.copy()
@@ -232,14 +244,14 @@ def detect_orb_signals(df: pd.DataFrame, symbol: str, timeframe: str) -> list[OR
     for date, day_df in df.groupby("date"):
         day_df = day_df.sort_values("time").reset_index(drop=True)
 
-        # First candle = the opening range
-        open_candles = day_df[day_df["time"].dt.strftime("%H:%M") >= MARKET_OPEN]
-        if open_candles.empty:
+        # Opening range candles (first `or_candles` candles at or after market_open)
+        open_candles = day_df[day_df["time"].dt.strftime("%H:%M") >= market_open]
+        if open_candles.empty or len(open_candles) < or_candles:
             continue
 
-        or_candle = open_candles.iloc[0]
-        or_high = float(or_candle["high"])
-        or_low  = float(or_candle["low"])
+        or_slice = open_candles.iloc[:or_candles]
+        or_high = float(or_slice["high"].max())
+        or_low  = float(or_slice["low"].min())
 
         sig = ORBSignal(
             date=str(date),
@@ -249,32 +261,32 @@ def detect_orb_signals(df: pd.DataFrame, symbol: str, timeframe: str) -> list[OR
             or_low=or_low,
         )
 
-        # Look for breakout in subsequent candles of the same day
-        subsequent = open_candles.iloc[1:]
+        # Look for breakout in candles AFTER the OR slice
+        subsequent = open_candles.iloc[or_candles:]
         for idx, row in subsequent.iterrows():
             global_idx = df.index.get_loc(idx) if idx in df.index else int(idx)
-            avg_vol = _compute_avg_volume(df["volume"], global_idx)
-            vol_ok = avg_vol > 0 and float(row["volume"]) >= VOLUME_MULTIPLIER * avg_vol
+            avg_vol = _compute_avg_volume(df["volume"], global_idx, volume_lookback)
+            vol_ok = avg_vol > 0 and float(row["volume"]) >= volume_multiplier * avg_vol
             sig.volume_ok = vol_ok
 
-            # Breakout conditions
-            if float(row["close"]) > or_high and vol_ok:
+            # Breakout conditions (filtered by direction)
+            if direction in ("long", "both") and float(row["close"]) > or_high and vol_ok:
                 sig.triggered = True
                 sig.breakout_type = "long"
                 sig.breakout_candle_time = str(row["time"])
-                sig.entry_price = float(row["close"])   # entry at close of breakout candle
+                sig.entry_price = float(row["close"])
                 sig.stop_loss = float(row["low"])
                 sig.risk = sig.entry_price - sig.stop_loss
-                sig.target = sig.entry_price + sig.risk  # 1:1 R:R
+                sig.target = sig.entry_price + sig.risk * risk_reward
                 break
-            elif float(row["close"]) < or_low and vol_ok:
+            elif direction in ("short", "both") and float(row["close"]) < or_low and vol_ok:
                 sig.triggered = True
                 sig.breakout_type = "short"
                 sig.breakout_candle_time = str(row["time"])
                 sig.entry_price = float(row["close"])
                 sig.stop_loss = float(row["high"])
                 sig.risk = sig.stop_loss - sig.entry_price
-                sig.target = sig.entry_price - sig.risk  # 1:1 R:R
+                sig.target = sig.entry_price - sig.risk * risk_reward
                 break
 
         signals.append(sig)
@@ -291,11 +303,22 @@ def run_orb_backtest(
     to_date: str,
     qty: int = 1,
     df: pd.DataFrame | None = None,
+    *,
+    or_candles: int = 1,
+    market_open: str = MARKET_OPEN,
+    volume_multiplier: float = VOLUME_MULTIPLIER,
+    volume_lookback: int = VOLUME_AVG_PERIODS,
+    direction: str = "both",
+    risk_reward: float = 1.0,
+    trailing_sl: bool = True,
+    trail_factor: float = 1.0,
+    eod_exit: bool = True,
 ) -> ORBBacktestResult:
     """Run a full ORB backtest over the given date range.
 
-    *df* can be supplied directly (useful for unit tests / API endpoints that
-    pass their own candle data). Otherwise data is fetched from DB.
+    All strategy parameters are configurable; defaults replicate the original
+    hardcoded behaviour.  *df* can be supplied directly (useful for unit tests /
+    API endpoints that pass their own candle data).
     """
     if df is None:
         df = fetch_orb_data(symbol, timeframe, from_date, to_date)
@@ -303,7 +326,15 @@ def run_orb_backtest(
     result = ORBBacktestResult(
         symbol=symbol, timeframe=timeframe, from_date=from_date, to_date=to_date
     )
-    signals = detect_orb_signals(df, symbol, timeframe)
+    signals = detect_orb_signals(
+        df, symbol, timeframe,
+        or_candles=or_candles,
+        market_open=market_open,
+        volume_multiplier=volume_multiplier,
+        volume_lookback=volume_lookback,
+        direction=direction,
+        risk_reward=risk_reward,
+    )
     result.signals = signals
 
     df = df.copy()
@@ -320,7 +351,7 @@ def run_orb_backtest(
         sl         = sig.stop_loss
         tp         = sig.target
         risk       = sig.risk
-        trail_sl   = sl          # trailing stop starts at original SL
+        trail_sl_price = sl          # trailing stop starts at original SL
         trailing   = False
         entry_time = sig.breakout_candle_time
 
@@ -349,14 +380,14 @@ def run_orb_backtest(
             price = float(row["close"])
 
             if side == "BUY":
-                # Trailing: once TP hit, activate trailing at 1× risk behind current high
-                if price >= tp and not trailing:
+                # Activate trailing SL once target is hit (if trailing_sl enabled)
+                if trailing_sl and price >= tp and not trailing:
                     trailing = True
-                    trail_sl = price - risk  # trail 1× risk below current price
+                    trail_sl_price = price - risk * trail_factor
                 if trailing:
-                    new_trail = price - risk
-                    trail_sl = max(trail_sl, new_trail)
-                    if price <= trail_sl:
+                    new_trail = price - risk * trail_factor
+                    trail_sl_price = max(trail_sl_price, new_trail)
+                    if price <= trail_sl_price:
                         exit_reason = "trailing_stop"
                         exit_price  = price
                         exit_time   = str(row["time"])
@@ -368,18 +399,20 @@ def run_orb_backtest(
                         exit_time   = str(row["time"])
                         break
                     if price >= tp:
-                        exit_reason = "target"
-                        exit_price  = price
-                        exit_time   = str(row["time"])
-                        break
+                        if not trailing_sl:
+                            # No trailing — exit at target
+                            exit_reason = "target"
+                            exit_price  = price
+                            exit_time   = str(row["time"])
+                            break
             else:  # SELL
-                if price <= tp and not trailing:
+                if trailing_sl and price <= tp and not trailing:
                     trailing = True
-                    trail_sl = price + risk
+                    trail_sl_price = price + risk * trail_factor
                 if trailing:
-                    new_trail = price + risk
-                    trail_sl = min(trail_sl, new_trail)
-                    if price >= trail_sl:
+                    new_trail = price + risk * trail_factor
+                    trail_sl_price = min(trail_sl_price, new_trail)
+                    if price >= trail_sl_price:
                         exit_reason = "trailing_stop"
                         exit_price  = price
                         exit_time   = str(row["time"])
@@ -391,17 +424,21 @@ def run_orb_backtest(
                         exit_time   = str(row["time"])
                         break
                     if price <= tp:
-                        exit_reason = "target"
-                        exit_price  = price
-                        exit_time   = str(row["time"])
-                        break
+                        if not trailing_sl:
+                            exit_reason = "target"
+                            exit_price  = price
+                            exit_time   = str(row["time"])
+                            break
 
-        if not past_entry or not exit_time:
+        if eod_exit and (not past_entry or not exit_time):
             # Exit at last candle of day
             last = day_df.iloc[-1]
             exit_price = float(last["close"])
             exit_time  = str(last["time"])
             exit_reason = "eod"
+
+        if not exit_time:
+            continue  # eod_exit=False and no exit triggered — skip trade
 
         pnl = (exit_price - entry) * qty if side == "BUY" else (entry - exit_price) * qty
 

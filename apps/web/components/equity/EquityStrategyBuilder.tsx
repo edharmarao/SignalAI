@@ -1,10 +1,14 @@
 "use client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import Highcharts from "highcharts/highstock";
 import { istToMs } from "@/lib/highcharts";
-import "@/lib/highcharts";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
+import {
+  createChart, ColorType, CrosshairMode, LineStyle,
+  CandlestickSeries, HistogramSeries, LineSeries,
+  createSeriesMarkers,
+  type IChartApi, type LogicalRange, type UTCTimestamp,
+} from "lightweight-charts";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 type IKind = "SMA"|"EMA"|"WMA"|"RSI"|"MACD"|"VWAP"|"BBANDS"|"SUPERTREND"|"price"|"value";
@@ -129,6 +133,29 @@ function supertrend(rows: OHLCVRow[], p=10, mult=3) {
   return out;
 }
 
+const TV = {
+  bg: "#131722",
+  up: "#26a69a",
+  down: "#ef5350",
+  upVol: "rgba(38,166,154,0.5)",
+  downVol: "rgba(239,83,80,0.5)",
+  grid: "#1e2030",
+  border: "#2a2e39",
+  text: "#d1d4dc",
+  axisLabel: "#787b86",
+};
+
+function toSec(t: string): UTCTimestamp {
+  return Math.floor(istToMs(t) / 1000) as UTCTimestamp;
+}
+
+function formatVol(v: number): string {
+  if (v >= 1e7) return `${(v / 1e7).toFixed(2)} Cr`;
+  if (v >= 1e5) return `${(v / 1e5).toFixed(2)} L`;
+  if (v >= 1e3) return `${(v / 1e3).toFixed(1)} K`;
+  return String(v);
+}
+
 
 // ── Figure out what indicators are needed from conditions ─────────────────────
 function activeInds(conds: ECond[]) {
@@ -151,8 +178,12 @@ function activeInds(conds: ECond[]) {
 function TradingChart({ ohlcv, conds, trades, action }: {
   ohlcv: OHLCVRow[]; conds: ECond[]; trades?: Trade[]; action?: "BUY"|"SELL";
 }) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const chartRef     = useRef<Highcharts.StockChart | null>(null);
+  const mainRef = useRef<HTMLDivElement>(null);
+  const rsiRef = useRef<HTMLDivElement>(null);
+  const macdRef = useRef<HTMLDivElement>(null);
+  const chartRefs = useRef<{ main: IChartApi | null; rsi: IChartApi | null; macd: IChartApi | null }>({
+    main: null, rsi: null, macd: null,
+  });
 
   const inds = useMemo(() => activeInds(conds), [conds]);
   const hasRSI  = inds.some(x=>x.kind==="RSI");
@@ -187,179 +218,235 @@ function TradingChart({ ohlcv, conds, trades, action }: {
   const macdData = useMemo(()=>hasMACD ? macd(closes)     : null, [hasMACD,closes]);
 
   useEffect(() => {
-    chartRef.current?.destroy();
-    chartRef.current = null;
-    if (!containerRef.current || ohlcv.length === 0) return;
+    const mainEl = mainRef.current;
+    chartRefs.current.main?.remove();
+    chartRefs.current.rsi?.remove();
+    chartRefs.current.macd?.remove();
+    chartRefs.current = { main: null, rsi: null, macd: null };
+    if (!mainEl || ohlcv.length === 0) return;
 
-    const toMs = istToMs;
-
-    // ── Build yAxis panels ────────────────────────────────────────────────────
-    const subCount = (hasRSI ? 1 : 0) + (hasMACD ? 1 : 0);
-    const subH     = subCount > 0 ? 18 : 0;
-    const mainH    = 100 - subH * subCount;
-    const yAxes: Highcharts.YAxisOptions[] = [];
-    const series:  Highcharts.SeriesOptionsType[] = [];
-    let   top = 0;
-
-    // Main price axis
-    yAxes.push({
-      height: `${mainH}%`, top: `${top}%`, offset: 0,
-      lineWidth: 1, lineColor: "#1e293b",
-      gridLineColor: "#0f172a",
-      labels: { align: "right", x: -5, style: { color: "#475569" } },
-      resize: { enabled: subCount > 0 },
+    const buildChart = (el: HTMLDivElement) => createChart(el, {
+      width: el.clientWidth,
+      height: el.clientHeight,
+      layout: {
+        background: { type: ColorType.Solid, color: TV.bg },
+        textColor: TV.text,
+        fontFamily: "'Inter', ui-sans-serif, system-ui",
+        fontSize: 12,
+      },
+      grid: {
+        vertLines: { color: TV.grid },
+        horzLines: { color: TV.grid },
+      },
+      crosshair: {
+        mode: CrosshairMode.Normal,
+        vertLine: { color: "#758696", width: 1 as const, labelBackgroundColor: "#1e222d" },
+        horzLine: { color: "#758696", width: 1 as const, labelBackgroundColor: "#1e222d" },
+      },
+      rightPriceScale: { borderColor: TV.border },
+      timeScale: {
+        borderColor: TV.border,
+        timeVisible: true,
+        secondsVisible: false,
+        tickMarkFormatter: (time: UTCTimestamp) =>
+          new Date((time as number) * 1000).toLocaleTimeString("en-IN", {
+            timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit", hour12: false,
+          }),
+      },
+      localization: {
+        timeFormatter: (time: UTCTimestamp) =>
+          new Date((time as number) * 1000).toLocaleString("en-IN", {
+            timeZone: "Asia/Kolkata", day: "2-digit", month: "short", year: "numeric",
+            hour: "2-digit", minute: "2-digit", hour12: false,
+          }),
+      },
+      handleScroll: { mouseWheel: true, pressedMouseMove: true },
+      handleScale: { mouseWheel: true, pinch: true },
     });
-    top += mainH + 2;
 
-    // Candlestick
-    series.push({
-      type: "candlestick",
-      name: "Price",
-      id: "candle",
-      data: ohlcv.map(r => [toMs(r.time), r.open, r.high, r.low, r.close]),
-      yAxis: 0,
-      color: "#f43f5e", upColor: "#10b981",
-      lineColor: "#f43f5e", upLineColor: "#10b981",
-      dataGrouping: { enabled: false },
-    } as Highcharts.SeriesCandlestickOptions);
+    const mainChart = buildChart(mainEl);
+    chartRefs.current.main = mainChart;
 
-    // Indicator overlays on main chart
+    const candleSeries = mainChart.addSeries(CandlestickSeries, {
+      upColor: TV.up,
+      downColor: TV.down,
+      borderUpColor: TV.up,
+      borderDownColor: TV.down,
+      wickUpColor: TV.up,
+      wickDownColor: TV.down,
+    });
+    candleSeries.priceScale().applyOptions({ scaleMargins: { top: 0.05, bottom: 0.28 } });
+    candleSeries.setData(ohlcv.map((r) => ({
+      time: toSec(r.time), open: r.open, high: r.high, low: r.low, close: r.close,
+    })));
+
+    const volSeries = mainChart.addSeries(HistogramSeries, {
+      priceScaleId: "vol",
+      priceFormat: { type: "volume" },
+    });
+    mainChart.priceScale("vol").applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
+    volSeries.setData(ohlcv.map((r) => ({
+      time: toSec(r.time),
+      value: r.volume,
+      color: r.close >= r.open ? TV.upVol : TV.downVol,
+    })));
+
     seriesData.forEach(({ color, data }) => {
-      series.push({
-        type: "line",
-        data: data.map(d => [toMs(d.time), d.value]),
-        color, lineWidth: 1, yAxis: 0,
-        enableMouseTracking: false,
-        marker: { enabled: false },
-        showInLegend: false,
-        dataGrouping: { enabled: false },
-      } as Highcharts.SeriesLineOptions);
+      const overlay = mainChart.addSeries(LineSeries, {
+        color,
+        lineWidth: color === "#94a3b8" ? 1 : 2,
+        lastValueVisible: false,
+        priceLineVisible: false,
+      });
+      overlay.setData(data.map((d) => ({ time: toSec(d.time), value: d.value })));
     });
 
-    // Trade entry/exit flags
-    if (trades && trades.length > 0) {
+    if (trades?.length) {
       const isBuy = action !== "SELL";
-      series.push({
-        type: "flags", name: "Entries",
-        onSeries: "candle", shape: "arrowUp",
-        color: "#10b981", fillColor: "#10b981",
-        style: { color: "#fff", fontSize: "9px" },
-        yAxis: 0,
-        data: trades.map(t => ({ x: toMs(t.entryDate), title: isBuy ? "B" : "S" })),
-        dataGrouping: { enabled: false },
-      } as any);
-      series.push({
-        type: "flags", name: "Exits",
-        onSeries: "candle", shape: "arrowDown",
-        yAxis: 0,
-        data: trades.map(t => ({
-          x: toMs(t.exitDate),
-          title: t.exitReason,
-          color: t.exitReason==="SL" ? "#f43f5e" : t.exitReason==="TP" ? "#3b82f6" : t.exitReason==="TSL" ? "#f97316" : "#94a3b8",
-          fillColor: t.exitReason==="SL" ? "#f43f5e" : t.exitReason==="TP" ? "#3b82f6" : t.exitReason==="TSL" ? "#f97316" : "#94a3b8",
+      const markers = [
+        ...trades.map((t) => ({
+          time: toSec(t.entryDate),
+          position: "belowBar" as const,
+          color: isBuy ? TV.up : TV.down,
+          shape: isBuy ? "arrowUp" as const : "arrowDown" as const,
+          text: `${isBuy ? "B" : "S"} ${t.entryPrice.toFixed(2)}`,
+          size: 1,
         })),
-        style: { color: "#fff", fontSize: "9px" },
-        dataGrouping: { enabled: false },
-      } as any);
+        ...trades.map((t) => ({
+          time: toSec(t.exitDate),
+          position: "aboveBar" as const,
+          color: t.exitReason === "SL" ? TV.down : t.exitReason === "TP" ? "#3b82f6" : "#f59e0b",
+          shape: "arrowDown" as const,
+          text: `${t.exitReason} ${t.exitPrice.toFixed(2)}`,
+          size: 1,
+        })),
+      ].sort((a, b) => (a.time as number) - (b.time as number));
+      createSeriesMarkers(candleSeries, markers);
     }
 
-    // ── RSI panel ─────────────────────────────────────────────────────────────
-    if (hasRSI) {
-      const rsiAxis = yAxes.length;
-      yAxes.push({
-        height: `${subH}%`, top: `${top}%`, offset: 0,
-        lineWidth: 1, lineColor: "#1e293b",
-        gridLineColor: "#0f172a",
-        labels: { align: "right", x: -5, style: { color: "#475569" } },
-        min: 0, max: 100,
-        plotLines: [
-          { value: 70, color: "#f43f5e88", width: 1, dashStyle: "Dash" },
-          { value: 30, color: "#10b98188", width: 1, dashStyle: "Dash" },
-        ],
+    mainEl.style.position = "relative";
+    const legend = document.createElement("div");
+    legend.style.cssText = `position:absolute;top:8px;left:12px;z-index:10;pointer-events:none;font-family:'Inter',system-ui;font-size:12px;color:${TV.text};background:rgba(19,23,34,0.9);padding:4px 10px;border-radius:4px;border:1px solid ${TV.border};line-height:1.8;`;
+    mainEl.appendChild(legend);
+
+    mainChart.subscribeCrosshairMove((param) => {
+      if (!param.time) { legend.innerHTML = ""; return; }
+      const cd = param.seriesData.get(candleSeries) as { open: number; high: number; low: number; close: number } | undefined;
+      const vd = param.seriesData.get(volSeries) as { value: number } | undefined;
+      if (!cd) { legend.innerHTML = ""; return; }
+      const chg = cd.close - cd.open;
+      const pct = cd.open ? ((chg / cd.open) * 100).toFixed(2) : "0.00";
+      const col = chg >= 0 ? TV.up : TV.down;
+      const ts = new Date((param.time as number) * 1000).toLocaleString("en-IN", {
+        timeZone: "Asia/Kolkata", day: "2-digit", month: "short", year: "numeric",
+        hour: "2-digit", minute: "2-digit", hour12: false,
       });
-      top += subH + 2;
-      series.push({
-        type: "line", name: "RSI",
-        data: ohlcv.map((r,i) => [toMs(r.time), rsiData[i]]).filter(d => !isNaN(d[1] as number)),
-        yAxis: rsiAxis, color: "#a855f7", lineWidth: 1,
-        marker: { enabled: false },
-        dataGrouping: { enabled: false },
-      } as Highcharts.SeriesLineOptions);
-    }
+      legend.innerHTML = `<span style="color:${TV.axisLabel};font-size:11px">${ts}</span>&nbsp;&nbsp;`
+        + `<span style="color:${col}">O</span>&nbsp;<b>${cd.open.toFixed(2)}</b>&nbsp;`
+        + `<span style="color:${col}">H</span>&nbsp;<b>${cd.high.toFixed(2)}</b>&nbsp;`
+        + `<span style="color:${col}">L</span>&nbsp;<b>${cd.low.toFixed(2)}</b>&nbsp;`
+        + `<span style="color:${col}">C</span>&nbsp;<b>${cd.close.toFixed(2)}</b>&nbsp;&nbsp;`
+        + `<span style="color:${col};font-weight:700">${chg >= 0 ? "▲" : "▼"} ${Math.abs(chg).toFixed(2)} (${pct}%)</span>`
+        + (vd ? `&nbsp;&nbsp;<span style="color:${TV.axisLabel}">Vol</span>&nbsp;<b>${formatVol(vd.value)}</b>` : "");
+    });
 
-    // ── MACD panel ────────────────────────────────────────────────────────────
-    if (hasMACD && macdData) {
-      const macdAxis = yAxes.length;
-      yAxes.push({
-        height: `${subH}%`, top: `${top}%`, offset: 0,
-        lineWidth: 1, lineColor: "#1e293b",
-        gridLineColor: "#0f172a",
-        labels: { align: "right", x: -5, style: { color: "#475569" } },
+    const extraCharts: IChartApi[] = [];
+
+    if (hasRSI && rsiRef.current) {
+      const rsiChart = buildChart(rsiRef.current);
+      chartRefs.current.rsi = rsiChart;
+      extraCharts.push(rsiChart);
+      const rsiSeries = rsiChart.addSeries(LineSeries, {
+        color: "#a855f7",
+        lineWidth: 2,
+        lastValueVisible: false,
       });
-      series.push({
-        type: "line", name: "MACD",
-        data: ohlcv.map((r,i) => [toMs(r.time), macdData.ml[i]]).filter(d => !isNaN(d[1] as number)),
-        yAxis: macdAxis, color: "#3b82f6", lineWidth: 1,
-        marker: { enabled: false },
-        dataGrouping: { enabled: false },
-      } as Highcharts.SeriesLineOptions);
-      series.push({
-        type: "line", name: "Signal",
-        data: ohlcv.map((r,i) => [toMs(r.time), macdData.sl[i]]).filter(d => !isNaN(d[1] as number)),
-        yAxis: macdAxis, color: "#f97316", lineWidth: 1,
-        marker: { enabled: false },
-        dataGrouping: { enabled: false },
-      } as Highcharts.SeriesLineOptions);
-      series.push({
-        type: "column", name: "Histogram",
-        data: ohlcv.map((r,i) => ({
-          x: toMs(r.time),
-          y: macdData.hist[i],
-          color: macdData.hist[i] >= 0 ? "#10b98199" : "#f43f5e99",
-        })).filter(d => !isNaN(d.y)),
-        yAxis: macdAxis,
-        dataGrouping: { enabled: false },
-      } as Highcharts.SeriesColumnOptions);
+      rsiSeries.setData(ohlcv.map((r, i) => ({ time: toSec(r.time), value: rsiData[i] })).filter((d) => !isNaN(d.value)));
+      rsiSeries.createPriceLine({ price: 70, color: TV.down, lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: true, title: "70" });
+      rsiSeries.createPriceLine({ price: 50, color: TV.axisLabel, lineWidth: 1, lineStyle: LineStyle.Dotted, axisLabelVisible: false, title: "" });
+      rsiSeries.createPriceLine({ price: 30, color: TV.up, lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: true, title: "30" });
+      rsiChart.priceScale("right").applyOptions({ autoScale: false, scaleMargins: { top: 0.12, bottom: 0.12 } });
     }
 
-    chartRef.current = Highcharts.stockChart(containerRef.current, {
-      accessibility: { enabled: false },
-      chart: {
-        backgroundColor: "#020617",
-        margin: [0, 60, 30, 0],
-        style: { fontFamily: "inherit" },
-      },
-      title: { text: undefined },
-      rangeSelector: { enabled: false },
-      navigator:     { enabled: false },
-      scrollbar:     { enabled: false },
-      xAxis: {
-        type: "datetime",
-        lineColor: "#1e293b", tickColor: "#1e293b",
-        gridLineColor: "#0f172a",
-        labels: { style: { color: "#475569" } },
-        crosshair: { color: "#334155" },
-      },
-      yAxis: yAxes,
-      series,
-      tooltip: {
-        split: false, shared: true,
-        backgroundColor: "#1e293b",
-        borderColor: "#334155",
-        style: { color: "#e2e8f0" },
-      },
-      legend: { enabled: false },
-      credits: { enabled: false },
+    if (hasMACD && macdData && macdRef.current) {
+      const macdChart = buildChart(macdRef.current);
+      chartRefs.current.macd = macdChart;
+      extraCharts.push(macdChart);
+      const histSeries = macdChart.addSeries(HistogramSeries, {
+        priceLineVisible: false,
+        lastValueVisible: false,
+      });
+      histSeries.setData(ohlcv.map((r, i) => ({
+        time: toSec(r.time),
+        value: macdData.hist[i],
+        color: macdData.hist[i] >= 0 ? TV.upVol : TV.downVol,
+      })).filter((d) => !isNaN(d.value)));
+      const macdLine = macdChart.addSeries(LineSeries, {
+        color: "#3b82f6",
+        lineWidth: 2,
+        lastValueVisible: false,
+      });
+      macdLine.setData(ohlcv.map((r, i) => ({ time: toSec(r.time), value: macdData.ml[i] })).filter((d) => !isNaN(d.value)));
+      const signalLine = macdChart.addSeries(LineSeries, {
+        color: "#f97316",
+        lineWidth: 2,
+        lastValueVisible: false,
+      });
+      signalLine.setData(ohlcv.map((r, i) => ({ time: toSec(r.time), value: macdData.sl[i] })).filter((d) => !isNaN(d.value)));
+      macdLine.createPriceLine({ price: 0, color: TV.axisLabel, lineWidth: 1, lineStyle: LineStyle.Dotted, axisLabelVisible: false, title: "" });
+    }
+
+    const charts = [mainChart, ...extraCharts];
+    let syncing = false;
+    const handlers = charts.map((chart) => {
+      const handler = (range: LogicalRange | null) => {
+        if (!range || syncing) return;
+        syncing = true;
+        charts.forEach((target) => {
+          if (target !== chart) target.timeScale().setVisibleLogicalRange(range);
+        });
+        syncing = false;
+      };
+      chart.timeScale().subscribeVisibleLogicalRangeChange(handler);
+      return { chart, handler };
+    });
+
+    charts.forEach((chart) => chart.timeScale().fitContent());
+    const initialRange = mainChart.timeScale().getVisibleLogicalRange();
+    if (initialRange) extraCharts.forEach((chart) => chart.timeScale().setVisibleLogicalRange(initialRange));
+
+    const resizeObservers: ResizeObserver[] = [];
+    const resizeTargets: Array<{ el: HTMLDivElement; chart: IChartApi }> = [
+      { el: mainEl, chart: mainChart },
+      ...(chartRefs.current.rsi && rsiRef.current ? [{ el: rsiRef.current, chart: chartRefs.current.rsi }] : []),
+      ...(chartRefs.current.macd && macdRef.current ? [{ el: macdRef.current, chart: chartRefs.current.macd }] : []),
+    ];
+    resizeTargets.forEach(({ el, chart }) => {
+      const ro = new ResizeObserver(() => {
+        chart.applyOptions({ width: el.clientWidth, height: el.clientHeight });
+      });
+      ro.observe(el);
+      resizeObservers.push(ro);
     });
 
     return () => {
-      chartRef.current?.destroy();
-      chartRef.current = null;
+      handlers.forEach(({ chart, handler }) => chart.timeScale().unsubscribeVisibleLogicalRangeChange(handler));
+      resizeObservers.forEach((ro) => ro.disconnect());
+      if (mainEl.contains(legend)) mainEl.removeChild(legend);
+      chartRefs.current.main?.remove();
+      chartRefs.current.rsi?.remove();
+      chartRefs.current.macd?.remove();
+      chartRefs.current = { main: null, rsi: null, macd: null };
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ohlcv, seriesData, hasRSI, hasMACD, rsiData, macdData, trades]);
+  }, [ohlcv, seriesData, hasRSI, hasMACD, rsiData, macdData, trades, action]);
 
-  return <div ref={containerRef} className="w-full h-full" />;
+  return (
+    <div className="flex h-full flex-col">
+      <div ref={mainRef} className="min-h-0 flex-1" />
+      {hasRSI && <div ref={rsiRef} className="h-[120px] shrink-0 border-t border-slate-800" />}
+      {hasMACD && <div ref={macdRef} className="h-[120px] shrink-0 border-t border-slate-800" />}
+    </div>
+  );
 }
 
 // ── IndicatorEditor popover ────────────────────────────────────────────────────
