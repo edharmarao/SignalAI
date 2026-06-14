@@ -306,8 +306,8 @@ function ORBChart({ candles, trades, orCandles = 1 }: {
           const isBuy = t.side === "BUY";
           const pnlPct = t.risk > 0 ? ((t.pnl / (t.entryPrice * 1)) * 100).toFixed(2) : "—";
           const pnlStr = `${t.pnl >= 0 ? "+" : ""}${t.pnl.toFixed(0)} (${t.pnl >= 0 ? "+" : ""}${pnlPct}%)`;
-          // TP = emerald, SL = rose, Trailing/EOD = amber
-          const exitColor = t.exitReason === "stop_loss" ? "#f43f5e"
+          // TP = emerald, SL = violet, Trailing/EOD = amber
+          const exitColor = t.exitReason === "stop_loss" ? "#eab308"
             : t.exitReason === "target" ? "#10b981"
             : "#f59e0b";
           const exitLabel = t.exitReason === "stop_loss" ? "✖ SL"
@@ -435,8 +435,16 @@ export default function ORBStrategyBuilder({ editId }: { editId?: string }) {
   const [btError, setBtError]     = useState<string|null>(null);
   const [activePane, setActivePane] = useState<"chart"|"backtest">("chart");
 
+  const [fullscreen, setFullscreen] = useState(false);
   const [saving, setSaving]     = useState(false);
   const [saveError, setSaveError] = useState<string|null>(null);
+
+  // Escape key exits fullscreen
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setFullscreen(false); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   const symbol = selectedSym.symbol;
 
@@ -771,6 +779,19 @@ export default function ORBStrategyBuilder({ editId }: { editId?: string }) {
             ))}
             <span className="ml-auto text-[10px] font-mono text-slate-600">{symbol} · {tfLabel}</span>
             {candles.length > 0 && <span className="text-[10px] text-slate-700 ml-2">{candles.length} candles</span>}
+            {/* Fullscreen toggle button */}
+            {candles.length > 0 && (
+              <button
+                title="Full screen chart"
+                onClick={() => setFullscreen(true)}
+                className="ml-2 p-1.5 rounded-lg text-slate-500 hover:text-amber-300 hover:bg-slate-800 transition-colors"
+              >
+                <svg viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5">
+                  <path d="M3 4a1 1 0 011-1h4a1 1 0 010 2H5.414l4.293 4.293a1 1 0 01-1.414 1.414L4 6.414V8a1 1 0 01-2 0V4z"/>
+                  <path d="M11 3a1 1 0 100 2h2.586l-6.293 6.293a1 1 0 101.414 1.414L15 6.414V9a1 1 0 102 0V4a1 1 0 00-1-1h-5z"/>
+                </svg>
+              </button>
+            )}
           </div>
 
           {/* Chart area */}
@@ -822,22 +843,42 @@ export default function ORBStrategyBuilder({ editId }: { editId?: string }) {
                   <table className="w-full text-[10px] text-slate-400">
                     <thead>
                       <tr className="text-slate-600 uppercase tracking-widest border-b border-slate-800">
-                        {["Date","Side","Entry","Exit","SL","Target","P&L","Reason"].map(h=>(
-                          <th key={h} className="pb-1 pr-3 text-left">{h}</th>
+                        {["Date","Direction","Entry Time","Entry @","Exit Time","Exit @","SL","Target","P&L","P&L %","Reason"].map(h=>(
+                          <th key={h} className="pb-1 pr-3 text-left whitespace-nowrap">{h}</th>
                         ))}
                       </tr>
                     </thead>
                     <tbody>
                       {btResult.trades.map((t,i) => (
-                        <tr key={i} className={`border-b border-slate-800/40 ${t.pnl>0?"text-emerald-400/80":"text-rose-400/80"}`}>
-                          <td className="py-1 pr-3">{t.date}</td>
-                          <td className="py-1 pr-3">{t.side}</td>
-                          <td className="py-1 pr-3 font-mono">{t.entryPrice.toFixed(2)}</td>
-                          <td className="py-1 pr-3 font-mono">{t.exitPrice.toFixed(2)}</td>
+                        <tr key={i} className={`border-b border-slate-800/40 ${t.pnl>0 ? "hover:bg-emerald-950/20" : "hover:bg-rose-950/20"} transition-colors`}>
+                          <td className="py-1 pr-3 text-slate-400">{t.date}</td>
+                          <td className="py-1 pr-3">
+                            {t.side === "BUY"
+                              ? <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-bold bg-cyan-900/40 text-cyan-400 border border-cyan-800/50">▲ LONG</span>
+                              : <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-bold bg-orange-900/40 text-orange-400 border border-orange-800/50">▼ SHORT</span>
+                            }
+                          </td>
+                          <td className="py-1 pr-3 font-mono text-slate-500 text-[9px]">{t.entryTime?.slice(11,16)}</td>
+                          <td className="py-1 pr-3 font-mono text-slate-300">{t.entryPrice.toFixed(2)}</td>
+                          <td className="py-1 pr-3 font-mono text-slate-500 text-[9px]">{t.exitTime?.slice(11,16)}</td>
+                          <td className="py-1 pr-3 font-mono text-slate-300">{t.exitPrice.toFixed(2)}</td>
                           <td className="py-1 pr-3 font-mono text-rose-400/70">{t.stopLoss.toFixed(2)}</td>
-                          <td className="py-1 pr-3 font-mono text-blue-400/70">{t.target.toFixed(2)}</td>
-                          <td className="py-1 pr-3 font-mono font-bold">{t.pnl>0?"+":""}{t.pnl.toFixed(2)}</td>
-                          <td className="py-1 text-slate-500">{t.exitReason}{t.trailingActive?" 🔄":""}</td>
+                          <td className="py-1 pr-3 font-mono text-emerald-400/70">{t.target.toFixed(2)}</td>
+                          <td className={`py-1 pr-3 font-mono font-bold ${t.pnl >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                            {t.pnl >= 0 ? "+" : ""}{t.pnl.toFixed(2)}
+                          </td>
+                          <td className={`py-1 pr-3 font-mono text-[10px] ${t.pnl >= 0 ? "text-emerald-500" : "text-rose-500"}`}>
+                            {t.pnl >= 0 ? "+" : ""}{((t.pnl / t.entryPrice) * 100).toFixed(2)}%
+                          </td>
+                          <td className="py-1">
+                            <span className={`inline-flex items-center gap-0.5 px-1 py-0.5 rounded text-[9px] font-medium
+                              ${t.exitReason === "stop_loss" ? "bg-yellow-900/40 text-yellow-400"
+                              : t.exitReason === "target" ? "bg-emerald-900/40 text-emerald-400"
+                              : t.trailingActive ? "bg-amber-900/40 text-amber-400"
+                              : "bg-slate-800 text-slate-500"}`}>
+                              {t.exitReason === "stop_loss" ? "✖ SL" : t.exitReason === "target" ? "✔ TP" : t.trailingActive ? "↷ Trail" : "◼ EOD"}
+                            </span>
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -848,6 +889,51 @@ export default function ORBStrategyBuilder({ editId }: { editId?: string }) {
           )}
         </div>
       </div>
+
+      {/* ── Full-screen chart overlay ─────────────────────────────────────────── */}
+      {fullscreen && candles.length > 0 && (
+        <div className="fixed inset-0 z-50 flex flex-col bg-[#131722]" style={{ margin: 0 }}>
+          {/* Header */}
+          <div className="flex items-center gap-3 px-4 py-2 border-b border-slate-800 bg-slate-950 shrink-0">
+            <span className="font-bold text-amber-300 tracking-wide">{symbol}</span>
+            <span className="text-xs text-slate-500">{tfLabel} · {candles.length} candles · OR={orCandles}</span>
+            {chartTrades && chartTrades.length > 0 && (() => {
+              const wins = chartTrades.filter(t => t.pnl > 0).length;
+              const losses = chartTrades.filter(t => t.pnl <= 0).length;
+              const total = chartTrades.reduce((s, t) => s + t.pnl, 0);
+              return (
+                <div className="flex items-center gap-3 text-xs">
+                  <span className="text-slate-500">{chartTrades.length} trades</span>
+                  <span className="text-emerald-400">{wins}W</span>
+                  <span className="text-rose-400">{losses}L</span>
+                  <span className={`font-mono font-bold ${total >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                    {total >= 0 ? "+" : ""}₹{total.toFixed(2)}
+                  </span>
+                </div>
+              );
+            })()}
+            <button
+              onClick={() => setFullscreen(false)}
+              title="Exit full screen (Esc)"
+              className="ml-auto flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-slate-400 hover:text-slate-100 hover:bg-slate-800 text-xs transition-colors"
+            >
+              <svg viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5">
+                <path d="M4 8a1 1 0 01-1-1V4a1 1 0 011-1h3a1 1 0 010 2H5.414l3.293 3.293a1 1 0 01-1.414 1.414L4 6.414V7a1 1 0 01-1 1zM8 16a1 1 0 01-1 1H4a1 1 0 01-1-1v-3a1 1 0 012 0v1.586l3.293-3.293a1 1 0 011.414 1.414L6.414 15H7a1 1 0 011 1zM16 4a1 1 0 00-1-1h-3a1 1 0 000 2h1.586l-3.293 3.293a1 1 0 001.414 1.414L15 6.414V7a1 1 0 002 0V4zM12 16a1 1 0 001 1h3a1 1 0 001-1v-3a1 1 0 00-2 0v1.586l-3.293-3.293a1 1 0 00-1.414 1.414L13.586 15H13a1 1 0 00-1 1z"/>
+              </svg>
+              Exit Full Screen
+            </button>
+          </div>
+          {/* Chart fills remaining space */}
+          <div style={{ flex: 1, minHeight: 0 }}>
+            <ORBChart
+              candles={candles}
+              trades={chartTrades}
+              orCandles={orCandles}
+              key={`fs-${symbol}-${tf}-${activePane}-${orCandles}`}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
