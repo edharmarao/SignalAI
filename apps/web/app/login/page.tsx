@@ -1,17 +1,25 @@
 "use client";
-import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Button, Card, Input } from "@signalai/ui";
 import { auth } from "@/lib/auth";
 
 const API = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8003") + "/api/v1";
 
-export default function LoginPage() {
+function LoginForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const nextPath = searchParams.get("next") ?? "/";
+
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Already logged in — skip straight to destination
+  useEffect(() => {
+    if (auth.isLoggedIn()) router.replace(nextPath);
+  }, [nextPath, router]);
 
   async function login() {
     setError(null);
@@ -27,7 +35,7 @@ export default function LoginPage() {
         throw new Error(body.detail ?? body.error ?? "Invalid credentials");
       }
       auth.setSession(username, password);
-      router.push("/");
+      router.replace(nextPath);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Login failed");
     } finally {
@@ -60,5 +68,13 @@ export default function LoginPage() {
         {error && <p className="text-sm text-rose-400 mt-3">{error}</p>}
       </Card>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={null}>
+      <LoginForm />
+    </Suspense>
   );
 }

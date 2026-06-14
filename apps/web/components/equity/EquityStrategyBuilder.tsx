@@ -482,6 +482,7 @@ function TradingChart({ ohlcv, conds, trades, action }: {
     }
 
     chartRef.current = Highcharts.stockChart(containerRef.current, {
+      accessibility: { enabled: false },
       chart: {
         backgroundColor: "#020617",
         margin: [0, 60, 30, 0],

@@ -1017,6 +1017,7 @@ function StockChart({
     });
 
     const chart = Highcharts.stockChart(containerRef.current, {
+      accessibility: { enabled: false },
       chart: {
         backgroundColor: "#0e1117",
         animation: false,

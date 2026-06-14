@@ -112,3 +112,45 @@ class IntradayImportRequest(BaseModel):
     exchange: str = Field("NSE_EQ", description="NSE_EQ | BSE_EQ | NSE_FO | BSE_FO | MCX_FO")
     interval_type: str = Field(..., description="minutes | hours (intraday only)")
     interval_value: str = Field(..., description="e.g. 1, 5, 15")
+
+
+# ── ORB Strategy models ───────────────────────────────────────────────────────
+
+ORBTimeframe = Literal["1min", "5min", "15min", "30min", "1h", "1hour", "eod"]
+
+
+class ORBBacktestRequest(BaseModel):
+    symbol: str = Field(..., description="Stock/index symbol e.g. RELIANCE, NIFTY")
+    timeframe: ORBTimeframe = Field("5min", description="Candle timeframe")
+    from_date: str = Field(..., description="YYYY-MM-DD")
+    to_date: str = Field(..., description="YYYY-MM-DD")
+    qty: int = Field(1, ge=1, le=50000, description="Quantity per trade")
+    candles: Optional[list[dict[str, Any]]] = Field(
+        default=None,
+        description="Optional OHLCV list to override DB fetch. Each item: {time, open, high, low, close, volume}.",
+    )
+
+
+class ORBLiveRequest(BaseModel):
+    symbols: list[str] = Field(..., description="List of symbols to scan")
+    timeframe: ORBTimeframe = Field("5min", description="Candle timeframe")
+    qty: int = Field(1, ge=1, le=50000)
+    mode: ModeT = Field("paper", description="paper | live")
+    confirm_live: bool = Field(False, description="Must be true for live orders")
+
+
+class ORBSignalResponse(BaseModel):
+    symbol: str
+    date: str
+    timeframe: str
+    triggered: bool
+    breakout_type: str = ""
+    entry_price: float = 0.0
+    stop_loss: float = 0.0
+    target: float = 0.0
+    risk: float = 0.0
+    or_high: float = 0.0
+    or_low: float = 0.0
+    volume_ok: bool = False
+    breakout_candle_time: str = ""
+    error: str = ""

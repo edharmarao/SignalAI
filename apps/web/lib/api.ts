@@ -37,6 +37,14 @@ async function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** Redirect to /login on 401 — clears stale session first. */
+function handleUnauthorized(pathname: string): void {
+  auth.clearSession();
+  if (typeof window !== "undefined") {
+    window.location.href = `/login?next=${encodeURIComponent(pathname)}`;
+  }
+}
+
 export async function api<T = unknown>(
   path: string,
   init: RequestInit = {},
@@ -71,6 +79,11 @@ export async function api<T = unknown>(
       const requestId = res.headers.get("X-Request-ID") ?? undefined;
 
       if (!res.ok) {
+        if (res.status === 401) {
+          handleUnauthorized(typeof window !== "undefined" ? window.location.pathname : "/");
+          // Return a never-resolving promise so the component doesn't continue rendering
+          return new Promise<T>(() => {});
+        }
         let message = `${res.status} ${res.statusText}`;
         try {
           const body = await res.json();
