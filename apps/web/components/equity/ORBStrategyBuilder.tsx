@@ -44,7 +44,7 @@ function defaultDates(tf: TFKey) {
 }
 
 // ── Symbol search dropdown ─────────────────────────────────────────────────────
-function SymbolPicker({ symbol, onSelect }: { symbol: string; onSelect: (s: NSESymbol) => void }) {
+function SymbolPicker({ symbol, onSelect, placeholder }: { symbol: string; onSelect: (s: NSESymbol) => void; placeholder?: string }) {
   const [q, setQ]           = useState("");
   const [open, setOpen]     = useState(false);
   const [results, setResults] = useState<NSESymbol[]>([]);
@@ -70,10 +70,10 @@ function SymbolPicker({ symbol, onSelect }: { symbol: string; onSelect: (s: NSES
   return (
     <div ref={ref} className="relative">
       <input
-        value={open ? q : symbol}
+        value={open ? q : (symbol || "")}
         onChange={e => { setQ(e.target.value); setOpen(true); }}
         onFocus={() => { setOpen(true); setQ(""); }}
-        placeholder="Search NSE symbol…"
+        placeholder={placeholder ?? "Add symbol…"}
         className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-emerald-500"
       />
       {open && (
@@ -408,7 +408,8 @@ export default function ORBStrategyBuilder({ editId }: { editId?: string }) {
   const router = useRouter();
 
   // ── Basic params ─────────────────────────────────────────────────────────────
-  const [selectedSym, setSelectedSym] = useState<NSESymbol>({ symbol: "RELIANCE", company_name: "Reliance Industries", industry: "" });
+  const [selectedSyms, setSelectedSyms] = useState<NSESymbol[]>([{ symbol: "RELIANCE", company_name: "Reliance Industries", industry: "" }]);
+  const [activeSymIdx, setActiveSymIdx] = useState(0);
   const [tf, setTf]         = useState<TFKey>("5min");
   const [fromDate, setFromDate] = useState(() => defaultDates("5min").from);
   const [toDate, setToDate]   = useState(() => defaultDates("5min").to);
@@ -418,7 +419,7 @@ export default function ORBStrategyBuilder({ editId }: { editId?: string }) {
   // ── Configurable strategy params ──────────────────────────────────────────────
   const [orCandles, setOrCandles]           = useState(1);           // # candles forming OR
   const [marketOpen, setMarketOpen]         = useState("09:15");     // IST HH:MM
-  const [volMultiplier, setVolMultiplier]   = useState(2.0);         // volume filter ×
+  const [volMultiplier, setVolMultiplier]   = useState(10.0);        // volume filter ×
   const [volLookback, setVolLookback]       = useState(20);          // vol avg periods
   const [direction, setDirection]           = useState<"both"|"long"|"short">("both");
   const [riskReward, setRiskReward]         = useState(1.0);         // target = entry ± risk × RR
@@ -430,9 +431,10 @@ export default function ORBStrategyBuilder({ editId }: { editId?: string }) {
   const [loadingChart, setLoadingChart] = useState(false);
   const [chartError, setChartError]     = useState<string|null>(null);
 
-  const [btResult, setBtResult]   = useState<BacktestResult|null>(null);
+  const [btResults, setBtResults] = useState<Map<string, BacktestResult | "loading" | string>>(new Map());
   const [btRunning, setBtRunning] = useState(false);
   const [btError, setBtError]     = useState<string|null>(null);
+  const [activeBtSymbol, setActiveBtSymbol] = useState<string | null>(null);
   const [activePane, setActivePane] = useState<"chart"|"backtest">("chart");
 
   const [fullscreen, setFullscreen] = useState(false);
@@ -446,7 +448,7 @@ export default function ORBStrategyBuilder({ editId }: { editId?: string }) {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  const symbol = selectedSym.symbol;
+  const symbol = selectedSyms[activeSymIdx]?.symbol ?? "RELIANCE";
 
   // Update dates when timeframe changes
   useEffect(() => {
@@ -476,27 +478,39 @@ export default function ORBStrategyBuilder({ editId }: { editId?: string }) {
   useEffect(() => { fetchChart(); }, [fetchChart]);
 
   async function runBacktest() {
-    setBtRunning(true); setBtError(null); setBtResult(null);
-    try {
-      const res = await api<BacktestResult>("/orb/backtest", {
-        method: "POST",
-        body: JSON.stringify({
-          symbol, timeframe: tf, from_date: fromDate, to_date: toDate,
-          qty: parseInt(qty) || 1,
-          or_candles: orCandles,
-          market_open: marketOpen,
-          volume_multiplier: volMultiplier,
-          volume_lookback: volLookback,
-          direction,
-          risk_reward: riskReward,
-          trailing_sl: trailingSl,
-          trail_factor: trailFactor,
-          eod_exit: eodExit,
-        }),
-      });
-      setBtResult(res); setActivePane("backtest");
-    } catch (e: any) { setBtError(e.message); }
-    finally { setBtRunning(false); }
+    setBtRunning(true); setBtError(null);
+    const newResults = new Map<string, BacktestResult | "loading" | string>();
+    selectedSyms.forEach(s => newResults.set(s.symbol, "loading"));
+    setBtResults(new Map(newResults));
+    setActiveBtSymbol(selectedSyms[0]?.symbol ?? null);
+    setActivePane("backtest");
+
+    await Promise.allSettled(
+      selectedSyms.map(async s => {
+        try {
+          const res = await api<BacktestResult>("/orb/backtest", {
+            method: "POST",
+            body: JSON.stringify({
+              symbol: s.symbol, timeframe: tf, from_date: fromDate, to_date: toDate,
+              qty: parseInt(qty) || 1,
+              or_candles: orCandles,
+              market_open: marketOpen,
+              volume_multiplier: volMultiplier,
+              volume_lookback: volLookback,
+              direction,
+              risk_reward: riskReward,
+              trailing_sl: trailingSl,
+              trail_factor: trailFactor,
+              eod_exit: eodExit,
+            }),
+          });
+          setBtResults(prev => new Map(prev).set(s.symbol, res));
+        } catch (e: any) {
+          setBtResults(prev => new Map(prev).set(s.symbol, e.message ?? "Error"));
+        }
+      })
+    );
+    setBtRunning(false);
   }
 
   async function save() {
@@ -538,7 +552,12 @@ export default function ORBStrategyBuilder({ editId }: { editId?: string }) {
     finally { setSaving(false); }
   }
 
-  const chartTrades = activePane === "backtest" && btResult ? btResult.trades : undefined;
+  const chartTrades = activePane === "backtest" && btResults.size > 0
+    ? (() => {
+        const r = btResults.get(symbol);
+        return r && typeof r === "object" ? (r as BacktestResult).trades : undefined;
+      })()
+    : undefined;
   const tfLabel = TIMEFRAMES.find(t => t.key === tf)?.label ?? tf;
 
   return (
@@ -571,9 +590,45 @@ export default function ORBStrategyBuilder({ editId }: { editId?: string }) {
           {/* Symbol */}
           <div>
             <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1.5">Symbol <span className="text-slate-700 font-normal normal-case">(NSE · 750 stocks)</span></p>
-            <SymbolPicker symbol={symbol} onSelect={setSelectedSym} />
-            {selectedSym.company_name && <p className="text-[10px] text-slate-600 mt-1 truncate">{selectedSym.company_name}</p>}
-            {selectedSym.industry && <p className="text-[9px] text-slate-700 truncate">{selectedSym.industry}</p>}
+            <div className="flex flex-wrap gap-1 mb-2">
+              {selectedSyms.map((s, i) => (
+                <span key={s.symbol}
+                  onClick={() => {
+                    setActiveSymIdx(i);
+                    // Keep backtest result tab in sync
+                    if (btResults.has(s.symbol)) setActiveBtSymbol(s.symbol);
+                  }}
+                  className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-mono font-bold cursor-pointer transition-all ${i === activeSymIdx ? "bg-amber-500 text-slate-900" : "bg-slate-800 text-slate-400 hover:bg-slate-700"}`}>
+                  {s.symbol}
+                  <button
+                    onClick={e => {
+                      e.stopPropagation();
+                      setSelectedSyms(prev => {
+                        const n = prev.filter((_, j) => j !== i);
+                        setActiveSymIdx(Math.min(activeSymIdx, n.length - 1));
+                        return n;
+                      });
+                    }}
+                    className="ml-0.5 opacity-60 hover:opacity-100"
+                  >
+                    ✕
+                  </button>
+                </span>
+              ))}
+            </div>
+            <SymbolPicker
+              symbol=""
+              placeholder="Add symbol…"
+              onSelect={s => {
+                if (!selectedSyms.find(x => x.symbol === s.symbol)) {
+                  setSelectedSyms(prev => [...prev, s]);
+                  setActiveSymIdx(selectedSyms.length);
+                }
+              }}
+            />
+            <p className="text-[9px] text-slate-700 mt-1">Search and add multiple symbols. Click a tag to view its chart.</p>
+            {selectedSyms[activeSymIdx]?.company_name && <p className="text-[10px] text-slate-600 mt-1 truncate">{selectedSyms[activeSymIdx]?.company_name}</p>}
+            {selectedSyms[activeSymIdx]?.industry && <p className="text-[9px] text-slate-700 truncate">{selectedSyms[activeSymIdx]?.industry}</p>}
           </div>
 
           {/* Timeframe */}
@@ -636,7 +691,7 @@ export default function ORBStrategyBuilder({ editId }: { editId?: string }) {
                   <p className="text-[10px] text-slate-500">Volume Filter (×avg)</p>
                   <span className="text-[10px] font-mono font-bold text-amber-400">{volMultiplier.toFixed(1)}×</span>
                 </div>
-                <input type="range" min={0.5} max={5} step={0.5} value={volMultiplier}
+                <input type="range" min={0.5} max={20} step={0.5} value={volMultiplier}
                   onChange={e => setVolMultiplier(Number(e.target.value))}
                   className="w-full accent-amber-500 h-1"/>
                 <div className="flex justify-between text-[9px] text-slate-700 mt-0.5"><span>0.5×</span><span>5×</span></div>
@@ -772,9 +827,9 @@ export default function ORBStrategyBuilder({ editId }: { editId?: string }) {
           <div className="flex items-center gap-1 px-4 py-2 border-b border-slate-800 bg-slate-950 shrink-0">
             {(["chart","backtest"] as const).map(p => (
               <button key={p} onClick={() => setActivePane(p)}
-                disabled={p === "backtest" && !btResult}
+                disabled={p === "backtest" && btResults.size === 0}
                 className={`px-3 py-1 rounded-lg text-xs font-semibold transition-all capitalize disabled:opacity-40 ${activePane===p?"bg-slate-800 text-amber-300":"text-slate-600 hover:text-slate-400"}`}>
-                {p} {p === "backtest" && btResult ? `(${btResult.totalTrades})` : ""}
+                {p} {p === "backtest" && btResults.size > 0 ? ` (${btResults.size})` : ""}
               </button>
             ))}
             <span className="ml-auto text-[10px] font-mono text-slate-600">{symbol} · {tfLabel}</span>
@@ -829,62 +884,111 @@ export default function ORBStrategyBuilder({ editId }: { editId?: string }) {
           </div>
 
           {/* Backtest stats */}
-          {activePane === "backtest" && btResult && (
-            <div className="shrink-0 border-t border-slate-800 bg-slate-950 p-4 space-y-3">
-              <div className="grid grid-cols-5 gap-2">
-                <Stat label="Trades"     value={String(btResult.totalTrades)} />
-                <Stat label="Win Rate"   value={`${(btResult.winRate*100).toFixed(1)}%`} sub={`${btResult.wins}W / ${btResult.losses}L`} />
-                <Stat label="Total P&L"  value={`₹${btResult.totalPnl.toFixed(2)}`} />
-                <Stat label="Max DD"     value={`₹${btResult.maxDrawdown.toFixed(2)}`} />
-                <Stat label="Avg P&L"    value={btResult.totalTrades > 0 ? `₹${(btResult.totalPnl/btResult.totalTrades).toFixed(2)}` : "—"} />
+          {activePane === "backtest" && btResults.size > 0 && (
+            <div className="shrink-0 border-t border-slate-800 bg-slate-950">
+              <div className="flex gap-0 border-b border-slate-800 overflow-x-auto">
+                {[...btResults.entries()].map(([sym, res]) => {
+                  const isLoading = res === "loading";
+                  const isError = typeof res === "string" && res !== "loading";
+                  const result = typeof res === "object" ? res as BacktestResult : null;
+                  const pnl = result ? result.totalPnl : null;
+                  return (
+                    <button key={sym}
+                      onClick={() => {
+                        setActiveBtSymbol(sym);
+                        // Switch chart to this symbol
+                        const idx = selectedSyms.findIndex(s => s.symbol === sym);
+                        if (idx !== -1) setActiveSymIdx(idx);
+                      }}
+                      className={`flex items-center gap-2 px-3 py-2 text-[10px] font-mono font-bold border-r border-slate-800 shrink-0 transition-colors ${activeBtSymbol === sym ? "bg-slate-800 text-amber-300" : "text-slate-600 hover:text-slate-400 hover:bg-slate-900"}`}>
+                      {sym}
+                      {isLoading && <span className="animate-pulse text-slate-600">•••</span>}
+                      {isError && <span className="text-rose-500">✕</span>}
+                      {pnl !== null && (
+                        <span className={pnl >= 0 ? "text-emerald-400" : "text-rose-400"}>
+                          {pnl >= 0 ? "+" : ""}₹{pnl.toFixed(0)}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
               </div>
-              {btResult.trades.length > 0 && (
-                <div className="overflow-x-auto max-h-40 overflow-y-auto">
-                  <table className="w-full text-[10px] text-slate-400">
-                    <thead>
-                      <tr className="text-slate-600 uppercase tracking-widest border-b border-slate-800">
-                        {["Date","Direction","Entry Time","Entry @","Exit Time","Exit @","SL","Target","P&L","P&L %","Reason"].map(h=>(
-                          <th key={h} className="pb-1 pr-3 text-left whitespace-nowrap">{h}</th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {btResult.trades.map((t,i) => (
-                        <tr key={i} className={`border-b border-slate-800/40 ${t.pnl>0 ? "hover:bg-emerald-950/20" : "hover:bg-rose-950/20"} transition-colors`}>
-                          <td className="py-1 pr-3 text-slate-400">{t.date}</td>
-                          <td className="py-1 pr-3">
-                            {t.side === "BUY"
-                              ? <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-bold bg-cyan-900/40 text-cyan-400 border border-cyan-800/50">▲ LONG</span>
-                              : <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-bold bg-orange-900/40 text-orange-400 border border-orange-800/50">▼ SHORT</span>
-                            }
-                          </td>
-                          <td className="py-1 pr-3 font-mono text-slate-500 text-[9px]">{t.entryTime?.slice(11,16)}</td>
-                          <td className="py-1 pr-3 font-mono text-slate-300">{t.entryPrice.toFixed(2)}</td>
-                          <td className="py-1 pr-3 font-mono text-slate-500 text-[9px]">{t.exitTime?.slice(11,16)}</td>
-                          <td className="py-1 pr-3 font-mono text-slate-300">{t.exitPrice.toFixed(2)}</td>
-                          <td className="py-1 pr-3 font-mono text-rose-400/70">{t.stopLoss.toFixed(2)}</td>
-                          <td className="py-1 pr-3 font-mono text-emerald-400/70">{t.target.toFixed(2)}</td>
-                          <td className={`py-1 pr-3 font-mono font-bold ${t.pnl >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
-                            {t.pnl >= 0 ? "+" : ""}{t.pnl.toFixed(2)}
-                          </td>
-                          <td className={`py-1 pr-3 font-mono text-[10px] ${t.pnl >= 0 ? "text-emerald-500" : "text-rose-500"}`}>
-                            {t.pnl >= 0 ? "+" : ""}{((t.pnl / t.entryPrice) * 100).toFixed(2)}%
-                          </td>
-                          <td className="py-1">
-                            <span className={`inline-flex items-center gap-0.5 px-1 py-0.5 rounded text-[9px] font-medium
-                              ${t.exitReason === "stop_loss" ? "bg-yellow-900/40 text-yellow-400"
-                              : t.exitReason === "target" ? "bg-emerald-900/40 text-emerald-400"
-                              : t.trailingActive ? "bg-amber-900/40 text-amber-400"
-                              : "bg-slate-800 text-slate-500"}`}>
-                              {t.exitReason === "stop_loss" ? "✖ SL" : t.exitReason === "target" ? "✔ TP" : t.trailingActive ? "↷ Trail" : "◼ EOD"}
-                            </span>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
+
+              {activeBtSymbol && (() => {
+                const res = btResults.get(activeBtSymbol);
+                if (res === "loading") return (
+                  <div className="flex items-center justify-center py-6 text-slate-600 text-xs">
+                    <svg className="animate-spin w-4 h-4 mr-2" viewBox="0 0 24 24" fill="none">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
+                    </svg>
+                    Running backtest for {activeBtSymbol}…
+                  </div>
+                );
+                if (typeof res === "string") return (
+                  <p className="px-4 py-3 text-xs text-rose-400">{activeBtSymbol}: {res}</p>
+                );
+                if (!res) return null;
+                const t = res as BacktestResult;
+                return (
+                  <div className="p-4 space-y-3">
+                    <div className="grid grid-cols-5 gap-2">
+                      <Stat label="Trades" value={String(t.totalTrades)} />
+                      <Stat label="Win Rate" value={`${(t.winRate*100).toFixed(1)}%`} sub={`${t.wins}W / ${t.losses}L`} />
+                      <Stat label="Total P&L" value={`₹${t.totalPnl.toFixed(2)}`} />
+                      <Stat label="Max DD" value={`₹${t.maxDrawdown.toFixed(2)}`} />
+                      <Stat label="Avg P&L" value={t.totalTrades > 0 ? `₹${(t.totalPnl/t.totalTrades).toFixed(2)}` : "—"} />
+                    </div>
+                    {t.trades.length > 0 && (
+                      <div className="overflow-x-auto max-h-40 overflow-y-auto">
+                        <table className="w-full text-[10px] text-slate-400">
+                          <thead>
+                            <tr className="text-slate-600 uppercase tracking-widest border-b border-slate-800">
+                              {["Date","Direction","Entry Time","Entry @","Exit Time","Exit @","SL","Target","P&L","P&L %","Reason"].map(h=>(
+                                <th key={h} className="pb-1 pr-3 text-left whitespace-nowrap">{h}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {t.trades.map((tr, i) => (
+                              <tr key={i} className={`border-b border-slate-800/40 ${tr.pnl>0 ? "hover:bg-emerald-950/20" : "hover:bg-rose-950/20"} transition-colors`}>
+                                <td className="py-1 pr-3 text-slate-400">{tr.date}</td>
+                                <td className="py-1 pr-3">
+                                  {tr.side === "BUY"
+                                    ? <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-bold bg-cyan-900/40 text-cyan-400 border border-cyan-800/50">▲ LONG</span>
+                                    : <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-bold bg-orange-900/40 text-orange-400 border border-orange-800/50">▼ SHORT</span>
+                                  }
+                                </td>
+                                <td className="py-1 pr-3 font-mono text-slate-500 text-[9px]">{tr.entryTime?.slice(11,16)}</td>
+                                <td className="py-1 pr-3 font-mono text-slate-300">{tr.entryPrice.toFixed(2)}</td>
+                                <td className="py-1 pr-3 font-mono text-slate-500 text-[9px]">{tr.exitTime?.slice(11,16)}</td>
+                                <td className="py-1 pr-3 font-mono text-slate-300">{tr.exitPrice.toFixed(2)}</td>
+                                <td className="py-1 pr-3 font-mono text-rose-400/70">{tr.stopLoss.toFixed(2)}</td>
+                                <td className="py-1 pr-3 font-mono text-emerald-400/70">{tr.target.toFixed(2)}</td>
+                                <td className={`py-1 pr-3 font-mono font-bold ${tr.pnl >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                                  {tr.pnl >= 0 ? "+" : ""}{tr.pnl.toFixed(2)}
+                                </td>
+                                <td className={`py-1 pr-3 font-mono text-[10px] ${tr.pnl >= 0 ? "text-emerald-500" : "text-rose-500"}`}>
+                                  {tr.pnl >= 0 ? "+" : ""}{((tr.pnl / tr.entryPrice) * 100).toFixed(2)}%
+                                </td>
+                                <td className="py-1">
+                                  <span className={`inline-flex items-center gap-0.5 px-1 py-0.5 rounded text-[9px] font-medium
+                                    ${tr.exitReason === "stop_loss" ? "bg-yellow-900/40 text-yellow-400"
+                                    : tr.exitReason === "target" ? "bg-emerald-900/40 text-emerald-400"
+                                    : tr.trailingActive ? "bg-amber-900/40 text-amber-400"
+                                    : "bg-slate-800 text-slate-500"}`}>
+                                    {tr.exitReason === "stop_loss" ? "✖ SL" : tr.exitReason === "target" ? "✔ TP" : tr.trailingActive ? "↷ Trail" : "◼ EOD"}
+                                  </span>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
           )}
         </div>
