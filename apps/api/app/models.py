@@ -116,7 +116,7 @@ class IntradayImportRequest(BaseModel):
 
 # ── ORB Strategy models ───────────────────────────────────────────────────────
 
-ORBTimeframe = Literal["1min", "5min", "15min", "30min", "1h", "1hour", "eod"]
+ORBTimeframe = Literal["1min", "5min", "15min", "25min", "30min", "75min", "125min", "1h", "1hour", "eod", "daily", "weekly", "monthly"]
 
 
 class ORBBacktestRequest(BaseModel):

@@ -85,23 +85,23 @@ def fetch_orb_data(
     tf = _normalise_timeframe(timeframe)
     table = TIMEFRAME_TABLE.get(tf)
 
-    date_filter = ""
-    args: list[Any] = [symbol.upper()]
-
+    # date filter for stock_data_* tables (column: candle_time)
+    stock_date_filter = ""
+    stock_args: list[Any] = [symbol.upper()]
     if from_date:
-        date_filter += " AND time >= %s"
-        args.append(from_date)
+        stock_date_filter += " AND candle_time >= %s"
+        stock_args.append(from_date)
     if to_date:
-        date_filter += " AND time <= %s"
-        args.append(f"{to_date} 23:59:59")
+        stock_date_filter += " AND candle_time <= %s"
+        stock_args.append(f"{to_date} 23:59:59")
 
     # Attempt timeframe-specific table (stock_data_<tf> uses stock_code + candle_time columns)
     if table:
         try:
             rows = db_query(
                 f"SELECT candle_time as time, open, high, low, close, volume FROM `{table}` "
-                f"WHERE stock_code=%s{date_filter} ORDER BY candle_time ASC",
-                args,
+                f"WHERE stock_code=%s{stock_date_filter} ORDER BY candle_time ASC",
+                stock_args,
             )
             if rows:
                 return _to_df(rows)
@@ -111,16 +111,14 @@ def fetch_orb_data(
     # Fallback: candle_data table (shared, used by Upstox import)
     iv_type, iv_val = TIMEFRAME_INTERVAL.get(tf, ("minutes", "5"))
     fallback_args: list[Any] = [symbol.upper(), iv_type, iv_val]
-    if from_date:
-        fallback_args.append(from_date)
-    if to_date:
-        fallback_args.append(f"{to_date} 23:59:59")
 
     fb_date = ""
     if from_date:
         fb_date += " AND time >= %s"
+        fallback_args.append(from_date)
     if to_date:
         fb_date += " AND time <= %s"
+        fallback_args.append(f"{to_date} 23:59:59")
 
     rows = db_query(
         f"SELECT time, open, high, low, close, volume FROM candle_data "

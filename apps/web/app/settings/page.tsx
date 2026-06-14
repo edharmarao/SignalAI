@@ -2,10 +2,6 @@
 import { useEffect, useState } from "react";
 import { Button, Card, Badge } from "@signalai/ui";
 import { api } from "@/lib/api";
-import { resetMock } from "@/lib/mock";
-
-const USE_MOCK =
-  (process.env.NEXT_PUBLIC_USE_MOCK ?? "true").toLowerCase() !== "false";
 
 export default function SettingsPage() {
   const [accounts, setAccounts] = useState<any[]>([]);
@@ -33,24 +29,6 @@ export default function SettingsPage() {
   return (
     <div className="space-y-4">
       <h1 className="text-2xl font-semibold">Settings</h1>
-
-      {USE_MOCK && (
-        <Card title="Demo mode">
-          <p className="text-sm text-slate-400 mb-3">
-            UI is running with in-browser dummy data (localStorage). Reset to
-            re-seed example strategies, trades, orders, and logs.
-          </p>
-          <Button
-            variant="secondary"
-            onClick={() => {
-              resetMock();
-              window.location.reload();
-            }}
-          >
-            Reset demo data
-          </Button>
-        </Card>
-      )}
 
       <Card title="Broker connection">
         <p className="text-sm text-slate-400 mb-3">

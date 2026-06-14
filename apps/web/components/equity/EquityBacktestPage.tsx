@@ -165,8 +165,8 @@ export default function EquityBacktestPage() {
                   <tbody className="divide-y divide-slate-800/60">
                     {result.trades.map((t, i) => (
                       <tr key={i} className={`${t.pnl >= 0 ? "hover:bg-emerald-500/5" : "hover:bg-rose-500/5"} transition-colors`}>
-                        <td className="py-2 pr-4 text-slate-400 text-xs">{new Date(t.entryTime).toLocaleDateString()}</td>
-                        <td className="py-2 pr-4 text-slate-400 text-xs">{new Date(t.exitTime).toLocaleDateString()}</td>
+                        <td className="py-2 pr-4 text-slate-400 text-xs">{new Date(t.entryTime).toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata" })}</td>
+                        <td className="py-2 pr-4 text-slate-400 text-xs">{new Date(t.exitTime).toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata" })}</td>
                         <td className="py-2 pr-4 text-slate-200">{fmt(t.entryPrice)}</td>
                         <td className="py-2 pr-4 text-slate-200">{fmt(t.exitPrice)}</td>
                         <td className={`py-2 pr-4 font-medium ${t.pnl >= 0 ? "text-emerald-400" : "text-rose-400"}`}>

@@ -4,6 +4,8 @@
  */
 import { useEffect, useRef, useState, useCallback } from "react";
 import Highcharts from "highcharts/highstock";
+import { istToMs } from "@/lib/highcharts";
+import "@/lib/highcharts";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 
@@ -82,7 +84,7 @@ function computeSwings(rows: OHLCVRow[], lookback: number) {
       && rows.slice(i + 1, i + lookback + 1).every(r => r.high <= h);
     const isSwingLow  = rows.slice(i - lookback, i).every(r => r.low >= l)
       && rows.slice(i + 1, i + lookback + 1).every(r => r.low >= l);
-    const ms = new Date(rows[i].time).getTime();
+    const ms = istToMs(rows[i].time);
     if (isSwingHigh) highs.push({ x: ms, y: h });
     if (isSwingLow)  lows.push({ x: ms, y: l });
   }
@@ -97,7 +99,7 @@ function SwingChart({ candles, lookback }: { candles: OHLCVRow[]; lookback: numb
     chart.current?.destroy(); chart.current = null;
     if (!ref.current || candles.length === 0) return;
 
-    const toMs = (t: string) => new Date(t).getTime();
+    const toMs = istToMs;
     const { highs, lows } = computeSwings(candles, lookback);
 
     chart.current = Highcharts.stockChart(ref.current, {

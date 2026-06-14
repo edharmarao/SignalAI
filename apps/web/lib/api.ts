@@ -52,21 +52,39 @@ export async function api<T = unknown>(
   if (USE_MOCK) return mockApi<T>(path, init);
 
   const method = (init.method ?? "GET").toUpperCase();
+  const externalSignal = init.signal;   // caller's AbortController (e.g. component unmount)
   let lastError: Error = new Error("Request failed");
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    // Bail immediately if the caller already aborted before we start a retry
+    if (externalSignal?.aborted) throw new DOMException("Aborted", "AbortError");
+
     if (attempt > 0) {
       const backoff = RETRY_BASE_MS * Math.pow(2, attempt - 1);
       await sleep(backoff);
     }
 
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    // Combine timeout controller with caller's external signal
+    const timeoutCtrl = new AbortController();
+    const timeoutId   = setTimeout(() => timeoutCtrl.abort(), REQUEST_TIMEOUT_MS);
+
+    // Use AbortSignal.any() when available (Node 20+, modern browsers),
+    // otherwise fall back to listening on the external signal manually.
+    let signal: AbortSignal;
+    if (externalSignal && typeof AbortSignal.any === "function") {
+      signal = AbortSignal.any([timeoutCtrl.signal, externalSignal]);
+    } else if (externalSignal) {
+      // Manual combination: forward external abort to our timeout controller
+      externalSignal.addEventListener("abort", () => timeoutCtrl.abort(), { once: true });
+      signal = timeoutCtrl.signal;
+    } else {
+      signal = timeoutCtrl.signal;
+    }
 
     try {
       const res = await fetch(`${BASE}${path}`, {
         ...init,
-        signal: controller.signal,
+        signal,
         headers: {
           "Content-Type": "application/json",
           ...authHeader(),
@@ -106,7 +124,10 @@ export async function api<T = unknown>(
         if (!isRetryable(method, err.status)) throw err;
         continue;
       }
+      // Re-throw AbortError as-is so callers can distinguish unmount-abort from timeout
       if (err instanceof DOMException && err.name === "AbortError") {
+        // If the external caller aborted, rethrow AbortError (not a timeout)
+        if (externalSignal?.aborted) throw err;
         throw new ApiError(408, "Request timed out after 30 seconds");
       }
       throw err;

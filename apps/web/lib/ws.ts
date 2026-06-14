@@ -8,7 +8,7 @@ export interface Tick {
 }
 
 const USE_MOCK =
-  (process.env.NEXT_PUBLIC_USE_MOCK ?? "true").toLowerCase() !== "false";
+  (process.env.NEXT_PUBLIC_USE_MOCK ?? "false").toLowerCase() === "true";
 
 const SEEDS: Record<string, number> = {
   NIFTY: 22500,

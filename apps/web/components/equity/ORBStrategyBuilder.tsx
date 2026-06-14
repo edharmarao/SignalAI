@@ -5,6 +5,8 @@
  */
 import { useEffect, useRef, useState, useCallback } from "react";
 import Highcharts from "highcharts/highstock";
+import { istToMs } from "@/lib/highcharts";
+import "@/lib/highcharts";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 
@@ -97,10 +99,12 @@ function ORBChart({ candles, trades }: { candles: OHLCVRow[]; trades?: ORBTrade[
   const ref  = useRef<HTMLDivElement>(null);
   const chart = useRef<Highcharts.StockChart | null>(null);
 
+  // Parse "2025-01-01 09:15:00" (IST from DB) → epoch ms
+  const toMs = istToMs;
+
   useEffect(() => {
     chart.current?.destroy(); chart.current = null;
     if (!ref.current || candles.length === 0) return;
-    const toMs = (t: string) => new Date(t).getTime();
 
     const series: Highcharts.SeriesOptionsType[] = [
       {
@@ -120,12 +124,12 @@ function ORBChart({ candles, trades }: { candles: OHLCVRow[]; trades?: ORBTrade[
       series.push({
         type: "flags", name: "Entries", onSeries: "candle", shape: "arrowUp", yAxis: 0,
         color: "#10b981", fillColor: "#10b981", style: { color: "#fff", fontSize: "9px" },
-        data: trades.map(t => ({ x: toMs(t.entryTime), title: t.side === "BUY" ? "B" : "S" })),
+        data: trades.filter(t => t.entryTime).map(t => ({ x: toMs(t.entryTime), title: t.side === "BUY" ? "B" : "S" })),
         dataGrouping: { enabled: false },
       } as any);
       series.push({
         type: "flags", name: "Exits", onSeries: "candle", shape: "arrowDown", yAxis: 0,
-        data: trades.map(t => ({
+        data: trades.filter(t => t.exitTime).map(t => ({
           x: toMs(t.exitTime), title: t.exitReason.slice(0,3).toUpperCase(),
           color: t.exitReason === "stop_loss" ? "#f43f5e" : t.exitReason === "target" ? "#3b82f6" : "#f97316",
           fillColor: t.exitReason === "stop_loss" ? "#f43f5e" : t.exitReason === "target" ? "#3b82f6" : "#f97316",
@@ -148,8 +152,19 @@ function ORBChart({ candles, trades }: { candles: OHLCVRow[]; trades?: ORBTrade[
       tooltip: { split:false, shared:true, backgroundColor:"#1e293b", borderColor:"#334155", style:{color:"#e2e8f0"} },
       legend: { enabled: false }, credits: { enabled: false },
     });
+
+    // Force reflow so Highcharts picks up the actual container height
+    chart.current.reflow();
+
     return () => { chart.current?.destroy(); chart.current = null; };
   }, [candles, trades]);
+
+  // Reflow on window resize
+  useEffect(() => {
+    const onResize = () => chart.current?.reflow();
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
 
   return <div ref={ref} className="w-full h-full" />;
 }
@@ -197,12 +212,17 @@ export default function ORBStrategyBuilder({ editId }: { editId?: string }) {
 
   // Fetch chart data from stock_data_<tf>
   const fetchChart = useCallback(async () => {
-    setLoadingChart(true); setChartError(null);
+    setLoadingChart(true); setChartError(null); setCandles([]);
     try {
       const data = await api<{ candles: OHLCVRow[] }>(
         `/orb/chart-data?symbol=${encodeURIComponent(symbol)}&timeframe=${tf}&from_date=${fromDate}&to_date=${toDate}&limit=500`
       );
-      setCandles(data.candles ?? []);
+      const rows = data.candles ?? [];
+      if (rows.length === 0) {
+        setChartError(`No data in stock_data_${tf} for ${symbol} in this date range.`);
+      } else {
+        setCandles(rows);
+      }
     } catch (e: any) {
       setChartError(e.message); setCandles([]);
     } finally { setLoadingChart(false); }
@@ -373,7 +393,7 @@ export default function ORBStrategyBuilder({ editId }: { editId?: string }) {
           </div>
 
           {/* Chart area */}
-          <div className="relative flex-1 min-h-0">
+          <div className="relative flex-1 min-h-0" style={{ minHeight: 320 }}>
             {loadingChart && (
               <div className="absolute inset-0 flex items-center justify-center z-10 bg-slate-950/80">
                 <div className="flex items-center gap-2 text-slate-400 text-sm">
@@ -392,11 +412,18 @@ export default function ORBStrategyBuilder({ editId }: { editId?: string }) {
                   <p className="text-slate-600 text-sm">{symbol} · {tfLabel}</p>
                   <p className="text-[10px] text-slate-700">{chartError}</p>
                   <p className="text-[10px] text-slate-700">Try importing data via Upstox Historical Data Import.</p>
+                  <button onClick={fetchChart} className="mt-2 px-3 py-1.5 text-xs border border-slate-700 rounded-lg text-slate-500 hover:text-slate-300 hover:border-slate-500 transition-colors">
+                    Retry
+                  </button>
                 </div>
               </div>
-            ) : (
+            ) : candles.length > 0 ? (
               <ORBChart candles={candles} trades={chartTrades} key={`${symbol}-${tf}-${activePane}`} />
-            )}
+            ) : !loadingChart ? (
+              <div className="flex items-center justify-center h-full">
+                <p className="text-slate-600 text-sm">Select a symbol to load chart data</p>
+              </div>
+            ) : null}
           </div>
 
           {/* Backtest stats */}

@@ -8,6 +8,8 @@ import React, {
   useMemo,
 } from "react";
 import Highcharts from "highcharts/highstock";
+import { istToMs } from "@/lib/highcharts";
+import "@/lib/highcharts";
 import { api } from "@/lib/api";
 
 // ─── Module-level HC loader (runs once) ────────────────────────────────────────
@@ -602,26 +604,6 @@ function drawPitchfork(chart: Highcharts.StockChart, p1: { x: number; y: number 
   });
 }
 
-// ─── Dummy data ──────────────────────────────────────────────────────────────────
-function generateDummyCandles(sym: string): CandleRaw[] {
-  const seed = sym.split("").reduce((a, c) => a + c.charCodeAt(0), 0);
-  let price = 1000 + (seed % 2000);
-  const candles: CandleRaw[] = [];
-  const now = Date.now();
-  for (let i = 520; i >= 0; i--) {
-    const t = now - i * 7 * 86400000;
-    const chg = (Math.random() - 0.49) * price * 0.025;
-    const o = price;
-    price = Math.max(50, price + chg);
-    const c = price;
-    const h = Math.max(o, c) * (1 + Math.random() * 0.01);
-    const l = Math.min(o, c) * (1 - Math.random() * 0.01);
-    const v = Math.floor((500000 + Math.random() * 2000000) * (1 + Math.abs(chg / o) * 5));
-    candles.push({ t, o: +o.toFixed(2), h: +h.toFixed(2), l: +l.toFixed(2), c: +c.toFixed(2), v });
-  }
-  return candles;
-}
-
 // ─── Sub-components ──────────────────────────────────────────────────────────────
 
 function DrawingToolbar({ activeTool, pendingClick, onSelect }: {
@@ -748,8 +730,8 @@ function TimePeriodBar({ value, onChange, chartRef, candles }: {
 
   function applyCustomRange() {
     if (!chartRef.current || !customFrom) return;
-    const fromMs = new Date(customFrom).getTime();
-    const toMs = customTo ? new Date(customTo).getTime() : Date.now();
+    const fromMs = istToMs(customFrom + " 00:00:00");
+    const toMs = customTo ? istToMs(customTo + " 23:59:59") : Date.now();
     chartRef.current.xAxis[0].setExtremes(fromMs, toMs, true);
   }
 
@@ -1027,7 +1009,6 @@ function StockChart({
         events: {
           click(e: any) {
             const tool = activeToolRef.current;
-            if (tool === "cursor") return;
             const x = e.xAxis?.[0]?.value;
             const y = e.yAxis?.[0]?.value;
             if (x == null || y == null) return;
@@ -1240,21 +1221,18 @@ export default function ChartsPage() {
     setError(null);
     setIsDemo(false);
     try {
-      // No from/to — backend calculates from today backwards per timeframe
       const data = await api<{ candles: CandleRaw[] }>(
         `/charts/candles?symbol=${sym}&timeframe=${tf}&limit=2000`
       );
       if (data?.candles?.length) {
         setCandles(data.candles);
       } else {
-        setCandles(generateDummyCandles(sym));
-        setIsDemo(true);
-        setError(`No data for ${sym} (${tf}). Demo mode.`);
+        setCandles([]);
+        setError(`No data found for ${sym} (${tf}) in the database.`);
       }
     } catch {
-      setCandles(generateDummyCandles(sym));
-      setIsDemo(true);
-      setError("API unavailable — showing demo data.");
+      setCandles([]);
+      setError(`Could not load data for ${sym} (${tf}). Check API connection.`);
     } finally {
       setLoading(false);
     }
@@ -1394,11 +1372,8 @@ export default function ChartsPage() {
           </div>
         )}
         <div className="ml-auto flex items-center gap-1.5">
-          {isDemo && (
-            <span className="px-2 py-0.5 rounded text-[10px] bg-yellow-900 text-yellow-300 border border-yellow-700">DEMO</span>
-          )}
-          {error && !isDemo && (
-            <span className="text-[10px] text-red-400 max-w-[180px] truncate" title={error}>{error}</span>
+          {error && (
+            <span className="text-[10px] text-amber-400 max-w-[220px] truncate" title={error}>{error}</span>
           )}
           <button
             onClick={clearAnnotations}

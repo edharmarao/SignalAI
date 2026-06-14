@@ -1,5 +1,13 @@
 from __future__ import annotations
 
+# Force IST timezone for the entire process — all stock data is in IST
+import os, time as _time
+os.environ.setdefault("TZ", "Asia/Kolkata")
+try:
+    _time.tzset()          # Apply on Linux/macOS; no-op on Windows
+except AttributeError:
+    pass
+
 import logging
 import time
 from contextlib import asynccontextmanager

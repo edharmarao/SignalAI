@@ -1,14 +1,30 @@
+"""Charts endpoints — OHLCV data served from stock_data_* MySQL tables.
+
+GET /charts/symbols   — list all NSE EQ symbols from nse_eq_symbols
+GET /charts/candles   — OHLCV for a symbol+timeframe from stock_data_* (DB primary, Upstox optional)
+GET /charts/summary   — latest price + 52w high/low from stock_data_daily
+POST /charts/indicator-backtest — server-side technical indicator backtest on real DB data
+"""
 from __future__ import annotations
 
 import logging
-from datetime import date, datetime, time, timedelta, timezone
-from math import sqrt
-from random import Random
-from typing import Literal, Optional
+from datetime import date, datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, Query
+IST = timezone(timedelta(hours=5, minutes=30))
 
-from ..deps import optional_user
+
+def _ist_to_ms(dt: datetime) -> int:
+    """Convert a naive datetime (already in IST) to epoch milliseconds."""
+    return int(dt.replace(tzinfo=IST).timestamp() * 1000)
+from typing import Any, Literal, Optional
+
+import numpy as np
+import pandas as pd
+from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
+
+from ..db import db_query
+from ..deps import optional_user, get_current_user
 from ..services.upstox import TIMEFRAME_TO_UPSTOX, UpstoxClient
 
 
@@ -17,215 +33,63 @@ router = APIRouter(prefix="/charts", tags=["charts"])
 
 Timeframe = Literal["5m", "15m", "1D", "1W", "1M", "1Y"]
 
-NIFTY500_STOCKS = [
-    {"symbol": "RELIANCE", "name": "Reliance Industries", "sector": "Energy"},
-    {"symbol": "TCS", "name": "Tata Consultancy Services", "sector": "IT"},
-    {"symbol": "HDFCBANK", "name": "HDFC Bank", "sector": "Banking"},
-    {"symbol": "INFY", "name": "Infosys", "sector": "IT"},
-    {"symbol": "HINDUNILVR", "name": "Hindustan Unilever", "sector": "FMCG"},
-    {"symbol": "ICICIBANK", "name": "ICICI Bank", "sector": "Banking"},
-    {"symbol": "SBIN", "name": "State Bank of India", "sector": "Banking"},
-    {"symbol": "BHARTIARTL", "name": "Bharti Airtel", "sector": "Telecom"},
-    {"symbol": "KOTAKBANK", "name": "Kotak Mahindra Bank", "sector": "Banking"},
-    {"symbol": "LT", "name": "Larsen & Toubro", "sector": "Infrastructure"},
-    {"symbol": "AXISBANK", "name": "Axis Bank", "sector": "Banking"},
-    {"symbol": "ASIANPAINT", "name": "Asian Paints", "sector": "Paints"},
-    {"symbol": "MARUTI", "name": "Maruti Suzuki", "sector": "Auto"},
-    {"symbol": "SUNPHARMA", "name": "Sun Pharmaceutical", "sector": "Pharma"},
-    {"symbol": "TITAN", "name": "Titan Company", "sector": "Consumer"},
-    {"symbol": "BAJFINANCE", "name": "Bajaj Finance", "sector": "NBFC"},
-    {"symbol": "NESTLEIND", "name": "Nestle India", "sector": "FMCG"},
-    {"symbol": "WIPRO", "name": "Wipro", "sector": "IT"},
-    {"symbol": "HCLTECH", "name": "HCL Technologies", "sector": "IT"},
-    {"symbol": "ULTRACEMCO", "name": "UltraTech Cement", "sector": "Cement"},
-    {"symbol": "TECHM", "name": "Tech Mahindra", "sector": "IT"},
-    {"symbol": "POWERGRID", "name": "Power Grid Corporation", "sector": "Utilities"},
-    {"symbol": "NTPC", "name": "NTPC", "sector": "Utilities"},
-    {"symbol": "COALINDIA", "name": "Coal India", "sector": "Mining"},
-    {"symbol": "GRASIM", "name": "Grasim Industries", "sector": "Diversified"},
-    {"symbol": "BPCL", "name": "Bharat Petroleum", "sector": "Energy"},
-    {"symbol": "ONGC", "name": "Oil & Natural Gas Corp", "sector": "Energy"},
-    {"symbol": "IOC", "name": "Indian Oil Corporation", "sector": "Energy"},
-    {"symbol": "JSWSTEEL", "name": "JSW Steel", "sector": "Metals"},
-    {"symbol": "TATASTEEL", "name": "Tata Steel", "sector": "Metals"},
-    {"symbol": "TATAMOTORS", "name": "Tata Motors", "sector": "Auto"},
-    {"symbol": "MM", "name": "Mahindra & Mahindra", "sector": "Auto"},
-    {"symbol": "BAJAJFINSV", "name": "Bajaj Finserv", "sector": "Financial Services"},
-    {"symbol": "ADANIPORTS", "name": "Adani Ports", "sector": "Infrastructure"},
-    {"symbol": "DRREDDY", "name": "Dr. Reddy's Laboratories", "sector": "Pharma"},
-    {"symbol": "CIPLA", "name": "Cipla", "sector": "Pharma"},
-    {"symbol": "DIVISLAB", "name": "Divi's Laboratories", "sector": "Pharma"},
-    {"symbol": "EICHERMOT", "name": "Eicher Motors", "sector": "Auto"},
-    {"symbol": "HEROMOTOCO", "name": "Hero MotoCorp", "sector": "Auto"},
-    {"symbol": "HINDALCO", "name": "Hindalco Industries", "sector": "Metals"},
-    {"symbol": "INDUSINDBK", "name": "IndusInd Bank", "sector": "Banking"},
-    {"symbol": "APOLLOHOSP", "name": "Apollo Hospitals", "sector": "Healthcare"},
-    {"symbol": "PIDILITIND", "name": "Pidilite Industries", "sector": "Chemicals"},
-    {"symbol": "DMART", "name": "Avenue Supermarts (DMart)", "sector": "Retail"},
-    {"symbol": "HAVELLS", "name": "Havells India", "sector": "Consumer Electricals"},
-    {"symbol": "MUTHOOTFIN", "name": "Muthoot Finance", "sector": "NBFC"},
-    {"symbol": "BERGERPAINTS", "name": "Berger Paints", "sector": "Paints"},
-    {"symbol": "COLPAL", "name": "Colgate-Palmolive India", "sector": "FMCG"},
-    {"symbol": "DABUR", "name": "Dabur India", "sector": "FMCG"},
-    {"symbol": "MARICO", "name": "Marico", "sector": "FMCG"},
-    {"symbol": "GODREJCP", "name": "Godrej Consumer Products", "sector": "FMCG"},
-    {"symbol": "PGHH", "name": "Procter & Gamble Hygiene", "sector": "FMCG"},
-    {"symbol": "BRITANNIA", "name": "Britannia Industries", "sector": "FMCG"},
-    {"symbol": "ITC", "name": "ITC", "sector": "FMCG"},
-    {"symbol": "TATACONSUM", "name": "Tata Consumer Products", "sector": "FMCG"},
-    {"symbol": "VEDL", "name": "Vedanta", "sector": "Metals"},
-    {"symbol": "SIEMENS", "name": "Siemens India", "sector": "Industrials"},
-    {"symbol": "ABB", "name": "ABB India", "sector": "Industrials"},
-    {"symbol": "BHEL", "name": "Bharat Heavy Electricals", "sector": "Industrials"},
-    {"symbol": "HAL", "name": "Hindustan Aeronautics", "sector": "Defence"},
-    {"symbol": "BEL", "name": "Bharat Electronics", "sector": "Defence"},
-    {"symbol": "IRCTC", "name": "IRCTC", "sector": "Travel"},
-    {"symbol": "DELHIVERY", "name": "Delhivery", "sector": "Logistics"},
-    {"symbol": "NYKAA", "name": "Nykaa (FSN E-Commerce)", "sector": "E-Commerce"},
-    {"symbol": "PAYTM", "name": "Paytm (One97 Communications)", "sector": "Fintech"},
-    {"symbol": "ZOMATO", "name": "Zomato", "sector": "Food Tech"},
-    {"symbol": "POLICYBZR", "name": "PB Fintech (Policybazaar)", "sector": "Fintech"},
-    {"symbol": "PERSISTENT", "name": "Persistent Systems", "sector": "IT"},
-    {"symbol": "COFORGE", "name": "Coforge", "sector": "IT"},
-    {"symbol": "MPHASIS", "name": "Mphasis", "sector": "IT"},
-    {"symbol": "LTIM", "name": "LTIMindtree", "sector": "IT"},
-    {"symbol": "OFSS", "name": "Oracle Financial Services", "sector": "IT"},
-    {"symbol": "TRENT", "name": "Trent", "sector": "Retail"},
-    {"symbol": "PAGEIND", "name": "Page Industries", "sector": "Textiles"},
-    {"symbol": "VARUNBEV", "name": "Varun Beverages", "sector": "Beverages"},
-    {"symbol": "JUBLFOOD", "name": "Jubilant Foodworks", "sector": "QSR"},
-    {"symbol": "DEVYANI", "name": "Devyani International", "sector": "QSR"},
-    {"symbol": "WESTLIFE", "name": "Westlife Foodworld", "sector": "QSR"},
-    {"symbol": "CROMPTON", "name": "Crompton Greaves Consumer", "sector": "Consumer Electricals"},
-    {"symbol": "VOLTAS", "name": "Voltas", "sector": "Consumer Electricals"},
-    {"symbol": "WHIRLPOOL", "name": "Whirlpool of India", "sector": "Consumer Electricals"},
-    {"symbol": "TATAPOWER", "name": "Tata Power", "sector": "Utilities"},
-    {"symbol": "ADANIGREEN", "name": "Adani Green Energy", "sector": "Utilities"},
-    {"symbol": "TORNTPOWER", "name": "Torrent Power", "sector": "Utilities"},
-    {"symbol": "CESC", "name": "CESC", "sector": "Utilities"},
-    {"symbol": "NHPC", "name": "NHPC", "sector": "Utilities"},
-    {"symbol": "RECLTD", "name": "REC Limited", "sector": "Financial Services"},
-    {"symbol": "PFC", "name": "Power Finance Corporation", "sector": "Financial Services"},
-    {"symbol": "IRFC", "name": "Indian Railway Finance Corp", "sector": "Financial Services"},
-    {"symbol": "MMFIN", "name": "Mahindra & Mahindra Financial", "sector": "NBFC"},
-    {"symbol": "CHOLAFIN", "name": "Cholamandalam Investment", "sector": "NBFC"},
-    {"symbol": "HDFCLIFE", "name": "HDFC Life Insurance", "sector": "Insurance"},
-    {"symbol": "ICICIGI", "name": "ICICI Lombard General Insurance", "sector": "Insurance"},
-    {"symbol": "SBILIFE", "name": "SBI Life Insurance", "sector": "Insurance"},
-]
+# ── Timeframe → stock_data_* table ───────────────────────────────────────────
+_TF_TABLE: dict[str, str] = {
+    "5m":  "stock_data_5min",
+    "15m": "stock_data_15min",
+    "1D":  "stock_data_daily",
+    "1W":  "stock_data_weekly",
+    "1M":  "stock_data_monthly",
+    "1Y":  "stock_data_daily",
+}
 
-# ── NIFTY500 symbol → ISIN mapping (NSE_EQ exchange) ────────────────────────
-# Source: NSE official symbol list. Required by Upstox v3 API.
+# ── NIFTY500 symbol → ISIN mapping (needed for Upstox v3 API) ────────────────
 NIFTY500_ISIN: dict[str, str] = {
-    "RELIANCE":    "INE002A01018",
-    "TCS":         "INE467B01029",
-    "HDFCBANK":    "INE040A01034",
-    "INFY":        "INE009A01021",
-    "HINDUNILVR":  "INE030A01027",
-    "ICICIBANK":   "INE090A01021",
-    "SBIN":        "INE062A01020",
-    "BHARTIARTL":  "INE397D01024",
-    "KOTAKBANK":   "INE237A01028",
-    "LT":          "INE018A01030",
-    "AXISBANK":    "INE238A01034",
-    "ASIANPAINT":  "INE021A01026",
-    "MARUTI":      "INE585B01010",
-    "SUNPHARMA":   "INE044A01036",
-    "TITAN":       "INE280A01028",
-    "BAJFINANCE":  "INE296A01024",
-    "NESTLEIND":   "INE239A01016",
-    "WIPRO":       "INE075A01022",
-    "HCLTECH":     "INE860A01027",
-    "ULTRACEMCO":  "INE481G01011",
-    "TECHM":       "INE669C01036",
-    "POWERGRID":   "INE752E01010",
-    "NTPC":        "INE733E01010",
-    "COALINDIA":   "INE522F01014",
-    "GRASIM":      "INE047A01021",
-    "BPCL":        "INE029A01011",
-    "ONGC":        "INE213A01029",
-    "IOC":         "INE242A01010",
-    "JSWSTEEL":    "INE019A01038",
-    "TATASTEEL":   "INE081A01020",
-    "TATAMOTORS":  "INE155A01022",
-    "BAJAJFINSV":  "INE918I01026",
-    "ADANIPORTS":  "INE742F01042",
-    "DRREDDY":     "INE089A01023",
-    "CIPLA":       "INE059A01026",
-    "DIVISLAB":    "INE361B01024",
-    "EICHERMOT":   "INE066A01021",
-    "HEROMOTOCO":  "INE158A01026",
-    "HINDALCO":    "INE038A01020",
-    "INDUSINDBK":  "INE095A01012",
-    "APOLLOHOSP":  "INE437A01024",
-    "PIDILITIND":  "INE318A01026",
-    "DMART":       "INE192R01011",
-    "HAVELLS":     "INE176B01034",
-    "MUTHOOTFIN":  "INE414G01012",
-    "BERGERPAINTS":"INE463A01038",
-    "COLPAL":      "INE259A01022",
-    "DABUR":       "INE016A01026",
-    "MARICO":      "INE196A01026",
-    "GODREJCP":    "INE102D01028",
-    "BRITANNIA":   "INE216A01030",
-    "ITC":         "INE154A01025",
-    "TATACONSUM":  "INE192A01025",
-    "VEDL":        "INE205A01025",
-    "SIEMENS":     "INE003A01024",
-    "ABB":         "INE117A01022",
-    "BHEL":        "INE257A01026",
-    "HAL":         "INE066F01020",
-    "BEL":         "INE263A01024",
-    "IRCTC":       "INE335Y01020",
-    "DELHIVERY":   "INE148O01028",
-    "NYKAA":       "INE388Y01029",
-    "PAYTM":       "INE982J01020",
-    "ZOMATO":      "INE758T01015",
-    "PERSISTENT":  "INE262H01021",
-    "COFORGE":     "INE591G01017",
-    "MPHASIS":     "INE356A01018",
-    "LTIM":        "INE214T01019",
-    "OFSS":        "INE881D01027",
-    "TRENT":       "INE849A01020",
-    "PAGEIND":     "INE761H01022",
-    "VARUNBEV":    "INE200M01013",
-    "JUBLFOOD":    "INE797F01020",
-    "CROMPTON":    "INE548C01032",
-    "VOLTAS":      "INE226A01021",
-    "TATAPOWER":   "INE245A01021",
-    "ADANIGREEN":  "INE364U01010",
-    "TORNTPOWER":  "INE813H01021",
-    "NHPC":        "INE848E01016",
-    "RECLTD":      "INE020B01018",
-    "PFC":         "INE134E01011",
-    "IRFC":        "INE053F01010",
-    "CHOLAFIN":    "INE121A01024",
-    "HDFCLIFE":    "INE795G01014",
-    "ICICIGI":     "INE765G01017",
-    "SBILIFE":     "INE123W01016",
-    "MM":          "INE101A01026",
-    "BAJAJHLDNG":  "INE118A01012",
+    "RELIANCE": "INE002A01018", "TCS": "INE467B01029", "HDFCBANK": "INE040A01034",
+    "INFY": "INE009A01021", "HINDUNILVR": "INE030A01027", "ICICIBANK": "INE090A01021",
+    "SBIN": "INE062A01020", "BHARTIARTL": "INE397D01024", "KOTAKBANK": "INE237A01028",
+    "LT": "INE018A01030", "AXISBANK": "INE238A01034", "ASIANPAINT": "INE021A01026",
+    "MARUTI": "INE585B01010", "SUNPHARMA": "INE044A01036", "TITAN": "INE280A01028",
+    "BAJFINANCE": "INE296A01024", "NESTLEIND": "INE239A01016", "WIPRO": "INE075A01022",
+    "HCLTECH": "INE860A01027", "ULTRACEMCO": "INE481G01011", "TECHM": "INE669C01036",
+    "POWERGRID": "INE752E01010", "NTPC": "INE733E01010", "COALINDIA": "INE522F01014",
+    "GRASIM": "INE047A01021", "BPCL": "INE029A01011", "ONGC": "INE213A01029",
+    "IOC": "INE242A01010", "JSWSTEEL": "INE019A01038", "TATASTEEL": "INE081A01020",
+    "TATAMOTORS": "INE155A01022", "BAJAJFINSV": "INE918I01026", "ADANIPORTS": "INE742F01042",
+    "DRREDDY": "INE089A01023", "CIPLA": "INE059A01026", "DIVISLAB": "INE361B01024",
+    "EICHERMOT": "INE066A01021", "HEROMOTOCO": "INE158A01026", "HINDALCO": "INE038A01020",
+    "INDUSINDBK": "INE095A01012", "APOLLOHOSP": "INE437A01024", "PIDILITIND": "INE318A01026",
+    "DMART": "INE192R01011", "HAVELLS": "INE176B01034", "MUTHOOTFIN": "INE414G01012",
+    "COLPAL": "INE259A01022", "DABUR": "INE016A01026", "MARICO": "INE196A01026",
+    "BRITANNIA": "INE216A01030", "ITC": "INE154A01025", "TATACONSUM": "INE192A01025",
+    "VEDL": "INE205A01025", "HAL": "INE066F01020", "BEL": "INE263A01024",
+    "IRCTC": "INE335Y01020", "ZOMATO": "INE758T01015", "PERSISTENT": "INE262H01021",
+    "COFORGE": "INE591G01017", "LTIM": "INE214T01019", "TRENT": "INE849A01020",
+    "TATAPOWER": "INE245A01021", "RECLTD": "INE020B01018", "PFC": "INE134E01011",
+    "HDFCLIFE": "INE795G01014", "ICICIGI": "INE765G01017", "SBILIFE": "INE123W01016",
 }
 
 _DEFAULT_EXCHANGE = "NSE_EQ"
 
-_BARS_PER_DAY = {"5m": 75, "15m": 25, "1D": 1, "1W": 1 / 5, "1M": 1 / 21, "1Y": 1 / 252}
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+def _parse_date(raw: str | None, fallback: date) -> date:
+    if not raw:
+        return fallback
+    return datetime.strptime(raw, "%Y-%m-%d").date()
 
 
-# ── Upstox token + conversion helpers ────────────────────────────────────────
-
-def _get_upstox_token(user_id: str) -> Optional[str]:
-    """Fetch active Upstox access token from Redis."""
+def _get_upstox_token() -> Optional[str]:
     try:
         from ..services.redis_client import get_upstox_token
         return get_upstox_token()
     except Exception as exc:
-        logger.warning("Could not fetch Upstox token: %s", exc)
+        logger.debug("Upstox token unavailable: %s", exc)
         return None
 
 
 def _candles_from_upstox_raw(raw: list[dict]) -> list[dict]:
-    """Convert vasudha-style candle dicts → Highstock-compatible t-in-ms format."""
     result = []
     for c in raw:
         ts_str = c.get("time", "")
@@ -236,9 +100,8 @@ def _candles_from_upstox_raw(raw: list[dict]) -> list[dict]:
                 dt = datetime.strptime(ts_str[:10], "%Y-%m-%d")
             except ValueError:
                 continue
-        t_ms = int(dt.replace(tzinfo=timezone.utc).timestamp() * 1000)
         result.append({
-            "t": t_ms,
+            "t": _ist_to_ms(dt),
             "o": round(float(c["open"]), 2),
             "h": round(float(c["high"]), 2),
             "l": round(float(c["low"]), 2),
@@ -248,145 +111,317 @@ def _candles_from_upstox_raw(raw: list[dict]) -> list[dict]:
     return result
 
 
-    return sum((i + 1) * ord(ch) for i, ch in enumerate(symbol.upper()))
-
-
-def _base_price(symbol: str) -> float:
-    return float(_seed(symbol) % 4000 + 500)
-
-
-def _parse_date(raw: str | None, fallback: date) -> date:
-    if not raw:
-        return fallback
-    return datetime.strptime(raw, "%Y-%m-%d").date()
-
-
-def _business_days(start: date, end: date) -> list[date]:
-    days: list[date] = []
-    cur = start
-    while cur <= end:
-        if cur.weekday() < 5:
-            days.append(cur)
-        cur += timedelta(days=1)
-    return days
-
-
-def _intraday_points(days: list[date], minutes: int, bars_per_day: int) -> list[datetime]:
-    points: list[datetime] = []
-    for day in days:
-        start_dt = datetime.combine(day, time(9, 15))
-        for idx in range(bars_per_day):
-            points.append(start_dt + timedelta(minutes=minutes * idx))
-    return points
-
-
-def _time_points(start: date, end: date, timeframe: Timeframe) -> list[datetime]:
-    business_days = _business_days(start, end)
-    if timeframe == "5m":
-        return _intraday_points(business_days, 5, 75)
-    if timeframe == "15m":
-        return _intraday_points(business_days, 15, 25)
-    if timeframe == "1D":
-        return [datetime.combine(day, time(15, 30)) for day in business_days]
-    step = {"1W": 5, "1M": 21, "1Y": 252}[timeframe]
-    sampled = business_days[::step] or business_days[-1:]
-    return [datetime.combine(day, time(15, 30)) for day in sampled]
-
-
-def _generate_candles(symbol: str, timeframe: Timeframe, start: date, end: date, limit: int) -> list[dict[str, float | int]]:
-    points = _time_points(start, end, timeframe)
-    if not points:
+def _fetch_db_candles(symbol: str, timeframe: str, from_date: str, to_date: str, limit: int) -> list[dict]:
+    """Query stock_data_<timeframe> and return Highstock-compatible candles."""
+    table = _TF_TABLE.get(timeframe)
+    if not table:
         return []
-    points = points[-min(max(limit, 1), 2000):]
-    rng = Random(_seed(symbol) + len(points) + len(timeframe))
-    prev_close = _base_price(symbol)
-    day_scale = _BARS_PER_DAY[timeframe]
-    vol = 0.015 * sqrt(1 / day_scale if day_scale >= 1 else 1 / max(day_scale, 1e-9))
-    candles: list[dict[str, float | int]] = []
-    for idx, point in enumerate(points):
-        drift = 0.0002 if idx % 11 == 0 else 0.0
-        ret = rng.gauss(drift, vol)
-        close = max(10.0, prev_close * (1 + ret))
-        wick = abs(rng.gauss(0.0, vol / 2))
-        open_ = prev_close
-        high = max(open_, close) * (1 + wick)
-        low = min(open_, close) * max(0.01, 1 - wick)
-        volume = int(250_000 + rng.random() * 5_000_000 * max(day_scale, 1))
+    try:
+        rows = db_query(
+            f"SELECT candle_time, open, high, low, close, volume "
+            f"FROM `{table}` "
+            f"WHERE stock_code = %s AND candle_time BETWEEN %s AND %s "
+            f"ORDER BY candle_time ASC LIMIT %s",
+            (symbol.upper(), f"{from_date} 00:00:00", f"{to_date} 23:59:59", limit),
+        )
+    except Exception as exc:
+        logger.warning("DB candle fetch failed for %s/%s: %s", symbol, timeframe, exc)
+        return []
+
+    candles = []
+    for r in rows:
+        ct = r["candle_time"]
+        if isinstance(ct, datetime):
+            dt = ct
+        else:
+            try:
+                dt = datetime.strptime(str(ct), "%Y-%m-%d %H:%M:%S")
+            except ValueError:
+                dt = datetime.strptime(str(ct)[:10], "%Y-%m-%d")
         candles.append({
-            "t": int(point.replace(tzinfo=timezone.utc).timestamp() * 1000),
-            "o": round(open_, 2),
-            "h": round(high, 2),
-            "l": round(low, 2),
-            "c": round(close, 2),
-            "v": volume,
+            "t": _ist_to_ms(dt),
+            "o": round(float(r["open"]), 2),
+            "h": round(float(r["high"]), 2),
+            "l": round(float(r["low"]), 2),
+            "c": round(float(r["close"]), 2),
+            "v": int(r["volume"]),
         })
-        prev_close = close
     return candles
 
 
+# ── Indicator helpers (pure numpy/pandas — no external TA lib required) ───────
+
+def _sma(s: pd.Series, p: int) -> pd.Series:
+    return s.rolling(p).mean()
+
+def _ema(s: pd.Series, p: int) -> pd.Series:
+    return s.ewm(span=p, adjust=False).mean()
+
+def _wma(s: pd.Series, p: int) -> pd.Series:
+    w = np.arange(1, p + 1, dtype=float)
+    return s.rolling(p).apply(lambda x: float(np.dot(x, w) / w.sum()), raw=True)
+
+def _rsi(s: pd.Series, p: int = 14) -> pd.Series:
+    d = s.diff()
+    gain = d.clip(lower=0).ewm(alpha=1 / p, adjust=False).mean()
+    loss = (-d.clip(upper=0)).ewm(alpha=1 / p, adjust=False).mean()
+    rs = gain / loss.replace(0, float("nan"))
+    return 100 - 100 / (1 + rs)
+
+def _macd_line(s: pd.Series, fast: int = 12, slow: int = 26) -> pd.Series:
+    return _ema(s, fast) - _ema(s, slow)
+
+def _vwap(df: pd.DataFrame) -> pd.Series:
+    tp = (df["high"] + df["low"] + df["close"]) / 3
+    cumvol = df["volume"].cumsum()
+    cumtp  = (tp * df["volume"]).cumsum()
+    return cumvol.where(cumvol == 0, cumtp / cumvol.replace(0, float("nan")))
+
+def _bb_upper(s: pd.Series, p: int = 20, mult: float = 2.0) -> pd.Series:
+    return s.rolling(p).mean() + mult * s.rolling(p).std()
+
+def _supertrend(df: pd.DataFrame, p: int = 10, mult: float = 3.0) -> pd.Series:
+    hl2 = (df["high"] + df["low"]) / 2
+    tr  = pd.concat([
+        df["high"] - df["low"],
+        (df["high"] - df["close"].shift()).abs(),
+        (df["low"]  - df["close"].shift()).abs(),
+    ], axis=1).max(axis=1)
+    atr = tr.ewm(span=p, adjust=False).mean()
+    upper = hl2 + mult * atr
+    lower = hl2 - mult * atr
+    supertrend = pd.Series(index=df.index, dtype=float)
+    direction  = pd.Series(1, index=df.index, dtype=int)
+    for i in range(1, len(df)):
+        if df["close"].iloc[i] > upper.iloc[i - 1]:
+            direction.iloc[i] = 1
+        elif df["close"].iloc[i] < lower.iloc[i - 1]:
+            direction.iloc[i] = -1
+        else:
+            direction.iloc[i] = direction.iloc[i - 1]
+        supertrend.iloc[i] = lower.iloc[i] if direction.iloc[i] == 1 else upper.iloc[i]
+    return supertrend
+
+
+def _get_series(df: pd.DataFrame, kind: str, src: str, period: int) -> pd.Series:
+    base = df[src] if src in df.columns else df["close"]
+    if kind == "price":   return df["close"]
+    if kind == "value":   return pd.Series(dtype=float)   # handled separately
+    if kind == "SMA":     return _sma(base, period)
+    if kind == "EMA":     return _ema(base, period)
+    if kind == "WMA":     return _wma(base, period)
+    if kind == "RSI":     return _rsi(base, period)
+    if kind == "MACD":    return _macd_line(base)
+    if kind == "VWAP":    return _vwap(df)
+    if kind == "BBANDS":  return _bb_upper(base, period)
+    if kind == "SUPERTREND": return _supertrend(df, period)
+    return base
+
+
+def _evaluate_condition(df: pd.DataFrame, cond: dict) -> pd.Series:
+    """Returns a boolean Series for when the condition is True."""
+    lhs_def = cond.get("lhs", {})
+    rhs_def = cond.get("rhs", {})
+    op      = cond.get("op", ">")
+
+    lhs_val = lhs_def.get("value")
+    rhs_val = rhs_def.get("value")
+
+    if lhs_def.get("kind") == "value":
+        lhs = pd.Series(float(lhs_val or 0), index=df.index)
+    else:
+        lhs = _get_series(df, lhs_def.get("kind","price"), lhs_def.get("src","close"), lhs_def.get("period",14))
+
+    if rhs_def.get("kind") == "value":
+        rhs = pd.Series(float(rhs_val or 0), index=df.index)
+    else:
+        rhs = _get_series(df, rhs_def.get("kind","price"), rhs_def.get("src","close"), rhs_def.get("period",14))
+
+    if op == ">":            return lhs > rhs
+    if op == "<":            return lhs < rhs
+    if op == ">=":           return lhs >= rhs
+    if op == "<=":           return lhs <= rhs
+    if op == "==":           return lhs == rhs
+    if op == "crosses above": return (lhs > rhs) & (lhs.shift(1) <= rhs.shift(1))
+    if op == "crosses below": return (lhs < rhs) & (lhs.shift(1) >= rhs.shift(1))
+    return pd.Series(False, index=df.index)
+
+
+def _run_indicator_backtest(
+    df: pd.DataFrame,
+    symbol: str,
+    conditions: list[dict],
+    action: str,
+    sl_pct: float,
+    tp_pct: float,
+    tsl_pct: float,
+    qty: int,
+    max_hold_days: int,
+) -> dict:
+    if df.empty or not conditions:
+        return {"symbol": symbol, "totalTrades": 0, "winTrades": 0, "losses": 0,
+                "winRate": 0, "totalPnl": 0, "maxDD": 0, "sharpe": 0, "trades": []}
+
+    # Compute entry signals: ALL conditions must be True simultaneously
+    entry_mask = pd.Series(True, index=df.index)
+    for cond in conditions:
+        entry_mask &= _evaluate_condition(df, cond)
+
+    trades: list[dict] = []
+    in_pos = False
+    entry_price = 0.0
+    entry_date  = ""
+    sl_price    = 0.0
+    tp_price    = 0.0
+    tsl_price   = 0.0
+    tsl_active  = False
+
+    for i, (idx, row) in enumerate(df.iterrows()):
+        price = float(row["close"])
+        date_str = str(idx)[:10] if not isinstance(idx, str) else idx[:10]
+
+        if not in_pos:
+            if entry_mask.iloc[i]:
+                in_pos = True
+                entry_price = price
+                entry_date  = date_str
+                sl_price  = price * (1 - sl_pct / 100) if sl_pct else 0
+                tp_price  = price * (1 + tp_pct / 100) if tp_pct else float("inf")
+                tsl_price = 0.0
+                tsl_active = False
+        else:
+            # Trailing SL activation
+            if tp_pct and tsl_pct and not tsl_active and price >= tp_price:
+                tsl_active = True
+                tsl_price  = price * (1 - tsl_pct / 100)
+            if tsl_active:
+                new_tsl = price * (1 - tsl_pct / 100)
+                tsl_price = max(tsl_price, new_tsl)
+
+            # Exit conditions
+            hold = (pd.Timestamp(date_str) - pd.Timestamp(entry_date)).days
+            exit_reason = ""
+            exit_price  = price
+
+            if sl_pct and price <= sl_price:
+                exit_reason = "SL"; exit_price = sl_price
+            elif tsl_active and price <= tsl_price:
+                exit_reason = "TSL"; exit_price = tsl_price
+            elif tp_pct and not tsl_pct and price >= tp_price:
+                exit_reason = "TP"; exit_price = tp_price
+            elif max_hold_days and hold >= max_hold_days:
+                exit_reason = "END"
+
+            if exit_reason:
+                pnl = (exit_price - entry_price) * qty if action == "BUY" else (entry_price - exit_price) * qty
+                pnl_pct = ((exit_price - entry_price) / entry_price * 100) if action == "BUY" else ((entry_price - exit_price) / entry_price * 100)
+                trades.append({
+                    "entryDate": entry_date, "entryPrice": round(entry_price, 2),
+                    "exitDate": date_str,    "exitPrice":  round(exit_price, 2),
+                    "exitReason": exit_reason,
+                    "pnl": round(pnl, 2),   "pnlPct": round(pnl_pct, 2),
+                    "holdDays": hold,
+                })
+                in_pos = False
+
+    wins     = sum(1 for t in trades if t["pnl"] > 0)
+    total    = len(trades)
+    total_pnl = sum(t["pnl"] for t in trades)
+    pnl_series = [t["pnl"] for t in trades]
+
+    # Max drawdown
+    cumulative = np.cumsum([0.0] + pnl_series)
+    peak = np.maximum.accumulate(cumulative)
+    dd   = float(np.max(peak - cumulative)) if len(cumulative) > 1 else 0.0
+
+    # Sharpe (annualised, assuming daily data ≈ 252 days)
+    if len(pnl_series) > 1:
+        arr  = np.array(pnl_series, dtype=float)
+        sharpe = float(np.mean(arr) / (np.std(arr) + 1e-9) * np.sqrt(252))
+    else:
+        sharpe = 0.0
+
+    return {
+        "symbol": symbol,
+        "totalTrades": total,
+        "winTrades": wins,
+        "losses": total - wins,
+        "winRate": round(wins / total * 100, 1) if total else 0,
+        "totalPnl": round(total_pnl, 2),
+        "maxDD": round(dd, 2),
+        "sharpe": round(sharpe, 2),
+        "trades": trades,
+    }
+
+
+# ── Endpoints ─────────────────────────────────────────────────────────────────
+
 @router.get("/symbols")
 def list_chart_symbols():
-    return [
-        {"symbol": row["symbol"], "bars": 900 + (_seed(row["symbol"]) % 1100)}
-        for row in NIFTY500_STOCKS
-    ]
+    """Return all NSE EQ symbols from nse_eq_symbols table."""
+    try:
+        rows = db_query(
+            "SELECT symbol, company_name, industry FROM nse_eq_symbols ORDER BY symbol LIMIT 750"
+        )
+        return [
+            {"symbol": r["symbol"], "name": r.get("company_name", ""), "sector": r.get("industry", "")}
+            for r in rows
+        ]
+    except Exception as exc:
+        logger.error("Failed to fetch symbols from DB: %s", exc)
+        return []
 
 
 @router.get("/candles")
 async def get_candles(
-    symbol: str = Query("RELIANCE"),
-    timeframe: Timeframe = Query("1W"),
+    symbol: str    = Query("RELIANCE"),
+    timeframe: Timeframe = Query("1D"),
     from_: str | None = Query(None, alias="from"),
-    to: str | None = Query(None),
-    limit: int = Query(200, ge=1, le=2000),
+    to: str | None    = Query(None),
+    limit: int        = Query(500, ge=1, le=2000),
     user=Depends(optional_user),
 ):
-    sym = symbol.upper()
-    end = _parse_date(to, date.today())
+    """Fetch OHLCV candles. Primary source: stock_data_* DB tables.
+    Falls back to Upstox live API if a connected broker token is available.
+    """
+    sym   = symbol.upper()
+    end   = _parse_date(to,   date.today())
     start = _parse_date(from_, end - timedelta(days=365))
 
-    # ── Try real Upstox v3 data if user has connected broker ─────────────────
+    # ── Primary: local DB ────────────────────────────────────────────────────
+    candles = _fetch_db_candles(sym, timeframe, start.isoformat(), end.isoformat(), limit)
+    if candles:
+        logger.info("Serving DB candles for %s [%s] — %d bars", sym, timeframe, len(candles))
+        return {"symbol": sym, "timeframe": timeframe,
+                "from": start.isoformat(), "to": end.isoformat(),
+                "count": len(candles), "source": "db", "candles": candles}
+
+    # ── Fallback: Upstox if broker is connected ───────────────────────────────
     if user:
-        token = _get_upstox_token(user["id"])
-        isin = NIFTY500_ISIN.get(sym)
+        token = _get_upstox_token()
+        isin  = NIFTY500_ISIN.get(sym)
         if token and isin:
             interval_type, interval_value = TIMEFRAME_TO_UPSTOX.get(timeframe, ("days", "1"))
             try:
-                client = UpstoxClient(access_token=token)
-                raw = await client.historical_candles_v3(
-                    exchange=_DEFAULT_EXCHANGE,
-                    isin=isin,
-                    interval_type=interval_type,
-                    interval_value=interval_value,
-                    from_date=start.isoformat(),
-                    to_date=end.isoformat(),
+                client  = UpstoxClient(access_token=token)
+                raw     = await client.historical_candles_v3(
+                    exchange=_DEFAULT_EXCHANGE, isin=isin,
+                    interval_type=interval_type, interval_value=interval_value,
+                    from_date=start.isoformat(), to_date=end.isoformat(),
                 )
                 candles = _candles_from_upstox_raw(raw)
                 if candles:
-                    logger.info("Serving real Upstox data for %s [%s]", sym, timeframe)
-                    return {
-                        "symbol": sym,
-                        "timeframe": timeframe,
-                        "from": start.isoformat(),
-                        "to": end.isoformat(),
-                        "count": len(candles),
-                        "source": "upstox",
-                        "candles": candles,
-                    }
+                    logger.info("Serving Upstox candles for %s [%s]", sym, timeframe)
+                    return {"symbol": sym, "timeframe": timeframe,
+                            "from": start.isoformat(), "to": end.isoformat(),
+                            "count": len(candles), "source": "upstox", "candles": candles}
             except Exception as exc:
-                logger.warning("Upstox fetch failed for %s, using synthetic: %s", sym, exc)
+                logger.warning("Upstox fetch failed for %s: %s", sym, exc)
 
-    # ── Synthetic fallback ────────────────────────────────────────────────────
-    candles = _generate_candles(sym, timeframe, start, end, limit)
-    return {
-        "symbol": sym,
-        "timeframe": timeframe,
-        "from": start.isoformat(),
-        "to": end.isoformat(),
-        "count": len(candles),
-        "source": "synthetic",
-        "candles": candles,
-    }
+    logger.warning("No candle data available for %s [%s]", sym, timeframe)
+    return {"symbol": sym, "timeframe": timeframe,
+            "from": start.isoformat(), "to": end.isoformat(),
+            "count": 0, "source": "none", "candles": []}
 
 
 @router.get("/summary")
@@ -394,64 +429,126 @@ async def get_summary(
     symbol: str = Query("RELIANCE"),
     user=Depends(optional_user),
 ):
-    sym = symbol.upper()
-    end = date.today()
+    """Return latest price + 52-week stats from stock_data_daily."""
+    sym   = symbol.upper()
+    end   = date.today()
     start = end - timedelta(days=400)
 
-    # ── Try real Upstox v3 data ───────────────────────────────────────────────
+    # ── Primary: DB daily table ───────────────────────────────────────────────
+    candles = _fetch_db_candles(sym, "1D", start.isoformat(), end.isoformat(), 400)
+    if candles:
+        closes  = [c["c"] for c in candles]
+        volumes = [c["v"] for c in candles]
+        latest  = candles[-1]
+        latest_date = datetime.fromtimestamp(latest["t"] / 1000, tz=IST).date().isoformat()
+        return {
+            "symbol": sym,
+            "latestClose": latest["c"],
+            "latestDate":  latest_date,
+            "high52w":     round(max(closes), 2),
+            "low52w":      round(min(closes), 2),
+            "avgVolume":   round(sum(volumes) / len(volumes), 2),
+            "source":      "db",
+        }
+
+    # ── Fallback: Upstox ─────────────────────────────────────────────────────
     if user:
-        token = _get_upstox_token(user["id"])
-        isin = NIFTY500_ISIN.get(sym)
+        token = _get_upstox_token()
+        isin  = NIFTY500_ISIN.get(sym)
         if token and isin:
             try:
                 client = UpstoxClient(access_token=token)
-                raw = await client.historical_candles_v3(
-                    exchange=_DEFAULT_EXCHANGE,
-                    isin=isin,
-                    interval_type="days",
-                    interval_value="1",
-                    from_date=start.isoformat(),
-                    to_date=end.isoformat(),
+                raw    = await client.historical_candles_v3(
+                    exchange=_DEFAULT_EXCHANGE, isin=isin,
+                    interval_type="days", interval_value="1",
+                    from_date=start.isoformat(), to_date=end.isoformat(),
                 )
                 if raw:
-                    closes = [float(c["close"]) for c in raw]
-                    volumes = [int(c["volume"]) for c in raw]
-                    latest = raw[-1]
+                    closes  = [float(c["close"])  for c in raw]
+                    volumes = [int(c["volume"])    for c in raw]
+                    latest  = raw[-1]
                     return {
                         "symbol": sym,
                         "latestClose": round(float(latest["close"]), 2),
-                        "latestDate": latest["time"][:10],
-                        "high52w": round(max(closes), 2),
-                        "low52w": round(min(closes), 2),
-                        "avgVolume": round(sum(volumes) / len(volumes), 2),
-                        "source": "upstox",
+                        "latestDate":  latest["time"][:10],
+                        "high52w":     round(max(closes), 2),
+                        "low52w":      round(min(closes), 2),
+                        "avgVolume":   round(sum(volumes) / len(volumes), 2),
+                        "source":      "upstox",
                     }
             except Exception as exc:
-                logger.warning("Upstox summary fetch failed for %s: %s", sym, exc)
+                logger.warning("Upstox summary failed for %s: %s", sym, exc)
 
-    # ── Synthetic fallback ────────────────────────────────────────────────────
-    candles = _generate_candles(sym, "1D", start, end, 400)
-    if not candles:
-        return {
-            "symbol": sym,
-            "latestClose": 0,
-            "latestDate": None,
-            "high52w": 0,
-            "low52w": 0,
-            "avgVolume": 0,
-            "source": "synthetic",
-        }
-    closes = [float(c["c"]) for c in candles]
-    volumes = [int(c["v"]) for c in candles]
-    latest = candles[-1]
-    latest_date = datetime.fromtimestamp(int(latest["t"]) / 1000, tz=timezone.utc).date().isoformat()
-    return {
-        "symbol": sym,
-        "latestClose": round(float(latest["c"]), 2),
-        "latestDate": latest_date,
-        "high52w": round(max(closes), 2),
-        "low52w": round(min(closes), 2),
-        "avgVolume": round(sum(volumes) / len(volumes), 2),
-        "source": "synthetic",
-    }
+    return {"symbol": sym, "latestClose": 0, "latestDate": None,
+            "high52w": 0, "low52w": 0, "avgVolume": 0, "source": "none"}
 
+
+# ── Bulk indicator backtest ───────────────────────────────────────────────────
+
+class BacktestSymbolRequest(BaseModel):
+    symbol: str
+    timeframe: str = "1D"
+    from_date: str = ""
+    to_date: str   = ""
+    conditions: list[dict] = []
+    action: str    = "BUY"
+    sl_pct: float  = 2.0
+    tp_pct: float  = 4.0
+    tsl_pct: float = 0.0
+    qty: int       = 100
+    max_hold_days: int = 30
+
+
+class BulkBacktestRequest(BaseModel):
+    symbols: list[str]
+    timeframe: str = "1D"
+    from_date: str = ""
+    to_date: str   = ""
+    conditions: list[dict] = []
+    action: str    = "BUY"
+    sl_pct: float  = 2.0
+    tp_pct: float  = 4.0
+    tsl_pct: float = 0.0
+    qty: int       = 100
+    max_hold_days: int = 30
+
+
+@router.post("/indicator-backtest")
+def indicator_backtest(req: BulkBacktestRequest, user=Depends(get_current_user)):
+    """Run a technical-indicator strategy backtest on real DB OHLCV data.
+
+    Accepts a list of symbols and returns per-symbol results including trade list,
+    win rate, P&L, and max drawdown. All data sourced from stock_data_<timeframe>.
+    """
+    end_date   = req.to_date   or date.today().isoformat()
+    days       = 365
+    start_date = req.from_date or (date.today() - timedelta(days=days)).isoformat()
+
+    results: list[dict] = []
+    for sym in req.symbols:
+        candles = _fetch_db_candles(sym, req.timeframe, start_date, end_date, 2000)
+        if not candles:
+            results.append({
+                "symbol": sym, "totalTrades": 0, "winTrades": 0, "losses": 0,
+                "winRate": 0, "totalPnl": 0, "maxDD": 0, "sharpe": 0,
+                "trades": [], "error": "No data in DB",
+            })
+            continue
+
+        df = pd.DataFrame([{
+            "open": c["o"], "high": c["h"], "low": c["l"],
+            "close": c["c"], "volume": c["v"],
+        } for c in candles])
+        df.index = pd.to_datetime([
+            datetime.fromtimestamp(c["t"] / 1000, tz=IST).strftime("%Y-%m-%d")
+            for c in candles
+        ])
+
+        result = _run_indicator_backtest(
+            df, sym, req.conditions, req.action,
+            req.sl_pct, req.tp_pct, req.tsl_pct, req.qty, req.max_hold_days,
+        )
+        results.append(result)
+        logger.info("Indicator backtest %s: %d trades, PnL=%.0f", sym, result["totalTrades"], result["totalPnl"])
+
+    return {"results": results, "symbolCount": len(results)}

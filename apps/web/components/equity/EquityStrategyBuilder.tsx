@@ -1,8 +1,9 @@
 "use client";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Highcharts from "highcharts/highstock";
+import { istToMs } from "@/lib/highcharts";
+import "@/lib/highcharts";
 import { useRouter } from "next/navigation";
-import { NIFTY500_STOCKS } from "@signalai/utils";
 import { api } from "@/lib/api";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -24,8 +25,9 @@ interface StockResult {
   symbol: string; trades: Trade[];
   totalPnl: number; winRate: number; maxDD: number;
   sharpe: number; totalTrades: number; winTrades: number;
+  error?: string;
 }
-
+interface NSESymbol { symbol: string; name: string; sector: string; }
 interface OHLCVRow { time: string; open: number; high: number; low: number; close: number; volume: number; }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -33,6 +35,12 @@ const OPS: Op[] = ["crosses above","crosses below",">","<",">=","<=","=="];
 const KINDS: IKind[] = ["SMA","EMA","WMA","RSI","MACD","VWAP","BBANDS","SUPERTREND","price","value"];
 const TFs = ["1D","1W","1H","15m","5m","3m"] as const;
 const PAL = ["#f59e0b","#3b82f6","#a855f7","#06b6d4","#f97316","#ec4899"];
+
+// Map chart TF labels → stock_data_* table keys (used by /orb/chart-data)
+const TF_TO_TIMEFRAME: Record<string, string> = {
+  "5m": "5min", "15m": "15min", "1H": "75min",
+  "1D": "daily", "1W": "weekly", "3m": "5min",
+};
 
 const SETUPS: Array<{name:string; mk:()=>ECond}> = [
   { name:"SMA",        mk:()=>mkC({kind:"SMA",src:"close",period:9},{kind:"SMA",src:"close",period:21},"crosses above") },
@@ -121,32 +129,6 @@ function supertrend(rows: OHLCVRow[], p=10, mult=3) {
   return out;
 }
 
-// ── Mock OHLCV generator ──────────────────────────────────────────────────────
-const STOCK_BASE: Record<string,number> = {
-  RELIANCE:2900,TCS:3800,HDFCBANK:1650,INFY:1580,SBIN:780,
-  ICICIBANK:1200,BHARTIARTL:1600,KOTAKBANK:1900,LT:3500,
-  AXISBANK:1100,WIPRO:540,HCLTECH:1700,BAJFINANCE:7000,
-  MARUTI:12000,TITAN:3400,SUNPHARMA:1700,NESTLEIND:2400,
-  ADANIENT:2400,APOLLOHOSP:5800,ITC:470,HINDUNILVR:2600,
-};
-function generateOHLCV(sym: string, days=365): OHLCVRow[] {
-  let seed = sym.split("").reduce((a,c)=>a+c.charCodeAt(0),17);
-  const rnd = () => { seed=(seed*1664525+1013904223)&0x7fffffff; return seed/0x7fffffff; };
-  let close = STOCK_BASE[sym] ?? (800+rnd()*2000);
-  const rows: OHLCVRow[] = [];
-  const end = new Date();
-  for (let i=days;i>=0;i--) {
-    const d=new Date(end); d.setDate(d.getDate()-i);
-    if(d.getDay()===0||d.getDay()===6) continue;
-    const chg=(rnd()-0.47)*close*0.022;
-    const open=close; close=Math.max(10,close+chg);
-    const w=rnd()*close*0.008;
-    rows.push({ time:d.toISOString().slice(0,10), open:+open.toFixed(2),
-      high:+(Math.max(open,close)+w).toFixed(2), low:+(Math.min(open,close)-w).toFixed(2),
-      close:+close.toFixed(2), volume:Math.floor(500000+rnd()*5000000) });
-  }
-  return rows;
-}
 
 // ── Figure out what indicators are needed from conditions ─────────────────────
 function activeInds(conds: ECond[]) {
@@ -164,147 +146,6 @@ function activeInds(conds: ECond[]) {
   return list;
 }
 
-// ── Backtest engine ───────────────────────────────────────────────────────────
-function precomputeInds(conds: ECond[], rows: OHLCVRow[]): Record<string, number[]> {
-  const pc: Record<string, number[]> = {};
-  const closes = rows.map(r => r.close);
-  for (const cond of conds) {
-    for (const ind of [cond.lhs, cond.rhs]) {
-      if (ind.kind === "price" || ind.kind === "value") continue;
-      const key = `${ind.kind}-${ind.period ?? 14}-${ind.src ?? "close"}`;
-      if (pc[key]) continue;
-      const p = ind.period ?? 14;
-      const src = ind.src ?? "close";
-      const srcArr = src === "close" ? closes : src === "open" ? rows.map(r=>r.open) : src === "high" ? rows.map(r=>r.high) : rows.map(r=>r.low);
-      if (ind.kind === "SMA" || ind.kind === "WMA") pc[key] = sma(srcArr, p);
-      else if (ind.kind === "EMA") pc[key] = ema(srcArr, p);
-      else if (ind.kind === "RSI") pc[key] = rsi(srcArr, p);
-      else if (ind.kind === "MACD") pc[key] = macd(srcArr).ml;
-      else if (ind.kind === "VWAP") pc[key] = vwap(rows);
-      else if (ind.kind === "BBANDS") pc[key] = bbands(srcArr, p).upper;
-      else if (ind.kind === "SUPERTREND") pc[key] = supertrend(rows, p);
-    }
-  }
-  return pc;
-}
-
-function getIndVal(ind: CInd, i: number, rows: OHLCVRow[], pc: Record<string, number[]>): number {
-  if (ind.kind === "price") return rows[i].close;
-  if (ind.kind === "value") return ind.value ?? 0;
-  const key = `${ind.kind}-${ind.period ?? 14}-${ind.src ?? "close"}`;
-  const arr = pc[key];
-  if (!arr) return NaN;
-  const idx = i + (ind.offset ?? 0);
-  if (idx < 0 || idx >= arr.length) return NaN;
-  return arr[idx];
-}
-
-function evalCond(cond: ECond, i: number, rows: OHLCVRow[], pc: Record<string, number[]>): boolean {
-  const lhsNow = getIndVal(cond.lhs, i, rows, pc);
-  const rhsNow = getIndVal(cond.rhs, i, rows, pc);
-  if (isNaN(lhsNow) || isNaN(rhsNow)) return false;
-  if (cond.op === "crosses above") {
-    if (i === 0) return false;
-    const lp = getIndVal(cond.lhs, i-1, rows, pc), rp = getIndVal(cond.rhs, i-1, rows, pc);
-    if (isNaN(lp) || isNaN(rp)) return false;
-    return lp <= rp && lhsNow > rhsNow;
-  }
-  if (cond.op === "crosses below") {
-    if (i === 0) return false;
-    const lp = getIndVal(cond.lhs, i-1, rows, pc), rp = getIndVal(cond.rhs, i-1, rows, pc);
-    if (isNaN(lp) || isNaN(rp)) return false;
-    return lp >= rp && lhsNow < rhsNow;
-  }
-  if (cond.op === ">")  return lhsNow > rhsNow;
-  if (cond.op === "<")  return lhsNow < rhsNow;
-  if (cond.op === ">=") return lhsNow >= rhsNow;
-  if (cond.op === "<=") return lhsNow <= rhsNow;
-  if (cond.op === "==") return Math.abs(lhsNow - rhsNow) < 0.001;
-  return false;
-}
-
-function runBacktestForSymbol(
-  symbol: string, ohlcv: OHLCVRow[], conds: ECond[],
-  slPct: number, tpPct: number, tslPct: number,
-  action: "BUY"|"SELL", quantity: number, maxHoldDays: number
-): StockResult {
-  const pc = precomputeInds(conds, ohlcv);
-  const trades: Trade[] = [];
-  let inTrade = false;
-  let entryDate = "", entryPrice = 0, entryIdx = 0;
-  let highSince = 0, lowSince = Infinity;
-  const WARMUP = 40;
-
-  for (let i = WARMUP; i < ohlcv.length; i++) {
-    const row = ohlcv[i];
-    if (!inTrade) {
-      if (conds.length > 0 && conds.every(c => evalCond(c, i, ohlcv, pc))) {
-        inTrade = true; entryDate = row.time; entryPrice = row.close;
-        entryIdx = i; highSince = row.high; lowSince = row.low;
-      }
-    } else {
-      highSince = Math.max(highSince, row.high);
-      lowSince  = Math.min(lowSince,  row.low);
-      const holdDays = i - entryIdx;
-      const isBuy = action === "BUY";
-      const price = row.close;
-      let exitReason: Trade["exitReason"] | null = null;
-      let exitPrice = price;
-
-      if (slPct > 0) {
-        if (isBuy  && price <= entryPrice*(1-slPct/100)) { exitReason="SL"; exitPrice=entryPrice*(1-slPct/100); }
-        if (!isBuy && price >= entryPrice*(1+slPct/100)) { exitReason="SL"; exitPrice=entryPrice*(1+slPct/100); }
-      }
-      if (!exitReason && tpPct > 0) {
-        if (isBuy  && price >= entryPrice*(1+tpPct/100)) { exitReason="TP"; exitPrice=entryPrice*(1+tpPct/100); }
-        if (!isBuy && price <= entryPrice*(1-tpPct/100)) { exitReason="TP"; exitPrice=entryPrice*(1-tpPct/100); }
-      }
-      if (!exitReason && tslPct > 0) {
-        if (isBuy)  { const t=highSince*(1-tslPct/100); if(price<=t){exitReason="TSL";exitPrice=t;} }
-        if (!isBuy) { const t=lowSince*(1+tslPct/100);  if(price>=t){exitReason="TSL";exitPrice=t;} }
-      }
-      if (!exitReason && holdDays >= maxHoldDays) { exitReason="END"; exitPrice=price; }
-
-      if (exitReason) {
-        const pnl = isBuy ? (exitPrice-entryPrice)*quantity : (entryPrice-exitPrice)*quantity;
-        const pnlPct = isBuy ? (exitPrice-entryPrice)/entryPrice*100 : (entryPrice-exitPrice)/entryPrice*100;
-        trades.push({ entryDate, entryPrice, exitDate:row.time, exitPrice, exitReason, pnl, pnlPct, holdDays });
-        inTrade = false;
-      }
-    }
-  }
-
-  if (inTrade && ohlcv.length > 0) {
-    const last = ohlcv[ohlcv.length-1];
-    const isBuy = action === "BUY";
-    const ep = last.close;
-    const pnl = isBuy ? (ep-entryPrice)*quantity : (entryPrice-ep)*quantity;
-    const pnlPct = isBuy ? (ep-entryPrice)/entryPrice*100 : (entryPrice-ep)/entryPrice*100;
-    trades.push({ entryDate, entryPrice, exitDate:last.time, exitPrice:ep, exitReason:"END", pnl, pnlPct, holdDays:ohlcv.length-1-entryIdx });
-  }
-
-  const totalPnl = trades.reduce((a,t)=>a+t.pnl,0);
-  const winTrades = trades.filter(t=>t.pnl>0).length;
-  const winRate = trades.length ? winTrades/trades.length*100 : 0;
-
-  let peak=0, maxDD=0, cum=0;
-  for (const t of trades) {
-    cum += t.pnl;
-    if (cum > peak) peak = cum;
-    const dd = peak > 0 ? (peak-cum)/peak*100 : 0;
-    if (dd > maxDD) maxDD = dd;
-  }
-
-  let sharpe = 0;
-  if (trades.length > 1) {
-    const rets = trades.map(t=>t.pnlPct);
-    const mean = rets.reduce((a,b)=>a+b,0)/rets.length;
-    const std  = Math.sqrt(rets.reduce((a,b)=>a+(b-mean)**2,0)/rets.length);
-    if (std > 0) sharpe = (mean/std)*Math.sqrt(252);
-  }
-
-  return { symbol, trades, totalPnl, winRate, maxDD, sharpe, totalTrades:trades.length, winTrades };
-}
 
 // ── TradingChart ──────────────────────────────────────────────────────────────
 function TradingChart({ ohlcv, conds, trades, action }: {
@@ -350,7 +191,7 @@ function TradingChart({ ohlcv, conds, trades, action }: {
     chartRef.current = null;
     if (!containerRef.current || ohlcv.length === 0) return;
 
-    const toMs = (t: string) => new Date(t).getTime();
+    const toMs = istToMs;
 
     // ── Build yAxis panels ────────────────────────────────────────────────────
     const subCount = (hasRSI ? 1 : 0) + (hasMACD ? 1 : 0);
@@ -631,22 +472,28 @@ function Accordion({ title, badge, children, defaultOpen=true }: { title:string;
   );
 }
 
-// ── Instrument chip ───────────────────────────────────────────────────────────
+// ── Instrument chip with DB symbol search ─────────────────────────────────────
 function InstrumentRow({ instruments, active, onSwitch, onRemove, onAdd }: {
   instruments:string[]; active:string; onSwitch:(s:string)=>void; onRemove:(s:string)=>void;
   onAdd:(s:string)=>void;
 }) {
   const [open,setOpen]=useState(false);
   const [q,setQ]=useState("");
+  const [results,setResults]=useState<NSESymbol[]>([]);
+  const [loading,setLoading]=useState(false);
   const ref=useRef<HTMLDivElement>(null);
   useEffect(()=>{
     if(!open) return;
     const h=(e:MouseEvent)=>{ if(ref.current&&!ref.current.contains(e.target as Node)) setOpen(false); };
     document.addEventListener("mousedown",h); return ()=>document.removeEventListener("mousedown",h);
   },[open]);
-  const filtered=useMemo(()=>{
-    const lq=q.toLowerCase();
-    return NIFTY500_STOCKS.filter(s=>!instruments.includes(s.symbol)&&(s.symbol.toLowerCase().includes(lq)||s.name.toLowerCase().includes(lq))).slice(0,8);
+  useEffect(()=>{
+    if(!q){setResults([]);return;}
+    setLoading(true);
+    api<NSESymbol[]>(`/charts/symbols`).then(all=>{
+      const lq=q.toLowerCase();
+      setResults(all.filter(s=>!instruments.includes(s.symbol)&&(s.symbol.toLowerCase().includes(lq)||s.name.toLowerCase().includes(lq))).slice(0,8));
+    }).catch(()=>setResults([])).finally(()=>setLoading(false));
   },[q,instruments]);
   return (
     <div className="flex items-center gap-2 flex-wrap">
@@ -657,7 +504,7 @@ function InstrumentRow({ instruments, active, onSwitch, onRemove, onAdd }: {
             :"bg-slate-900 border-slate-800 text-slate-500 hover:border-slate-600"}`}>
           <span className="w-4 h-4 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-[7px] font-bold text-white">{sym[0]}</span>
           {sym}
-          {instruments.length>1&&<button onClick={e=>{e.stopPropagation();onRemove(sym);}} className="text-slate-600 hover:text-rose-400 ml-0.5">x</button>}
+          {instruments.length>1&&<button onClick={e=>{e.stopPropagation();onRemove(sym);}} className="text-slate-600 hover:text-rose-400 ml-0.5">×</button>}
         </div>
       ))}
       <div ref={ref} className="relative">
@@ -669,19 +516,21 @@ function InstrumentRow({ instruments, active, onSwitch, onRemove, onAdd }: {
           <div className="absolute z-50 top-full left-0 mt-1 w-72 bg-slate-800 border border-slate-700 rounded-xl shadow-2xl overflow-hidden">
             <div className="p-2">
               <input autoFocus value={q} onChange={e=>setQ(e.target.value)}
-                placeholder="Search Nifty 500..."
+                placeholder="Search 750 NSE symbols…"
                 className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-emerald-500"/>
             </div>
             <div className="max-h-52 overflow-y-auto">
-              {filtered.map(s=>(
-                <button key={s.symbol} onClick={()=>{onAdd(s.symbol);setOpen(false);}}
+              {loading && <p className="px-3 py-2 text-xs text-slate-500">Searching…</p>}
+              {!loading && q && results.length===0 && <p className="px-3 py-3 text-xs text-slate-600 text-center">No matches for "{q}"</p>}
+              {!loading && !q && <p className="px-3 py-3 text-xs text-slate-600 text-center">Type to search…</p>}
+              {results.map(s=>(
+                <button key={s.symbol} onClick={()=>{onAdd(s.symbol);setOpen(false);setQ("");}}
                   className="w-full flex items-center gap-3 px-3 py-2 hover:bg-slate-700 text-left">
-                  <span className="font-bold text-slate-100 text-sm w-24 shrink-0">{s.symbol}</span>
+                  <span className="font-bold text-slate-100 text-sm w-24 shrink-0 font-mono">{s.symbol}</span>
                   <span className="text-slate-500 text-xs truncate">{s.name}</span>
                   <span className="ml-auto text-[9px] text-slate-600 shrink-0">{s.sector}</span>
                 </button>
               ))}
-              {!filtered.length&&<p className="px-3 py-3 text-xs text-slate-600 text-center">No matches</p>}
             </div>
           </div>
         )}
@@ -718,6 +567,27 @@ export default function EquityStrategyBuilder({ editId }: { editId?: string }) {
   const [error, setError] = useState<string|null>(null);
   const [loadingEdit, setLoadingEdit] = useState(!!editId);
 
+  // ── Chart OHLCV from DB ──────────────────────────────────────────────────
+  const [ohlcv, setOhlcv] = useState<OHLCVRow[]>([]);
+  const [chartLoading, setChartLoading] = useState(false);
+
+  const fetchChartData = useCallback(async (sym: string, timeframe: string) => {
+    setChartLoading(true);
+    const tfKey = TF_TO_TIMEFRAME[timeframe] ?? "daily";
+    const toDate = new Date().toISOString().slice(0,10);
+    const fromDate = new Date(Date.now() - 365*86400000).toISOString().slice(0,10);
+    try {
+      const data = await api<{candles: OHLCVRow[]}>(`/orb/chart-data?symbol=${sym}&timeframe=${tfKey}&from_date=${fromDate}&to_date=${toDate}&limit=500`);
+      setOhlcv(data.candles ?? []);
+    } catch {
+      setOhlcv([]);
+    } finally {
+      setChartLoading(false);
+    }
+  }, []);
+
+  useEffect(()=>{ fetchChartData(active, tf); },[active, tf, fetchChartData]);
+
   // ── Backtest state ───────────────────────────────────────────────────────
   const [activeTab, setActiveTab] = useState<"builder"|"backtest">("builder");
   const [btUniverse, setBtUniverse] = useState<"selected"|"n50"|"n100"|"n500">("selected");
@@ -741,7 +611,6 @@ export default function EquityStrategyBuilder({ editId }: { editId?: string }) {
     }).catch(()=>setLoadingEdit(false));
   },[editId]);
 
-  const ohlcv = useMemo(()=>generateOHLCV(active), [active]);
   const inds   = useMemo(()=>activeInds(conds), [conds]);
 
   const legend  = useMemo(()=>inds.filter(x=>x.kind!=="RSI"&&x.kind!=="MACD"), [inds]);
@@ -754,7 +623,6 @@ export default function EquityStrategyBuilder({ editId }: { editId?: string }) {
   function updCond(id:string,c:ECond) { setConds(p=>p.map(x=>x.id===id?c:x)); }
   function delCond(id:string) { setConds(p=>p.filter(x=>x.id!==id)); }
 
-  const currentStock = NIFTY500_STOCKS.find(s=>s.symbol===active);
   const lastClose = useMemo(()=>{
     const last=ohlcv[ohlcv.length-1], prev=ohlcv[ohlcv.length-2];
     if(!last) return {price:0,pct:0};
@@ -787,51 +655,57 @@ export default function EquityStrategyBuilder({ editId }: { editId?: string }) {
 
   const selectedBtResult = useMemo(()=>btResults.find(r=>r.symbol===btSelectedSym)||null,[btResults,btSelectedSym]);
 
-  // Chart trades: show trades of btSelectedSym if on backtest tab and sym matches active
   const chartTrades = useMemo(()=>{
     if(activeTab!=="backtest") return undefined;
     const r = btResults.find(x=>x.symbol===active);
     return r?.trades;
   },[activeTab,btResults,active]);
 
-  // ── Backtest runner ──────────────────────────────────────────────────────
-  function runBacktest() {
+  // ── Server-side backtest (real DB data) ──────────────────────────────────
+  async function runBacktest() {
     if(!conds.length){ setError("Add at least one entry condition."); return; }
     if(!parseFloat(sl)){ setError("Stop Loss required for backtesting"); return; }
-    setError(null);
+    setError(null); setBtResults([]); setBtProgress(0); setBtRunning(true); setBtSelectedSym(null);
 
-    const universeMap = {
-      selected: instruments.map(s=>NIFTY500_STOCKS.find(x=>x.symbol===s)!).filter(Boolean),
-      n50:  NIFTY500_STOCKS.slice(0,50),
-      n100: NIFTY500_STOCKS.slice(0,100),
-      n500: NIFTY500_STOCKS,
-    };
-    const universe = universeMap[btUniverse];
+    const toDate   = new Date().toISOString().slice(0,10);
+    const fromDate = new Date(Date.now() - parseInt(btPeriod)*86400000).toISOString().slice(0,10);
+    const tfKey    = TF_TO_TIMEFRAME[tf] ?? "daily";
 
-    setBtResults([]); setBtProgress(0); setBtRunning(true); setBtSelectedSym(null);
-
-    const slPct  = parseFloat(sl)  || 0;
-    const tpPct  = parseFloat(tp)  || 0;
-    const tslPct = parseFloat(tsl) || 0;
-    const qty    = parseInt(btQty) || 100;
-    const days   = parseInt(btPeriod);
-    const mhd    = parseInt(holdDays) || 30;
-    const accum: StockResult[] = [];
-    const BATCH = 20;
-
-    function processBatch(start: number) {
-      const end = Math.min(start+BATCH, universe.length);
-      for(let i=start;i<end;i++){
-        const stock = universe[i];
-        const rows  = generateOHLCV(stock.symbol, days);
-        accum.push(runBacktestForSymbol(stock.symbol,rows,conds,slPct,tpPct,tslPct,action,qty,mhd));
-      }
-      setBtProgress(Math.round(end/universe.length*100));
-      setBtResults([...accum]);
-      if(end<universe.length){ setTimeout(()=>processBatch(end),0); }
-      else { setBtRunning(false); }
+    // Build symbol list from universe selection
+    let symbols: string[] = instruments;
+    if (btUniverse !== "selected") {
+      try {
+        const all = await api<NSESymbol[]>("/charts/symbols");
+        const n = btUniverse === "n50" ? 50 : btUniverse === "n100" ? 100 : all.length;
+        symbols = all.slice(0, n).map(s => s.symbol);
+      } catch { symbols = instruments; }
     }
-    setTimeout(()=>processBatch(0),0);
+
+    try {
+      setBtProgress(20);
+      const resp = await api<{results: StockResult[]}>("/charts/indicator-backtest", {
+        method: "POST",
+        body: JSON.stringify({
+          symbols,
+          timeframe: tfKey,
+          from_date: fromDate,
+          to_date: toDate,
+          conditions: conds.map(c => ({ lhs: c.lhs, op: c.op, rhs: c.rhs })),
+          action,
+          sl_pct:  parseFloat(sl)  || 0,
+          tp_pct:  parseFloat(tp)  || 0,
+          tsl_pct: parseFloat(tsl) || 0,
+          qty: parseInt(btQty) || 100,
+          max_hold_days: parseInt(holdDays) || 30,
+        }),
+      });
+      setBtResults(resp.results ?? []);
+      setBtProgress(100);
+    } catch (e: any) {
+      setError(`Backtest failed: ${e.message}`);
+    } finally {
+      setBtRunning(false);
+    }
   }
 
   // ── Save ─────────────────────────────────────────────────────────────────
@@ -906,7 +780,7 @@ export default function EquityStrategyBuilder({ editId }: { editId?: string }) {
             <span className={`text-xs ${lastClose.pct>=0?"text-emerald-500":"text-rose-500"}`}>
               ({lastClose.pct>=0?"+":""}{lastClose.pct.toFixed(2)}%)
             </span>
-            {currentStock&&<span className="text-[10px] text-slate-700 hidden sm:block">{currentStock.sector}</span>}
+            {chartLoading && <span className="text-[10px] text-slate-600 animate-pulse">Loading…</span>}
           </div>
           <div className="flex items-center gap-2">
             <div className="flex items-center gap-1.5 mr-2">
@@ -1121,7 +995,7 @@ export default function EquityStrategyBuilder({ editId }: { editId?: string }) {
             {btRunning&&(
               <div className="space-y-1">
                 <p className="text-[10px] text-slate-500">
-                  Testing {Math.round(btProgress/100*({selected:instruments.length,n50:50,n100:100,n500:NIFTY500_STOCKS.length}[btUniverse]||1))}/{({selected:instruments.length,n50:50,n100:100,n500:NIFTY500_STOCKS.length}[btUniverse])} stocks...
+                  Running server-side backtest… {btProgress}%
                 </p>
                 <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
                   <div className="h-full bg-emerald-500 rounded-full transition-all duration-200" style={{width:`${btProgress}%`}}/>
@@ -1205,7 +1079,6 @@ export default function EquityStrategyBuilder({ editId }: { editId?: string }) {
                       </thead>
                       <tbody>
                         {sortedResults.map((r,idx)=>{
-                          const stock = NIFTY500_STOCKS.find(s=>s.symbol===r.symbol);
                           const avgRetPct = r.trades.length ? r.trades.reduce((a,t)=>a+t.pnlPct,0)/r.trades.length : 0;
                           const lastTrade = r.trades[r.trades.length-1];
                           const isActive = lastTrade && lastTrade.exitReason==="END" && lastTrade.exitDate===r.trades[r.trades.length-1]?.exitDate;
@@ -1220,7 +1093,7 @@ export default function EquityStrategyBuilder({ editId }: { editId?: string }) {
                                   {r.symbol}
                                 </span>
                               </td>
-                              <td className="px-3 py-2 text-slate-600 truncate max-w-[100px]">{stock?.sector||"—"}</td>
+                              <td className="px-3 py-2 text-slate-600">—</td>
                               <td className="px-3 py-2 text-slate-400">{r.totalTrades}</td>
                               <td className="px-3 py-2 text-emerald-400">{r.winRate.toFixed(1)}%</td>
                               <td className={`px-3 py-2 font-semibold ${r.totalPnl>=0?"text-emerald-400":"text-rose-400"}`}>

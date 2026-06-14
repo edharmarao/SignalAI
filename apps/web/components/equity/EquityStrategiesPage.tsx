@@ -61,27 +61,39 @@ export default function EquityStrategiesPage() {
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<CategoryTab>("all");
 
-  async function fetchStrategies() {
-    setLoading(true);
-    try {
-      const data = await api<StrategyRow[]>("/strategies?desk=equity");
-      setRows(data);
-    } finally {
-      setLoading(false);
-    }
-  }
+  // Abort in-flight requests when the component unmounts (navigation away)
+  useEffect(() => {
+    const ctrl = new AbortController();
 
-  useEffect(() => { fetchStrategies(); }, []);
+    async function fetchStrategies() {
+      setLoading(true);
+      try {
+        const data = await api<StrategyRow[]>("/strategies?desk=equity", { signal: ctrl.signal });
+        setRows(data);
+      } catch (e: unknown) {
+        // Silently ignore aborts caused by unmount / navigation
+        if (e instanceof DOMException && e.name === "AbortError") return;
+        console.error("Failed to load strategies:", e);
+      } finally {
+        if (!ctrl.signal.aborted) setLoading(false);
+      }
+    }
+
+    fetchStrategies();
+    return () => ctrl.abort();
+  }, []);
 
   async function handleDelete(id: string) {
     if (!confirm("Delete this strategy?")) return;
     await api(`/strategies/${id}`, { method: "DELETE" });
-    fetchStrategies();
+    const data = await api<StrategyRow[]>("/strategies?desk=equity");
+    setRows(data);
   }
 
   async function handleDuplicate(id: string) {
     await api(`/strategies/${id}/duplicate`, { method: "POST" });
-    fetchStrategies();
+    const data = await api<StrategyRow[]>("/strategies?desk=equity");
+    setRows(data);
   }
 
   const filtered = tab === "all" ? rows : rows.filter(r => getRowCategory(r) === tab);
