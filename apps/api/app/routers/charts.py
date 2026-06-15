@@ -43,31 +43,24 @@ _TF_TABLE: dict[str, str] = {
     "1Y":  "stock_data_daily",
 }
 
-# ── NIFTY500 symbol → ISIN mapping (needed for Upstox v3 API) ────────────────
-NIFTY500_ISIN: dict[str, str] = {
-    "RELIANCE": "INE002A01018", "TCS": "INE467B01029", "HDFCBANK": "INE040A01034",
-    "INFY": "INE009A01021", "HINDUNILVR": "INE030A01027", "ICICIBANK": "INE090A01021",
-    "SBIN": "INE062A01020", "BHARTIARTL": "INE397D01024", "KOTAKBANK": "INE237A01028",
-    "LT": "INE018A01030", "AXISBANK": "INE238A01034", "ASIANPAINT": "INE021A01026",
-    "MARUTI": "INE585B01010", "SUNPHARMA": "INE044A01036", "TITAN": "INE280A01028",
-    "BAJFINANCE": "INE296A01024", "NESTLEIND": "INE239A01016", "WIPRO": "INE075A01022",
-    "HCLTECH": "INE860A01027", "ULTRACEMCO": "INE481G01011", "TECHM": "INE669C01036",
-    "POWERGRID": "INE752E01010", "NTPC": "INE733E01010", "COALINDIA": "INE522F01014",
-    "GRASIM": "INE047A01021", "BPCL": "INE029A01011", "ONGC": "INE213A01029",
-    "IOC": "INE242A01010", "JSWSTEEL": "INE019A01038", "TATASTEEL": "INE081A01020",
-    "TATAMOTORS": "INE155A01022", "BAJAJFINSV": "INE918I01026", "ADANIPORTS": "INE742F01042",
-    "DRREDDY": "INE089A01023", "CIPLA": "INE059A01026", "DIVISLAB": "INE361B01024",
-    "EICHERMOT": "INE066A01021", "HEROMOTOCO": "INE158A01026", "HINDALCO": "INE038A01020",
-    "INDUSINDBK": "INE095A01012", "APOLLOHOSP": "INE437A01024", "PIDILITIND": "INE318A01026",
-    "DMART": "INE192R01011", "HAVELLS": "INE176B01034", "MUTHOOTFIN": "INE414G01012",
-    "COLPAL": "INE259A01022", "DABUR": "INE016A01026", "MARICO": "INE196A01026",
-    "BRITANNIA": "INE216A01030", "ITC": "INE154A01025", "TATACONSUM": "INE192A01025",
-    "VEDL": "INE205A01025", "HAL": "INE066F01020", "BEL": "INE263A01024",
-    "IRCTC": "INE335Y01020", "ZOMATO": "INE758T01015", "PERSISTENT": "INE262H01021",
-    "COFORGE": "INE591G01017", "LTIM": "INE214T01019", "TRENT": "INE849A01020",
-    "TATAPOWER": "INE245A01021", "RECLTD": "INE020B01018", "PFC": "INE134E01011",
-    "HDFCLIFE": "INE795G01014", "ICICIGI": "INE765G01017", "SBILIFE": "INE123W01016",
-}
+# ── NSE symbol → ISIN mapping (dynamic, loaded from Upstox instrument CSV) ───
+# Accessed via get_isin() / get_instrument_map() from instrument_map service.
+# NIFTY500_ISIN kept as a proxy dict for backward-compat imports in upstox.py.
+from ..services.instrument_map import get_instrument_map as _get_instrument_map
+
+class _DynamicISINMap(dict):
+    """Proxy dict that delegates lookups to the live instrument map."""
+    def get(self, key, default=None):
+        return _get_instrument_map().get(key.upper() if key else key, default)
+    def __contains__(self, key):
+        return key.upper() in _get_instrument_map() if key else False
+    def __getitem__(self, key):
+        val = self.get(key)
+        if val is None:
+            raise KeyError(key)
+        return val
+
+NIFTY500_ISIN: dict[str, str] = _DynamicISINMap()
 
 _DEFAULT_EXCHANGE = "NSE_EQ"
 

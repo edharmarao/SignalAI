@@ -105,13 +105,15 @@ class BulkHistoricalImportRequest(BaseModel):
     to_date: str = Field(..., description="YYYY-MM-DD")
     interval_type: str = Field(..., description="minutes | hours | days | weeks | months")
     interval_value: str = Field(..., description="e.g. 1, 5, 15, 30")
+    table_name: str = Field("stock_data_5min", description="Target MySQL table e.g. stock_data_5min, stock_data_15min, stock_data_daily")
 
 
 class IntradayImportRequest(BaseModel):
     stock_codes: list[str] = Field(..., description="e.g. ['RELIANCE', 'TCS']")
     exchange: str = Field("NSE_EQ", description="NSE_EQ | BSE_EQ | NSE_FO | BSE_FO | MCX_FO")
-    interval_type: str = Field(..., description="minutes | hours (intraday only)")
+    interval_type: str = Field(..., description="minutes | hours | days (intraday endpoint — 'days' fetches today's EOD candle)")
     interval_value: str = Field(..., description="e.g. 1, 5, 15")
+    table_name: str = Field("stock_data_5min", description="Target MySQL table e.g. stock_data_5min, stock_data_15min, stock_data_daily")
 
 
 # ── ORB Strategy models ───────────────────────────────────────────────────────

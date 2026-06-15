@@ -1,0 +1,411 @@
+{
+  "info": {
+    "name": "SignalAI – Upstox API",
+    "description": "Complete Upstox broker + market data endpoints for SignalAI.\n\nSet collection variable `base_url` to your API host (default: http://localhost:8003/api/v1).\nSet `auth_token` to Basic auth value: ZWRyYW86Y2hpcnUxMjM=",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "base_url",   "value": "http://localhost:8003/api/v1" },
+    { "key": "auth_token", "value": "ZWRyYW86Y2hpcnUxMjM=" }
+  ],
+  "auth": {
+    "type": "basic",
+    "basic": [
+      { "key": "username", "value": "edrao",  "type": "string" },
+      { "key": "password", "value": "chiru123", "type": "string" }
+    ]
+  },
+  "item": [
+    {
+      "name": "🔗 Broker – Upstox Auth",
+      "item": [
+        {
+          "name": "Get Upstox Login URL",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/broker/upstox/login-url",
+              "host": ["{{base_url}}"],
+              "path": ["broker", "upstox", "login-url"]
+            },
+            "description": "Returns the Upstox OAuth authorization URL. Open in browser to get the auth code."
+          }
+        },
+        {
+          "name": "Connect Upstox (Exchange OAuth Code)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code\": \"<paste_oauth_code_from_redirect_url_here>\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/broker/upstox/connect",
+              "host": ["{{base_url}}"],
+              "path": ["broker", "upstox", "connect"]
+            },
+            "description": "Exchange OAuth authorization code for access token. Token is stored in Redis and used by all subsequent Upstox endpoints."
+          }
+        },
+        {
+          "name": "Upstox Connection Status",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/broker/upstox/status",
+              "host": ["{{base_url}}"],
+              "path": ["broker", "upstox", "status"]
+            },
+            "description": "Check if an Upstox access token is stored in Redis.\nReturns: { connected: true/false }"
+          }
+        },
+        {
+          "name": "Disconnect Upstox",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/broker/disconnect",
+              "host": ["{{base_url}}"],
+              "path": ["broker", "disconnect"]
+            },
+            "description": "Removes the Upstox token from Redis."
+          }
+        }
+      ]
+    },
+    {
+      "name": "📊 Historical Candles",
+      "item": [
+        {
+          "name": "Get Historical Candles by ISIN",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/upstox/historical-candle?exchange=NSE_EQ&isin=INE002A01018&from_date=2025-01-01&to_date=2025-01-31&interval_type=minutes&interval_value=5",
+              "host": ["{{base_url}}"],
+              "path": ["upstox", "historical-candle"],
+              "query": [
+                { "key": "exchange",       "value": "NSE_EQ",       "description": "NSE_EQ | BSE_EQ | NSE_FO | BSE_FO | MCX_FO" },
+                { "key": "isin",           "value": "INE002A01018", "description": "Instrument ISIN (RELIANCE)" },
+                { "key": "from_date",      "value": "2025-01-01",   "description": "YYYY-MM-DD" },
+                { "key": "to_date",        "value": "2025-01-31",   "description": "YYYY-MM-DD" },
+                { "key": "interval_type",  "value": "minutes",      "description": "minutes | hours | days | weeks | months" },
+                { "key": "interval_value", "value": "5",            "description": "1, 5, 15, 25, 75, 125" }
+              ]
+            },
+            "description": "Fetch OHLCV candles using a specific ISIN code.\n\nCommon ISINs:\n- RELIANCE: INE002A01018\n- TCS: INE467B01029\n- INFY: INE009A01021\n- HDFCBANK: INE040A01034\n- ICICIBANK: INE090A01021"
+          }
+        },
+        {
+          "name": "Get Historical Candles by Symbol",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/upstox/historical-candle-by-symbol?symbol=RELIANCE&exchange=NSE_EQ&from_date=2025-01-01&to_date=2025-01-31&interval_type=minutes&interval_value=5",
+              "host": ["{{base_url}}"],
+              "path": ["upstox", "historical-candle-by-symbol"],
+              "query": [
+                { "key": "symbol",         "value": "RELIANCE",  "description": "NSE stock symbol" },
+                { "key": "exchange",       "value": "NSE_EQ",    "description": "NSE_EQ | BSE_EQ | NSE_FO | BSE_FO | MCX_FO" },
+                { "key": "from_date",      "value": "2025-01-01","description": "YYYY-MM-DD" },
+                { "key": "to_date",        "value": "2025-01-31","description": "YYYY-MM-DD" },
+                { "key": "interval_type",  "value": "minutes",   "description": "minutes | hours | days | weeks | months" },
+                { "key": "interval_value", "value": "5",         "description": "1, 5, 15, 25, 75, 125" }
+              ]
+            },
+            "description": "Fetch OHLCV candles using stock symbol. ISIN is resolved internally from the NIFTY500 instrument map."
+          }
+        },
+        {
+          "name": "Get Daily Candles (1 Year)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/upstox/historical-candle-by-symbol?symbol=TCS&exchange=NSE_EQ&from_date=2024-01-01&to_date=2024-12-31&interval_type=days&interval_value=1",
+              "host": ["{{base_url}}"],
+              "path": ["upstox", "historical-candle-by-symbol"],
+              "query": [
+                { "key": "symbol",         "value": "TCS" },
+                { "key": "exchange",       "value": "NSE_EQ" },
+                { "key": "from_date",      "value": "2024-01-01" },
+                { "key": "to_date",        "value": "2024-12-31" },
+                { "key": "interval_type",  "value": "days" },
+                { "key": "interval_value", "value": "1" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get 15min Candles",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/upstox/historical-candle-by-symbol?symbol=INFY&exchange=NSE_EQ&from_date=2025-01-01&to_date=2025-03-31&interval_type=minutes&interval_value=15",
+              "host": ["{{base_url}}"],
+              "path": ["upstox", "historical-candle-by-symbol"],
+              "query": [
+                { "key": "symbol",         "value": "INFY" },
+                { "key": "exchange",       "value": "NSE_EQ" },
+                { "key": "from_date",      "value": "2025-01-01" },
+                { "key": "to_date",        "value": "2025-03-31" },
+                { "key": "interval_type",  "value": "minutes" },
+                { "key": "interval_value", "value": "15" }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "📥 Bulk Data Import",
+      "item": [
+        {
+          "name": "Historical Data Import (Multiple Symbols)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"stock_codes\": [\"RELIANCE\", \"TCS\", \"INFY\", \"HDFCBANK\", \"ICICIBANK\"],\n  \"exchange\": \"NSE_EQ\",\n  \"from_date\": \"2024-01-01\",\n  \"to_date\": \"2024-12-31\",\n  \"interval_type\": \"minutes\",\n  \"interval_value\": \"5\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/upstox/historical-data-import",
+              "host": ["{{base_url}}"],
+              "path": ["upstox", "historical-data-import"]
+            },
+            "description": "Bulk import historical OHLCV data for multiple symbols into the candle_data DB table.\n\nDate ranges are auto-split to respect Upstox limits:\n- minutes (1-15): 1 month per chunk\n- minutes (>15) / hours: 3 months per chunk\n- days/weeks/months: no splitting\n\ninterval_value options: 1, 5, 15, 25, 75, 125 (minutes) | 1, 2, 4 (hours) | 1 (days/weeks/months)"
+          }
+        },
+        {
+          "name": "Historical Import – 5min (Last 3 Months)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"stock_codes\": [\"RELIANCE\", \"TCS\", \"INFY\"],\n  \"exchange\": \"NSE_EQ\",\n  \"from_date\": \"2025-03-01\",\n  \"to_date\": \"2025-06-14\",\n  \"interval_type\": \"minutes\",\n  \"interval_value\": \"5\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/upstox/historical-data-import",
+              "host": ["{{base_url}}"],
+              "path": ["upstox", "historical-data-import"]
+            }
+          }
+        },
+        {
+          "name": "Historical Import – Daily (1 Year)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"stock_codes\": [\"RELIANCE\", \"TCS\", \"INFY\", \"HDFCBANK\", \"ICICIBANK\", \"WIPRO\", \"AXISBANK\", \"SBIN\"],\n  \"exchange\": \"NSE_EQ\",\n  \"from_date\": \"2024-01-01\",\n  \"to_date\": \"2024-12-31\",\n  \"interval_type\": \"days\",\n  \"interval_value\": \"1\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/upstox/historical-data-import",
+              "host": ["{{base_url}}"],
+              "path": ["upstox", "historical-data-import"]
+            }
+          }
+        },
+        {
+          "name": "Intraday Data Import (Today)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"stock_codes\": [\"RELIANCE\", \"TCS\", \"INFY\"],\n  \"exchange\": \"NSE_EQ\",\n  \"interval_type\": \"minutes\",\n  \"interval_value\": \"5\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/upstox/intraday-data-import",
+              "host": ["{{base_url}}"],
+              "path": ["upstox", "intraday-data-import"]
+            },
+            "description": "Import today's live intraday candles into DB.\nOnly supports interval_type: minutes | hours."
+          }
+        }
+      ]
+    },
+    {
+      "name": "🕯️ ORB Strategy",
+      "item": [
+        {
+          "name": "ORB Chart Data",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/orb/chart-data?symbol=RELIANCE&timeframe=5min&from_date=2025-01-01&to_date=2025-03-31&limit=10000",
+              "host": ["{{base_url}}"],
+              "path": ["orb", "chart-data"],
+              "query": [
+                { "key": "symbol",    "value": "RELIANCE" },
+                { "key": "timeframe", "value": "5min", "description": "5min | 15min | 25min | 75min | 125min | daily | weekly | monthly" },
+                { "key": "from_date", "value": "2025-01-01" },
+                { "key": "to_date",   "value": "2025-03-31" },
+                { "key": "limit",     "value": "10000" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "ORB Signal (Live)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/orb/signal?symbol=RELIANCE&timeframe=5min",
+              "host": ["{{base_url}}"],
+              "path": ["orb", "signal"],
+              "query": [
+                { "key": "symbol",    "value": "RELIANCE" },
+                { "key": "timeframe", "value": "5min" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "ORB Backtest",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"symbol\": \"RELIANCE\",\n  \"timeframe\": \"5min\",\n  \"from_date\": \"2025-01-01\",\n  \"to_date\": \"2025-03-31\",\n  \"qty\": 1,\n  \"or_candles\": 1,\n  \"market_open\": \"09:15\",\n  \"volume_multiplier\": 10.0,\n  \"volume_lookback\": 20,\n  \"direction\": \"both\",\n  \"risk_reward\": 1.0,\n  \"trailing_sl\": true,\n  \"trail_factor\": 1.0,\n  \"eod_exit\": true\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/orb/backtest",
+              "host": ["{{base_url}}"],
+              "path": ["orb", "backtest"]
+            },
+            "description": "Run ORB backtest for a single symbol.\n\ndirection: both | long | short\nvolume_multiplier: 0.5 – 50 (×avg volume for breakout confirmation)\nor_candles: 1–10 (number of opening range candles)"
+          }
+        },
+        {
+          "name": "NSE Symbol Search",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/orb/nse-symbols?q=REL",
+              "host": ["{{base_url}}"],
+              "path": ["orb", "nse-symbols"],
+              "query": [{ "key": "q", "value": "REL", "description": "Search query (symbol or company name)" }]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "📋 Strategies",
+      "item": [
+        {
+          "name": "List Strategies",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/strategies?desk=equity",
+              "host": ["{{base_url}}"],
+              "path": ["strategies"],
+              "query": [{ "key": "desk", "value": "equity" }]
+            }
+          }
+        },
+        {
+          "name": "Create ORB Strategy",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"ORB 5min Intraday · 14 Jun\",\n  \"mode\": \"paper\",\n  \"status\": \"draft\",\n  \"strategy_json\": {\n    \"version\": 1,\n    \"desk\": \"equity\",\n    \"strategyType\": \"price_action\",\n    \"priceActionType\": \"orb\",\n    \"symbols\": [\"RELIANCE\", \"TCS\", \"INFY\"],\n    \"symbol\": \"RELIANCE\",\n    \"action\": \"BUY\",\n    \"quantity\": 1,\n    \"mode\": \"paper\",\n    \"status\": \"draft\",\n    \"orbConfig\": {\n      \"timeframe\": \"5min\",\n      \"timeframeLabel\": \"5 Min\",\n      \"from_date\": \"2025-03-01\",\n      \"to_date\": \"2025-06-14\",\n      \"or_candles\": 1,\n      \"market_open\": \"09:15\",\n      \"volume_multiplier\": 10.0,\n      \"volume_lookback\": 20,\n      \"direction\": \"both\",\n      \"risk_reward\": 1.0,\n      \"trailing_sl\": true,\n      \"trail_factor\": 1.0,\n      \"eod_exit\": true,\n      \"qty\": 1\n    },\n    \"entry\": {\n      \"logic\": \"AND\",\n      \"conditions\": [{ \"type\": \"orb_breakout\", \"direction\": \"both\" }]\n    },\n    \"exit\": {\n      \"logic\": \"OR\",\n      \"conditions\": [\n        { \"type\": \"stop_loss\" },\n        { \"type\": \"target\", \"value\": 1.0 },\n        { \"type\": \"trailing_stop_loss\", \"value\": 1.0 }\n      ]\n    },\n    \"risk\": { \"maxLossPerDay\": 5000, \"maxTradesPerDay\": 3, \"maxOpenPositions\": 1 }\n  }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/strategies",
+              "host": ["{{base_url}}"],
+              "path": ["strategies"]
+            }
+          }
+        },
+        {
+          "name": "Get Strategy by ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/strategies/<strategy_id>",
+              "host": ["{{base_url}}"],
+              "path": ["strategies", "<strategy_id>"]
+            }
+          }
+        },
+        {
+          "name": "Update Strategy (Go Live)",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"active\",\n  \"mode\": \"live\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/strategies/<strategy_id>",
+              "host": ["{{base_url}}"],
+              "path": ["strategies", "<strategy_id>"]
+            }
+          }
+        },
+        {
+          "name": "Pause Strategy",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"paused\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/strategies/<strategy_id>",
+              "host": ["{{base_url}}"],
+              "path": ["strategies", "<strategy_id>"]
+            }
+          }
+        },
+        {
+          "name": "Delete Strategy",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/strategies/<strategy_id>",
+              "host": ["{{base_url}}"],
+              "path": ["strategies", "<strategy_id>"]
+            }
+          }
+        },
+        {
+          "name": "Duplicate Strategy",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/strategies/<strategy_id>/duplicate",
+              "host": ["{{base_url}}"],
+              "path": ["strategies", "<strategy_id>", "duplicate"]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

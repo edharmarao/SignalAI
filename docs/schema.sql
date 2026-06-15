@@ -88,3 +88,52 @@ CREATE TABLE IF NOT EXISTS `candle_data` (
   UNIQUE KEY `uq_candle` (`symbol`, `exchange`, `interval_type`, `interval_value`, `time`),
   KEY `idx_candle_symbol_time` (`symbol`, `time`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+
+-- ── Stock candle tables (one per timeframe) ───────────────────────────────────
+-- These store raw OHLCV data imported from Upstox historical API.
+
+CREATE TABLE IF NOT EXISTS `stock_data_5min` (
+  `id`          BIGINT        NOT NULL AUTO_INCREMENT,
+  `stock_code`  VARCHAR(50)   NOT NULL,
+  `candle_time` DATETIME      NOT NULL,
+  `open`        DECIMAL(12,4) NOT NULL,
+  `high`        DECIMAL(12,4) NOT NULL,
+  `low`         DECIMAL(12,4) NOT NULL,
+  `close`       DECIMAL(12,4) NOT NULL,
+  `volume`      BIGINT        NOT NULL DEFAULT 0,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_5min` (`stock_code`, `candle_time`),
+  KEY `idx_5min_code_time` (`stock_code`, `candle_time`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS `stock_data_15min` (
+  `id`          BIGINT        NOT NULL AUTO_INCREMENT,
+  `stock_code`  VARCHAR(50)   NOT NULL,
+  `candle_time` DATETIME      NOT NULL,
+  `open`        DECIMAL(12,4) NOT NULL,
+  `high`        DECIMAL(12,4) NOT NULL,
+  `low`         DECIMAL(12,4) NOT NULL,
+  `close`       DECIMAL(12,4) NOT NULL,
+  `volume`      BIGINT        NOT NULL DEFAULT 0,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_15min` (`stock_code`, `candle_time`),
+  KEY `idx_15min_code_time` (`stock_code`, `candle_time`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS `stock_data_daily` (
+  `id`          BIGINT        NOT NULL AUTO_INCREMENT,
+  `stock_code`  VARCHAR(50)   NOT NULL,
+  `candle_time` DATE          NOT NULL,
+  `open`        DECIMAL(12,4) NOT NULL,
+  `high`        DECIMAL(12,4) NOT NULL,
+  `low`         DECIMAL(12,4) NOT NULL,
+  `close`       DECIMAL(12,4) NOT NULL,
+  `volume`      BIGINT        NOT NULL DEFAULT 0,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_daily` (`stock_code`, `candle_time`),
+  KEY `idx_daily_code_time` (`stock_code`, `candle_time`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS `stock_data_weekly` LIKE `stock_data_daily`;
+CREATE TABLE IF NOT EXISTS `stock_data_monthly` LIKE `stock_data_daily`;

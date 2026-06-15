@@ -128,9 +128,9 @@ class UpstoxClient:
             r.raise_for_status()
             return r.json()
 
-    # ── Historical data (v3) — ported from vasudha-backend UpstoxService ─────
+    # ── Historical data (v3) — sync, matching vasudha-backend UpstoxService ──
 
-    async def historical_candles_v3(
+    def historical_candles_v3(
         self,
         exchange: str,
         isin: str,
@@ -139,7 +139,7 @@ class UpstoxClient:
         from_date: str,
         to_date: str,
     ) -> list[dict[str, Any]]:
-        """Fetch historical OHLCV candles using Upstox v3 API.
+        """Fetch historical OHLCV candles using Upstox v3 API (synchronous).
 
         Args:
             exchange: e.g. "NSE_EQ", "BSE_EQ"
@@ -156,24 +156,26 @@ class UpstoxClient:
         url = f"{_V3_BASE}/v3/historical-candle/{encoded}/{interval_type}/{interval_value}/{to_date}/{from_date}"
         logger.info("Upstox v3 historical request: %s", url)
 
-        async with httpx.AsyncClient(timeout=30) as c:
-            r = await c.get(url, headers=self._headers())
-            r.raise_for_status()
+        with httpx.Client(timeout=30) as c:
+            r = c.get(url, headers=self._headers())
+            if r.status_code != 200:
+                logger.error("Upstox API error: %s", r.text)
+                raise Exception(f"Upstox API returned status {r.status_code}: {r.text}")
             return self._format_candle_response(r.json())
 
-    async def intraday_candles_v3(
+    def intraday_candles_v3(
         self,
         exchange: str,
         isin: str,
         interval_type: str,
         interval_value: str,
     ) -> list[dict[str, Any]]:
-        """Fetch today's intraday candles using Upstox v3 intraday endpoint.
+        """Fetch today's intraday candles using Upstox v3 intraday endpoint (synchronous).
 
         Args:
             exchange: e.g. "NSE_EQ"
             isin: Instrument ISIN
-            interval_type: "minutes" | "hours"
+            interval_type: "minutes" | "hours" | "days"
             interval_value: e.g. "1", "5", "15"
 
         Returns:
@@ -183,9 +185,11 @@ class UpstoxClient:
         url = f"{_V3_BASE}/v3/historical-candle/intraday/{encoded}/{interval_type}/{interval_value}"
         logger.info("Upstox v3 intraday request: %s", url)
 
-        async with httpx.AsyncClient(timeout=20) as c:
-            r = await c.get(url, headers=self._headers())
-            r.raise_for_status()
+        with httpx.Client(timeout=20) as c:
+            r = c.get(url, headers=self._headers())
+            if r.status_code != 200:
+                logger.error("Upstox Intraday API error: %s", r.text)
+                raise Exception(f"Upstox Intraday API returned status {r.status_code}: {r.text}")
             return self._format_candle_response(r.json())
 
     @staticmethod

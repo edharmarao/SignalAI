@@ -104,7 +104,7 @@ def db_insert(table: str, row: dict) -> dict:
 
 
 def db_upsert(table: str, rows: list[dict], unique_cols: list[str]) -> int:
-    """INSERT rows with ON DUPLICATE KEY UPDATE for non-unique columns.
+    """INSERT rows with ON DUPLICATE KEY UPDATE using executemany (bulk commit).
 
     Returns the number of rows affected.
     """
@@ -126,14 +126,79 @@ def db_upsert(table: str, rows: list[dict], unique_cols: list[str]) -> int:
         f"INSERT INTO `{table}` ({col_sql}) VALUES ({ph}) "
         f"ON DUPLICATE KEY UPDATE {update_sql}"
     )
-    total = 0
+    values = [list(r.values()) for r in encoded_rows]
     with _db() as conn:
         with conn.cursor() as cur:
-            for r in encoded_rows:
-                cur.execute(sql, list(r.values()))
-                total += cur.rowcount
+            cur.executemany(sql, values)
+            return cur.rowcount
+
+
+def db_bulk_insert_candles(
+    table: str,
+    rows: list[dict],
+    batch_size: int = 1000,
+) -> int:
+    """Bulk-insert candle rows into stock_data_* tables in batches.
+
+    Each batch is committed separately so large imports don't hold one giant transaction.
+    Uses INSERT IGNORE to skip duplicates (relies on UNIQUE KEY on stock_code+candle_time).
+    Returns total rows inserted.
+    """
+    if not rows:
+        return 0
+    cols = list(rows[0].keys())
+    col_sql = ", ".join(f"`{c}`" for c in cols)
+    ph = ", ".join(["%s"] * len(cols))
+    sql = f"INSERT IGNORE INTO `{table}` ({col_sql}) VALUES ({ph})"
+    total = 0
+    with _connect() as conn:
+        try:
+            with conn.cursor() as cur:
+                for i in range(0, len(rows), batch_size):
+                    batch = rows[i: i + batch_size]
+                    values = [list(r.values()) for r in batch]
+                    cur.executemany(sql, values)
+                    total += cur.rowcount
+                    conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
     return total
 
 
 def new_id() -> str:
     return str(uuid.uuid4())
+
+
+# ── Stock data table auto-creation ───────────────────────────────────────────
+
+_STOCK_DATA_TIMEFRAMES = ("5min", "15min", "25min", "30min", "1hour", "daily", "weekly", "monthly")
+
+_CREATE_STOCK_DATA_TABLE = """
+CREATE TABLE IF NOT EXISTS `{table}` (
+  `id`          BIGINT        NOT NULL AUTO_INCREMENT,
+  `stock_code`  VARCHAR(50)   NOT NULL,
+  `candle_time` DATETIME      NOT NULL,
+  `open`        DECIMAL(12,4) NOT NULL,
+  `high`        DECIMAL(12,4) NOT NULL,
+  `low`         DECIMAL(12,4) NOT NULL,
+  `close`       DECIMAL(12,4) NOT NULL,
+  `volume`      BIGINT        NOT NULL DEFAULT 0,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_{suffix}` (`stock_code`, `candle_time`),
+  KEY `idx_{suffix}_code_time` (`stock_code`, `candle_time`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+"""
+
+
+def ensure_stock_data_tables() -> None:
+    """Create stock_data_<timeframe> tables if they don't exist."""
+    with _db() as conn:
+        with conn.cursor() as cur:
+            for tf in _STOCK_DATA_TIMEFRAMES:
+                table = f"stock_data_{tf}"
+                sql = _CREATE_STOCK_DATA_TABLE.format(table=table, suffix=tf)
+                cur.execute(sql)
+    logger.info("Stock data tables verified/created: %s", [f"stock_data_{tf}" for tf in _STOCK_DATA_TIMEFRAMES])

@@ -29,13 +29,14 @@ from ..models import (
 )
 from ..services.upstox import UpstoxClient
 from ..services.redis_client import get_upstox_token
-from ..db import db_upsert
+from ..services.instrument_map import get_instrument_map, refresh_instrument_map
+from ..utils.database_util import DatabaseUtil
 from .charts import NIFTY500_ISIN
 
 router = APIRouter(prefix="/upstox", tags=["upstox"])
 logger = logging.getLogger("signal_ai")
 
-_INTRADAY_INTERVAL_TYPES = frozenset({"minutes", "hours"})
+_INTRADAY_INTERVAL_TYPES = frozenset({"minutes", "hours", "days"})
 
 
 # ── Auth helpers ──────────────────────────────────────────────────────────────
@@ -98,38 +99,53 @@ def _upsert_candles(
     isin: str,
     interval_type: str,
     interval_value: str,
+    table_name: str = "stock_data_5min",
 ) -> int:
-    """Upsert formatted candle dicts into candle_data table. Returns row count."""
+    """Bulk-insert candles into the specified table using DatabaseUtil.
+
+    stock_data_* schema: (stock_code, candle_time, open, high, low, close, volume)
+    candle_data schema:  (symbol, exchange, isin, interval_type, interval_value, time, open, high, low, close, volume, oi)
+    """
     if not candles:
         return 0
-    rows = [
-        {
-            "symbol": symbol,
-            "exchange": exchange,
-            "isin": isin,
-            "interval_type": interval_type,
-            "interval_value": interval_value,
-            "time": f"{c['time']}+05:30",
-            "open": c["open"],
-            "high": c["high"],
-            "low": c["low"],
-            "close": c["close"],
-            "volume": c["volume"],
-            "oi": c["oi"],
-        }
-        for c in candles
-    ]
-    return db_upsert(
-        "candle_data",
-        rows,
-        unique_cols=["symbol", "exchange", "interval_type", "interval_value", "time"],
-    )
+
+    with DatabaseUtil() as db:
+        if table_name == "candle_data":
+            sql = """
+                INSERT INTO candle_data
+                    (symbol, exchange, isin, interval_type, interval_value, time, open, high, low, close, volume, oi)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON DUPLICATE KEY UPDATE
+                    open=VALUES(open), high=VALUES(high), low=VALUES(low),
+                    close=VALUES(close), volume=VALUES(volume), oi=VALUES(oi)
+            """
+            params = [
+                (
+                    symbol, exchange, isin, interval_type, interval_value,
+                    f"{c['time']}+05:30",
+                    c["open"], c["high"], c["low"], c["close"],
+                    c["volume"], c.get("oi", 0),
+                )
+                for c in candles
+            ]
+        else:
+            # stock_data_5min / stock_data_15min / stock_data_daily etc.
+            sql = """
+                INSERT IGNORE INTO `{table}` (stock_code, candle_time, open, high, low, close, volume)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+            """.format(table=table_name)
+            params = [
+                (symbol, c["time"], c["open"], c["high"], c["low"], c["close"], c["volume"])
+                for c in candles
+            ]
+
+        return db.execute_many(sql, params)
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
 
 @router.get("/historical-candle", response_model=HistoricalCandleResponse)
-async def get_historical_candle(
+def get_historical_candle(
     exchange: str = Query(..., description="NSE_EQ | BSE_EQ | NSE_FO | BSE_FO | MCX_FO"),
     isin: str = Query(..., description="Instrument ISIN e.g. INE848E01016"),
     from_date: str = Query(..., description="YYYY-MM-DD"),
@@ -145,7 +161,7 @@ async def get_historical_candle(
         raise HTTPException(400, f"Invalid interval {interval_type}/{interval_value}")
     token = _require_token(user)
     try:
-        candles = await UpstoxClient(token).historical_candles_v3(
+        candles = UpstoxClient(token).historical_candles_v3(
             exchange, isin, interval_type, interval_value, from_date, to_date
         )
     except Exception as e:
@@ -157,7 +173,7 @@ async def get_historical_candle(
 
 
 @router.get("/historical-candle-by-symbol", response_model=HistoricalCandleResponse)
-async def get_historical_candle_by_symbol(
+def get_historical_candle_by_symbol(
     symbol: str = Query(..., description="Stock symbol e.g. RELIANCE"),
     exchange: str = Query("NSE_EQ", description="NSE_EQ | BSE_EQ | NSE_FO | BSE_FO | MCX_FO"),
     from_date: str = Query(..., description="YYYY-MM-DD"),
@@ -179,7 +195,7 @@ async def get_historical_candle_by_symbol(
         raise HTTPException(400, f"Invalid interval {interval_type}/{interval_value}")
     token = _require_token(user)
     try:
-        candles = await UpstoxClient(token).historical_candles_v3(
+        candles = UpstoxClient(token).historical_candles_v3(
             exchange, isin, interval_type, interval_value, from_date, to_date
         )
     except Exception as e:
@@ -191,7 +207,7 @@ async def get_historical_candle_by_symbol(
 
 
 @router.post("/historical-data-import")
-async def historical_data_import(
+def historical_data_import(
     request: BulkHistoricalImportRequest = Body(...),
     user: dict = Depends(get_current_user),
 ) -> dict:
@@ -226,7 +242,7 @@ async def historical_data_import(
             )
             symbol_records = 0
             for chunk_from, chunk_to in chunks:
-                candles = await client.historical_candles_v3(
+                candles = client.historical_candles_v3(
                     request.exchange, isin,
                     request.interval_type, request.interval_value,
                     chunk_from, chunk_to,
@@ -234,6 +250,7 @@ async def historical_data_import(
                 symbol_records += _upsert_candles(
                     candles, sym, request.exchange, isin,
                     request.interval_type, request.interval_value,
+                    table_name=request.table_name,
                 )
             total_records += symbol_records
             results.append({"symbol": sym, "status": "success", "records": symbol_records})
@@ -254,19 +271,20 @@ async def historical_data_import(
 
 
 @router.post("/intraday-data-import")
-async def intraday_data_import(
+def intraday_data_import(
     request: IntradayImportRequest = Body(...),
     user: dict = Depends(get_current_user),
 ) -> dict:
     """Import today's intraday OHLCV data for multiple symbols into the candle_data table.
 
-    Only minute and hour intervals are supported (intraday endpoint constraint).
+    Supports minutes, hours, and days intervals ('days'/'1' fetches today's EOD candle).
     Requires candle_data table in Supabase (see supabase/schema.sql).
     """
     if request.interval_type not in _INTRADAY_INTERVAL_TYPES:
         raise HTTPException(
             400,
-            f"Intraday endpoint only supports interval_type in {sorted(_INTRADAY_INTERVAL_TYPES)}",
+            f"Intraday endpoint only supports interval_type in {sorted(_INTRADAY_INTERVAL_TYPES)}. "
+            "Use 'days'/'1' to fetch today's EOD candle.",
         )
     if not UpstoxClient.validate_interval(request.interval_type, request.interval_value):
         raise HTTPException(
@@ -285,12 +303,13 @@ async def intraday_data_import(
             results.append({"symbol": sym, "status": "failed", "error": "ISIN not found in instrument map", "records": 0})
             continue
         try:
-            candles = await client.intraday_candles_v3(
+            candles = client.intraday_candles_v3(
                 request.exchange, isin, request.interval_type, request.interval_value
             )
             n = _upsert_candles(
                 candles, sym, request.exchange, isin,
                 request.interval_type, request.interval_value,
+                table_name=request.table_name,
             )
             total_records += n
             results.append({"symbol": sym, "status": "success", "records": n})
@@ -308,3 +327,21 @@ async def intraday_data_import(
         "total_records_imported": total_records,
         "details": results,
     }
+
+
+@router.post("/instruments/refresh", tags=["upstox"])
+def refresh_instruments(user: dict = Depends(get_current_user)):
+    """Force-refresh the NSE instrument map from Upstox CSV."""
+    count = refresh_instrument_map()
+    return {"status": "refreshed", "symbols_loaded": count}
+
+
+@router.get("/instruments/lookup", tags=["upstox"])
+def lookup_instrument(symbol: str = Query(..., description="NSE trading symbol e.g. 360ONE"), user: dict = Depends(get_current_user)):
+    """Look up ISIN for a given NSE symbol."""
+    m = get_instrument_map()
+    isin = m.get(symbol.upper())
+    if not isin:
+        raise HTTPException(404, f"Symbol {symbol!r} not found in instrument map")
+    return {"symbol": symbol.upper(), "isin": isin, "total_symbols": len(m)}
+

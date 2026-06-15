@@ -43,6 +43,19 @@ async def lifespan(app: FastAPI):
     )
     if settings.allow_live_trading:
         logger.warning("LIVE TRADING IS ENABLED — real orders will be placed!")
+
+    # Pre-warm NSE instrument map in background (downloads Upstox CSV)
+    import threading
+    from .services.instrument_map import get_instrument_map as _prewarm_map
+    threading.Thread(target=_prewarm_map, daemon=True).start()
+
+    # Ensure stock_data_* tables exist
+    try:
+        from .db import ensure_stock_data_tables
+        ensure_stock_data_tables()
+    except Exception as exc:
+        logger.warning("Could not ensure stock data tables: %s", exc)
+
     yield
     logger.info("Signal AI API shutting down")
 
