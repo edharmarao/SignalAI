@@ -4,6 +4,8 @@ GET  /upstox/historical-candle           — OHLCV by ISIN
 GET  /upstox/historical-candle-by-symbol — OHLCV by stock symbol (resolves ISIN from NIFTY500_ISIN map)
 POST /upstox/historical-data-import      — bulk historical import → candle_data table
 POST /upstox/intraday-data-import        — today's intraday import → candle_data table
+GET  /upstox/intraday-candle             — today's intraday candles for a single symbol (no DB write)
+POST /upstox/intraday-candles/multi      — today's intraday candles for multiple symbols (no DB write)
 
 All endpoints require an active Upstox broker connection (POST /api/v1/broker/upstox/connect).
 Missing broker → HTTP 403. Upstox API error → HTTP 502.
@@ -25,7 +27,10 @@ from ..models import (
     BulkHistoricalImportRequest,
     CandleData,
     HistoricalCandleResponse,
+    IntradayCandleRequest,
+    IntradayCandleResponse,
     IntradayImportRequest,
+    SymbolIntradayResult,
 )
 from ..services.upstox import UpstoxClient
 from ..services.redis_client import get_upstox_token
@@ -327,6 +332,157 @@ def intraday_data_import(
         "total_records_imported": total_records,
         "details": results,
     }
+
+
+# ── Intraday candle fetch (no DB write) ───────────────────────────────────────
+
+@router.get("/intraday-candle", response_model=HistoricalCandleResponse)
+def get_intraday_candle(
+    symbol: str = Query(..., description="NSE trading symbol e.g. RELIANCE"),
+    exchange: str = Query("NSE_EQ", description="NSE_EQ | BSE_EQ | NSE_FO | BSE_FO | MCX_FO"),
+    interval_type: str = Query("minutes", description="minutes | hours | days"),
+    interval_value: str = Query("1", description="Candle interval value e.g. 1, 5, 15"),
+    user: dict = Depends(get_current_user),
+) -> HistoricalCandleResponse:
+    """Fetch today's intraday OHLCV candles for a **single** symbol.
+
+    Calls the Upstox v3 intraday endpoint:
+      GET /v3/historical-candle/intraday/{instrument_key}/{interval_type}/{interval_value}
+
+    No data is written to the database — results are returned directly.
+    Symbol is resolved to an ISIN via the instrument map (NIFTY500_ISIN).
+    """
+    sym = symbol.upper()
+
+    # Resolve ISIN — try static map first, then live instrument map
+    isin = NIFTY500_ISIN.get(sym) or get_instrument_map().get(sym)
+    if not isin:
+        raise HTTPException(
+            404,
+            f"Symbol '{sym}' not found in instrument map. "
+            "Use GET /upstox/instruments/lookup to verify the symbol, "
+            "or POST /upstox/instruments/refresh to reload the map.",
+        )
+
+    if interval_type not in _INTRADAY_INTERVAL_TYPES:
+        raise HTTPException(
+            400,
+            f"interval_type must be one of {sorted(_INTRADAY_INTERVAL_TYPES)}",
+        )
+    if not UpstoxClient.validate_interval(interval_type, interval_value):
+        raise HTTPException(400, f"Invalid interval {interval_type}/{interval_value}")
+
+    token = _require_token(user)
+    try:
+        candles = UpstoxClient(token).intraday_candles_v3(
+            exchange, isin, interval_type, interval_value
+        )
+    except Exception as e:
+        logger.error("Intraday candle fetch failed for %s: %s", sym, e)
+        raise HTTPException(502, f"Upstox API error: {e}")
+
+    logger.info("Intraday candle fetch: %d candles for %s (%s/%s)", len(candles), sym, interval_type, interval_value)
+    return HistoricalCandleResponse(
+        status="success", candles=[CandleData(**c) for c in candles]
+    )
+
+
+@router.post("/intraday-candles/multi", response_model=IntradayCandleResponse)
+def get_intraday_candles_multi(
+    request: IntradayCandleRequest = Body(...),
+    user: dict = Depends(get_current_user),
+) -> IntradayCandleResponse:
+    """Fetch today's intraday OHLCV candles for **multiple** symbols in one call.
+
+    Calls the Upstox v3 intraday endpoint for each symbol:
+      GET /v3/historical-candle/intraday/{instrument_key}/{interval_type}/{interval_value}
+
+    No data is written to the database — all results are returned directly.
+    Symbols are resolved to ISINs via the instrument map (NIFTY500_ISIN + live map).
+    Failures for individual symbols are captured per-symbol; the overall request
+    always returns HTTP 200 with per-symbol status fields.
+
+    **Request body example:**
+    ```json
+    {
+      "symbols": ["RELIANCE", "TCS", "INFY"],
+      "exchange": "NSE_EQ",
+      "interval_type": "minutes",
+      "interval_value": "1"
+    }
+    ```
+    """
+    if request.interval_type not in _INTRADAY_INTERVAL_TYPES:
+        raise HTTPException(
+            400,
+            f"interval_type must be one of {sorted(_INTRADAY_INTERVAL_TYPES)}",
+        )
+    if not UpstoxClient.validate_interval(request.interval_type, request.interval_value):
+        raise HTTPException(
+            400, f"Invalid interval {request.interval_type}/{request.interval_value}"
+        )
+
+    token = _require_token(user)
+    client = UpstoxClient(token)
+
+    # Merge static NIFTY500 map with live instrument map for broadest coverage
+    live_map = get_instrument_map()
+    results: list[SymbolIntradayResult] = []
+
+    for raw_sym in request.symbols:
+        sym = raw_sym.upper()
+        isin = NIFTY500_ISIN.get(sym) or live_map.get(sym)
+
+        if not isin:
+            logger.warning("Intraday multi: ISIN not found for %s", sym)
+            results.append(
+                SymbolIntradayResult(
+                    symbol=sym,
+                    status="failed",
+                    error="ISIN not found in instrument map",
+                )
+            )
+            continue
+
+        try:
+            candles = client.intraday_candles_v3(
+                request.exchange, isin, request.interval_type, request.interval_value
+            )
+            results.append(
+                SymbolIntradayResult(
+                    symbol=sym,
+                    isin=isin,
+                    status="success",
+                    candles=[CandleData(**c) for c in candles],
+                    candle_count=len(candles),
+                )
+            )
+            logger.info(
+                "Intraday multi: %d candles for %s (%s/%s)",
+                len(candles), sym, request.interval_type, request.interval_value,
+            )
+        except Exception as e:
+            logger.error("Intraday multi fetch failed for %s: %s", sym, e)
+            results.append(
+                SymbolIntradayResult(
+                    symbol=sym,
+                    isin=isin,
+                    status="failed",
+                    error=str(e),
+                )
+            )
+
+    successful = sum(1 for r in results if r.status == "success")
+    return IntradayCandleResponse(
+        status="success",
+        exchange=request.exchange,
+        interval_type=request.interval_type,
+        interval_value=request.interval_value,
+        total_symbols=len(request.symbols),
+        successful=successful,
+        failed=len(request.symbols) - successful,
+        results=results,
+    )
 
 
 @router.post("/instruments/refresh", tags=["upstox"])

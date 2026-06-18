@@ -73,6 +73,7 @@ def orb_backtest(req: ORBBacktestRequest, user=Depends(get_current_user)):
             qty=req.qty,
             df=df,
             or_candles=req.or_candles,
+            breakout_candles=req.breakout_candles,
             market_open=req.market_open,
             volume_multiplier=req.volume_multiplier,
             volume_lookback=req.volume_lookback,

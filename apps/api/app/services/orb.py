@@ -103,12 +103,21 @@ def fetch_orb_data(
                 f"WHERE stock_code=%s{stock_date_filter} ORDER BY candle_time ASC",
                 stock_args,
             )
-            if rows:
-                return _to_df(rows)
         except Exception as e:
-            logger.warning("ORB: table %s not found or error (%s), trying candle_data", table, e)
+            logger.warning("ORB: table %s error (%s)", table, e)
+            raise ValueError(
+                f"Could not query table '{table}' for symbol '{symbol}' timeframe '{timeframe}': {e}"
+            )
+        if rows:
+            return _to_df(rows)
+        raise ValueError(
+            f"No data found in '{table}' for symbol '{symbol}'"
+            + (f" from {from_date}" if from_date else "")
+            + (f" to {to_date}" if to_date else "")
+            + ". Import data first via POST /api/v1/upstox/historical-data-import."
+        )
 
-    # Fallback: candle_data table (shared, used by Upstox import)
+    # Fallback: candle_data table (shared, used by Upstox import) — only for unmapped timeframes
     iv_type, iv_val = TIMEFRAME_INTERVAL.get(tf, ("minutes", "5"))
     fallback_args: list[Any] = [symbol.upper(), iv_type, iv_val]
 
@@ -226,6 +235,7 @@ def detect_orb_signals(
     timeframe: str,
     *,
     or_candles: int = 1,
+    breakout_candles: int = 0,
     market_open: str = MARKET_OPEN,
     volume_multiplier: float = VOLUME_MULTIPLIER,
     volume_lookback: int = VOLUME_AVG_PERIODS,
@@ -236,6 +246,9 @@ def detect_orb_signals(
 
     The Opening Range is the first ``or_candles`` candle(s) at or after
     ``market_open`` each day.  All rule parameters are configurable.
+
+    ``breakout_candles`` limits how many candles *after* the OR window to
+    scan for a breakout.  0 (default) means scan the entire remaining day.
     """
     signals: list[ORBSignal] = []
     df = df.copy()
@@ -263,6 +276,8 @@ def detect_orb_signals(
 
         # Look for breakout in candles AFTER the OR slice
         subsequent = open_candles.iloc[or_candles:]
+        if breakout_candles > 0:
+            subsequent = subsequent.iloc[:breakout_candles]
         for idx, row in subsequent.iterrows():
             global_idx = df.index.get_loc(idx) if idx in df.index else int(idx)
             avg_vol = _compute_avg_volume(df["volume"], global_idx, volume_lookback)
@@ -305,6 +320,7 @@ def run_orb_backtest(
     df: pd.DataFrame | None = None,
     *,
     or_candles: int = 1,
+    breakout_candles: int = 0,
     market_open: str = MARKET_OPEN,
     volume_multiplier: float = VOLUME_MULTIPLIER,
     volume_lookback: int = VOLUME_AVG_PERIODS,
@@ -329,6 +345,7 @@ def run_orb_backtest(
     signals = detect_orb_signals(
         df, symbol, timeframe,
         or_candles=or_candles,
+        breakout_candles=breakout_candles,
         market_open=market_open,
         volume_multiplier=volume_multiplier,
         volume_lookback=volume_lookback,

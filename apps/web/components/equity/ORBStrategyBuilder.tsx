@@ -529,6 +529,7 @@ export default function ORBStrategyBuilder({ editId }: { editId?: string }) {
 
   // ── Configurable strategy params ──────────────────────────────────────────────
   const [orCandles, setOrCandles]           = useState(1);           // # candles forming OR
+  const [breakoutCandles, setBreakoutCandles] = useState(0);         // # candles after OR to scan (0 = all day)
   const [marketOpen, setMarketOpen]         = useState("09:15");     // IST HH:MM
   const [volMultiplier, setVolMultiplier]   = useState(10.0);        // volume filter ×
   const [volLookback, setVolLookback]       = useState(20);          // vol avg periods
@@ -593,6 +594,7 @@ export default function ORBStrategyBuilder({ editId }: { editId?: string }) {
       if (c.to_date)           setToDate(c.to_date);
       if (c.qty)               setQty(String(c.qty));
       if (c.or_candles)        setOrCandles(c.or_candles);
+      if (typeof c.breakout_candles === "number") setBreakoutCandles(c.breakout_candles);
       if (c.market_open)       setMarketOpen(c.market_open);
       if (c.volume_multiplier) setVolMultiplier(c.volume_multiplier);
       if (c.volume_lookback)   setVolLookback(c.volume_lookback);
@@ -641,6 +643,7 @@ export default function ORBStrategyBuilder({ editId }: { editId?: string }) {
               symbol: s.symbol, timeframe: tf, from_date: fromDate, to_date: toDate,
               qty: parseInt(qty) || 1,
               or_candles: orCandles,
+              breakout_candles: breakoutCandles,
               market_open: marketOpen,
               volume_multiplier: volMultiplier,
               volume_lookback: volLookback,
@@ -667,7 +670,7 @@ export default function ORBStrategyBuilder({ editId }: { editId?: string }) {
       const orbConfig = {
         timeframe: tf, timeframeLabel: tfLabel, from_date: fromDate, to_date: toDate,
         qty: parseInt(qty) || 1,
-        or_candles: orCandles, market_open: marketOpen,
+        or_candles: orCandles, breakout_candles: breakoutCandles, market_open: marketOpen,
         volume_multiplier: volMultiplier, volume_lookback: volLookback,
         direction, risk_reward: riskReward,
         trailing_sl: trailingSl, trail_factor: trailFactor, eod_exit: eodExit,
@@ -826,6 +829,23 @@ export default function ORBStrategyBuilder({ editId }: { editId?: string }) {
                   className="w-full accent-amber-500 h-1"/>
                 <div className="flex justify-between text-[9px] text-slate-700 mt-0.5"><span>1 candle</span><span>6 candles</span></div>
                 <p className="text-[9px] text-slate-600 mt-1">OR = high/low of first {orCandles} candle{orCandles>1?"s":""} after {marketOpen}</p>
+              </div>
+
+              {/* Breakout Candles */}
+              <div>
+                <div className="flex justify-between mb-1">
+                  <p className="text-[10px] text-slate-500">Breakout Window (candles)</p>
+                  <span className="text-[10px] font-mono font-bold text-amber-400">{breakoutCandles === 0 ? "All day" : breakoutCandles}</span>
+                </div>
+                <input type="range" min={0} max={20} step={1} value={breakoutCandles}
+                  onChange={e => setBreakoutCandles(Number(e.target.value))}
+                  className="w-full accent-amber-500 h-1"/>
+                <div className="flex justify-between text-[9px] text-slate-700 mt-0.5"><span>All day</span><span>20</span></div>
+                <p className="text-[9px] text-slate-600 mt-1">
+                  {breakoutCandles === 0
+                    ? "Scan all candles after OR for breakout"
+                    : `Only scan first ${breakoutCandles} candle${breakoutCandles>1?"s":""} after OR for breakout`}
+                </p>
               </div>
 
               {/* Market open time */}

@@ -116,6 +116,55 @@ class IntradayImportRequest(BaseModel):
     table_name: str = Field("stock_data_5min", description="Target MySQL table e.g. stock_data_5min, stock_data_15min, stock_data_daily")
 
 
+# ── Intraday candle fetch models (no DB write) ────────────────────────────────
+
+class IntradayCandleRequest(BaseModel):
+    """Request body for fetching live intraday candles for multiple symbols."""
+
+    symbols: list[str] = Field(
+        ...,
+        min_length=1,
+        max_length=50,
+        description="NSE trading symbols e.g. ['RELIANCE', 'TCS', 'INFY']",
+    )
+    exchange: str = Field(
+        "NSE_EQ",
+        description="Exchange segment: NSE_EQ | BSE_EQ | NSE_FO | BSE_FO | MCX_FO",
+    )
+    interval_type: str = Field(
+        "minutes",
+        description="Candle interval type: minutes | hours | days",
+    )
+    interval_value: str = Field(
+        "1",
+        description="Candle interval value e.g. 1, 5, 15",
+    )
+
+
+class SymbolIntradayResult(BaseModel):
+    """Per-symbol result inside a multi-symbol intraday response."""
+
+    symbol: str
+    isin: str = ""
+    status: Literal["success", "failed"]
+    candles: list[CandleData] = []
+    error: str = ""
+    candle_count: int = 0
+
+
+class IntradayCandleResponse(BaseModel):
+    """Response for multi-symbol intraday candle fetch."""
+
+    status: str
+    exchange: str
+    interval_type: str
+    interval_value: str
+    total_symbols: int
+    successful: int
+    failed: int
+    results: list[SymbolIntradayResult]
+
+
 # ── ORB Strategy models ───────────────────────────────────────────────────────
 
 ORBTimeframe = Literal["1min", "5min", "15min", "25min", "30min", "75min", "125min", "1h", "1hour", "eod", "daily", "weekly", "monthly"]
@@ -130,6 +179,7 @@ class ORBBacktestRequest(BaseModel):
 
     # ── Configurable strategy parameters ──────────────────────────────────────
     or_candles: int = Field(1, ge=1, le=10, description="Number of candles forming the Opening Range")
+    breakout_candles: int = Field(0, ge=0, le=50, description="Max candles after OR to scan for breakout (0 = scan all day)")
     market_open: str = Field("09:15", description="Market open time HH:MM (IST)")
     volume_multiplier: float = Field(2.0, ge=0.5, le=50.0, description="Breakout volume must be >= this × avg volume")
     volume_lookback: int = Field(20, ge=5, le=100, description="Candles used to compute average volume")

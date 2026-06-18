@@ -1,11 +1,12 @@
 {
   "info": {
     "name": "SignalAI – Upstox API",
-    "description": "Complete Upstox broker + market data endpoints for SignalAI.\n\nSet collection variable `base_url` to your API host (default: http://localhost:8003/api/v1).\nSet `auth_token` to Basic auth value: ZWRyYW86Y2hpcnUxMjM=",
+    "description": "Complete SignalAI API: auth, broker, market data, ORB strategy, charts, orders, and records.\n\nSet collection variable `base_url` to your API host (default: http://localhost:8003/api/v1).\nSet `api_root` to the root host (default: http://localhost:8003).\nSet `auth_token` to Basic auth value: ZWRyYW86Y2hpcnUxMjM=",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
     { "key": "base_url",   "value": "http://localhost:8003/api/v1" },
+    { "key": "api_root",   "value": "http://localhost:8003" },
     { "key": "auth_token", "value": "ZWRyYW86Y2hpcnUxMjM=" }
   ],
   "auth": {
@@ -16,6 +17,73 @@
     ]
   },
   "item": [
+    {
+      "name": "🏥 Meta",
+      "item": [
+        {
+          "name": "Root",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{api_root}}/",
+              "host": ["{{api_root}}"],
+              "path": [""]
+            },
+            "description": "Returns API name, version, live trading flag, and disclaimer."
+          }
+        },
+        {
+          "name": "Health Check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{api_root}}/health",
+              "host": ["{{api_root}}"],
+              "path": ["health"]
+            },
+            "description": "Returns { ok, version, uptime_seconds, environment, request_id }."
+          }
+        }
+      ]
+    },
+    {
+      "name": "🔐 Auth",
+      "item": [
+        {
+          "name": "Login",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"edrao\",\n  \"password\": \"chiru123\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/auth/login",
+              "host": ["{{base_url}}"],
+              "path": ["auth", "login"]
+            },
+            "description": "Validate credentials. Returns { ok: true, user_id }.\nNo JWT issued — subsequent requests use HTTP Basic auth."
+          }
+        },
+        {
+          "name": "Current User (me)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/auth/me",
+              "host": ["{{base_url}}"],
+              "path": ["auth", "me"]
+            },
+            "description": "Returns the currently authenticated user info."
+          }
+        }
+      ]
+    },
     {
       "name": "🔗 Broker – Upstox Auth",
       "item": [
@@ -165,6 +233,47 @@
       ]
     },
     {
+      "name": "⚡ Intraday Candles",
+      "item": [
+        {
+          "name": "Get Intraday Candle (Single Symbol)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/upstox/intraday-candle?symbol=RELIANCE&exchange=NSE_EQ&interval_type=minutes&interval_value=5",
+              "host": ["{{base_url}}"],
+              "path": ["upstox", "intraday-candle"],
+              "query": [
+                { "key": "symbol",         "value": "RELIANCE",  "description": "NSE trading symbol" },
+                { "key": "exchange",       "value": "NSE_EQ",    "description": "NSE_EQ | BSE_EQ | NSE_FO | BSE_FO | MCX_FO" },
+                { "key": "interval_type",  "value": "minutes",   "description": "minutes | hours | days" },
+                { "key": "interval_value", "value": "5",         "description": "e.g. 1, 5, 15" }
+              ]
+            },
+            "description": "Fetch today's intraday OHLCV candles for a single symbol. No data is written to the database."
+          }
+        },
+        {
+          "name": "Get Intraday Candles (Multiple Symbols)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"symbols\": [\"RELIANCE\", \"TCS\", \"INFY\"],\n  \"exchange\": \"NSE_EQ\",\n  \"interval_type\": \"minutes\",\n  \"interval_value\": \"5\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/upstox/intraday-candles/multi",
+              "host": ["{{base_url}}"],
+              "path": ["upstox", "intraday-candles", "multi"]
+            },
+            "description": "Fetch today's intraday OHLCV candles for multiple symbols in one call. No data is written to the database. Failures for individual symbols are captured per-symbol."
+          }
+        }
+      ]
+    },
+    {
       "name": "📥 Bulk Data Import",
       "item": [
         {
@@ -236,6 +345,155 @@
       ]
     },
     {
+      "name": "🗺️ Instruments",
+      "item": [
+        {
+          "name": "List Index Instruments",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/instruments",
+              "host": ["{{base_url}}"],
+              "path": ["instruments"]
+            },
+            "description": "Returns instrument keys for NIFTY, BANKNIFTY, FINNIFTY, SENSEX."
+          }
+        },
+        {
+          "name": "List Equity Stocks",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/equity/stocks",
+              "host": ["{{base_url}}"],
+              "path": ["equity", "stocks"]
+            },
+            "description": "Returns up to 750 NSE EQ stocks with symbol, name, and sector from the DB."
+          }
+        },
+        {
+          "name": "Lookup Instrument ISIN",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/upstox/instruments/lookup?symbol=RELIANCE",
+              "host": ["{{base_url}}"],
+              "path": ["upstox", "instruments", "lookup"],
+              "query": [
+                { "key": "symbol", "value": "RELIANCE", "description": "NSE trading symbol e.g. 360ONE" }
+              ]
+            },
+            "description": "Look up the ISIN for a given NSE symbol using the live instrument map."
+          }
+        },
+        {
+          "name": "Refresh Instrument Map",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/upstox/instruments/refresh",
+              "host": ["{{base_url}}"],
+              "path": ["upstox", "instruments", "refresh"]
+            },
+            "description": "Force-refresh the NSE instrument map by downloading the latest Upstox CSV. Returns { status, symbols_loaded }."
+          }
+        }
+      ]
+    },
+    {
+      "name": "📈 Charts",
+      "item": [
+        {
+          "name": "List Chart Symbols",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/charts/symbols",
+              "host": ["{{base_url}}"],
+              "path": ["charts", "symbols"]
+            },
+            "description": "Returns all NSE EQ symbols from the nse_eq_symbols table (symbol, name, sector)."
+          }
+        },
+        {
+          "name": "Get Candles",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/charts/candles?symbol=RELIANCE&timeframe=1D&from=2025-01-01&to=2025-03-31&limit=500",
+              "host": ["{{base_url}}"],
+              "path": ["charts", "candles"],
+              "query": [
+                { "key": "symbol",    "value": "RELIANCE" },
+                { "key": "timeframe", "value": "1D", "description": "1m | 5m | 15m | 30m | 1h | 1D | 1W | 1M" },
+                { "key": "from",      "value": "2025-01-01", "description": "YYYY-MM-DD" },
+                { "key": "to",        "value": "2025-03-31", "description": "YYYY-MM-DD" },
+                { "key": "limit",     "value": "500", "description": "1–2000" }
+              ]
+            },
+            "description": "Fetch OHLCV candles. Primary source: stock_data_* DB tables. Falls back to Upstox live API if a connected broker token is available."
+          }
+        },
+        {
+          "name": "Get Symbol Summary",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/charts/summary?symbol=RELIANCE",
+              "host": ["{{base_url}}"],
+              "path": ["charts", "summary"],
+              "query": [
+                { "key": "symbol", "value": "RELIANCE" }
+              ]
+            },
+            "description": "Returns latest price, 52-week high/low, average volume from stock_data_daily.\nFalls back to Upstox if a broker token is available."
+          }
+        },
+        {
+          "name": "Indicator Backtest (Bulk)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"symbols\": [\"RELIANCE\", \"TCS\", \"INFY\"],\n  \"timeframe\": \"1D\",\n  \"from_date\": \"2024-01-01\",\n  \"to_date\": \"2024-12-31\",\n  \"conditions\": [\n    { \"type\": \"sma_crossover\", \"fast\": 10, \"slow\": 50 }\n  ],\n  \"action\": \"BUY\",\n  \"sl_pct\": 2.0,\n  \"tp_pct\": 4.0,\n  \"tsl_pct\": 0.0,\n  \"qty\": 100,\n  \"max_hold_days\": 30\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/charts/indicator-backtest",
+              "host": ["{{base_url}}"],
+              "path": ["charts", "indicator-backtest"]
+            },
+            "description": "Run a technical-indicator strategy backtest on real DB OHLCV data for multiple symbols.\nReturns per-symbol results: trade list, win rate, P&L, max drawdown."
+          }
+        }
+      ]
+    },
+    {
+      "name": "💰 Prices",
+      "item": [
+        {
+          "name": "Get LTP (Index)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/prices/ltp/NIFTY",
+              "host": ["{{base_url}}"],
+              "path": ["prices", "ltp", "NIFTY"]
+            },
+            "description": "Fetch live last traded price for an index.\nSupported: NIFTY | BANKNIFTY | FINNIFTY | SENSEX\nRequires an active Upstox broker connection."
+          }
+        }
+      ]
+    },
+    {
       "name": "🕯️ ORB Strategy",
       "item": [
         {
@@ -249,12 +507,13 @@
               "path": ["orb", "chart-data"],
               "query": [
                 { "key": "symbol",    "value": "RELIANCE" },
-                { "key": "timeframe", "value": "5min", "description": "5min | 15min | 25min | 75min | 125min | daily | weekly | monthly" },
+                { "key": "timeframe", "value": "5min", "description": "1min|5min|15min|25min|daily|weekly" },
                 { "key": "from_date", "value": "2025-01-01" },
                 { "key": "to_date",   "value": "2025-03-31" },
                 { "key": "limit",     "value": "10000" }
               ]
-            }
+            },
+            "description": "Fetch OHLCV candles directly from stock_data_<timeframe> for charting. Capped at limit (max 10000)."
           }
         },
         {
@@ -263,14 +522,15 @@
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{base_url}}/orb/signal?symbol=RELIANCE&timeframe=5min",
+              "raw": "{{base_url}}/orb/signal?symbols=RELIANCE,TCS&timeframe=5min",
               "host": ["{{base_url}}"],
               "path": ["orb", "signal"],
               "query": [
-                { "key": "symbol",    "value": "RELIANCE" },
-                { "key": "timeframe", "value": "5min" }
+                { "key": "symbols",   "value": "RELIANCE,TCS", "description": "Comma-separated symbol list" },
+                { "key": "timeframe", "value": "5min",         "description": "1min|5min|15min|30min|1h|eod" }
               ]
-            }
+            },
+            "description": "Return today's ORB signals for the requested symbols. Data is read from the DB — ensure intraday data has been imported first."
           }
         },
         {
@@ -291,6 +551,40 @@
           }
         },
         {
+          "name": "ORB Live / Paper Order",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"symbols\": [\"RELIANCE\", \"TCS\"],\n  \"timeframe\": \"5min\",\n  \"qty\": 1,\n  \"mode\": \"paper\",\n  \"confirm_live\": false\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/orb/live",
+              "host": ["{{base_url}}"],
+              "path": ["orb", "live"]
+            },
+            "description": "Scan current ORB signals and place paper or live orders.\n\nLive trading requires:\n- ALLOW_LIVE_TRADING=true in .env\n- confirm_live: true in request body\n- Active Upstox broker connection"
+          }
+        },
+        {
+          "name": "ORB Available Stocks",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/orb/stocks?timeframe=5min&q=REL",
+              "host": ["{{base_url}}"],
+              "path": ["orb", "stocks"],
+              "query": [
+                { "key": "timeframe", "value": "5min",  "description": "Timeframe to query" },
+                { "key": "q",         "value": "REL",   "description": "Optional search filter" }
+              ]
+            },
+            "description": "List distinct stock codes available in a stock_data_<timeframe> table."
+          }
+        },
+        {
           "name": "NSE Symbol Search",
           "request": {
             "method": "GET",
@@ -300,7 +594,8 @@
               "host": ["{{base_url}}"],
               "path": ["orb", "nse-symbols"],
               "query": [{ "key": "q", "value": "REL", "description": "Search query (symbol or company name)" }]
-            }
+            },
+            "description": "Return NSE EQ symbols from nse_eq_symbols table. Each item has symbol, company_name, industry."
           }
         }
       ]
@@ -317,7 +612,7 @@
               "raw": "{{base_url}}/strategies?desk=equity",
               "host": ["{{base_url}}"],
               "path": ["strategies"],
-              "query": [{ "key": "desk", "value": "equity" }]
+              "query": [{ "key": "desk", "value": "equity", "description": "equity | options | mutual_funds" }]
             }
           }
         },
@@ -403,6 +698,100 @@
               "host": ["{{base_url}}"],
               "path": ["strategies", "<strategy_id>", "duplicate"]
             }
+          }
+        }
+      ]
+    },
+    {
+      "name": "🔄 Backtest",
+      "item": [
+        {
+          "name": "Run Strategy Backtest",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"strategy_json\": {\n    \"version\": 1,\n    \"desk\": \"equity\",\n    \"strategyType\": \"price_action\",\n    \"priceActionType\": \"orb\",\n    \"symbol\": \"RELIANCE\",\n    \"candleTime\": \"5min\",\n    \"action\": \"BUY\",\n    \"quantity\": 1,\n    \"mode\": \"paper\",\n    \"status\": \"draft\"\n  },\n  \"candles\": null\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/backtest",
+              "host": ["{{base_url}}"],
+              "path": ["backtest"]
+            },
+            "description": "Run a strategy backtest. Supply candles array for custom OHLCV data, or omit to auto-fetch from DB using strategy_json.symbol + candleTime.\n\nReturns: totalTrades, wins, losses, winRate, pnl, maxDrawdown, trades[]"
+          }
+        }
+      ]
+    },
+    {
+      "name": "📦 Orders",
+      "item": [
+        {
+          "name": "Place Order",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Idempotency-Key", "value": "unique-key-123", "description": "Optional: prevents duplicate orders within 5 minutes" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"strategy_id\": \"<strategy_id>\",\n  \"symbol\": \"RELIANCE\",\n  \"side\": \"BUY\",\n  \"quantity\": 1,\n  \"price\": 0,\n  \"order_type\": \"MARKET\",\n  \"mode\": \"paper\",\n  \"confirm_live\": false\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/orders/place",
+              "host": ["{{base_url}}"],
+              "path": ["orders", "place"]
+            },
+            "description": "Place a paper or live order.\n\nLive trading requires:\n- ALLOW_LIVE_TRADING=true in .env\n- confirm_live: true in request body\n- Active Upstox broker connection\n\nSupports Idempotency-Key header to prevent duplicate orders within a 5-minute window."
+          }
+        }
+      ]
+    },
+    {
+      "name": "📒 Records",
+      "item": [
+        {
+          "name": "List Trades",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/trades?desk=equity",
+              "host": ["{{base_url}}"],
+              "path": ["trades"],
+              "query": [{ "key": "desk", "value": "equity", "description": "equity | options | mutual_funds (optional)" }]
+            },
+            "description": "Returns all trades for the current user, ordered by opened_at DESC. Optionally filter by desk."
+          }
+        },
+        {
+          "name": "List Orders",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/orders?desk=equity",
+              "host": ["{{base_url}}"],
+              "path": ["orders"],
+              "query": [{ "key": "desk", "value": "equity", "description": "equity | options | mutual_funds (optional)" }]
+            },
+            "description": "Returns all orders for the current user, ordered by created_at DESC. Optionally filter by desk."
+          }
+        },
+        {
+          "name": "List Logs",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/logs?desk=equity",
+              "host": ["{{base_url}}"],
+              "path": ["logs"],
+              "query": [{ "key": "desk", "value": "equity", "description": "equity | options | mutual_funds (optional)" }]
+            },
+            "description": "Returns the last 500 log entries for the current user, ordered by created_at DESC. Optionally filter by desk."
           }
         }
       ]
