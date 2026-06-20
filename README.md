@@ -32,7 +32,7 @@
 - 📡 **WebSocket** live ticks (simulated by default; pluggable to Upstox feed)
 - 🧾 Trades, orders, signals, errors all stored in **logs**
 - 🟢 **Paper mode by default** · 🔴 Live mode requires explicit per-order confirmation **and** server-side flag
-- 🔑 Supabase magic-link auth + Upstox OAuth broker connection
+- 🔑 JWT auth + Upstox OAuth broker connection
 - 🧰 Strategy templates (RSI breakout, EMA crossover, VWAP reversal, Supertrend, level breakout)
 - 🗂️ Duplicate / draft / activate flow
 
@@ -48,8 +48,6 @@ packages/
   types/       # Shared TS types (StrategyJSON, rows, etc.)
   ui/          # Reusable React UI primitives (Button, Card, Badge…)
   utils/       # validateStrategy, describeStrategy, templates, constants
-supabase/
-  schema.sql   # Tables + RLS policies
 ```
 
 ---
@@ -59,9 +57,10 @@ supabase/
 | Layer | Technology |
 |---|---|
 | **Frontend** | Next.js 16 (App Router), React 19, TypeScript 6, Tailwind CSS 3, Zustand 4 |
-| **Backend** | FastAPI 0.131+, Python **3.14t** (free-threaded / No-GIL), Pydantic v2 |
+| **Backend** | FastAPI 0.131+, Python 3.14t (free-threaded / No-GIL), Pydantic v2 |
 | **Data** | pandas 2.3+, numpy 2.2+ (No-GIL builds), websockets 14+ |
-| **Auth / DB** | Supabase (magic-link auth + Postgres + RLS), PyJWT |
+| **Auth** | JWT (PyJWT), single-user Basic Auth |
+| **Database** | MySQL (PyMySQL), MongoDB, QuestDB, Redis |
 | **Broker** | Upstox v2 REST + OAuth (optional; falls back to simulator) |
 | **Runtime** | Node ≥ 22.17.1 |
 
@@ -75,8 +74,6 @@ supabase/
 npm install
 ```
 
-This sets up `apps/web` + the `packages/*` workspaces.
-
 ### 2. Install API deps
 
 ```bash
@@ -85,35 +82,69 @@ python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-> **Python 3.14t (free-threaded)** is required. Download it from [python.org](https://www.python.org/downloads/) or use `pyenv`.
+> **Python 3.14t (free-threaded)** is required. Download from [python.org](https://www.python.org/downloads/) or use `pyenv`.
 
 ### 3. Configure env
 
+The project uses two env files at the repo root:
+
+| File | When used |
+|---|---|
+| `.env.local` | Local machine → connects to **remote host** (`209.182.232.165`) |
+| `.env.prod` | Remote host → connects to **localhost** (services run on the same machine) |
+
+Copy the example to get started:
+
 ```bash
-cp .env.example .env
-# Fill in Supabase URL / keys, Upstox client id / secret if you have them.
+cp .env.example .env.local   # local dev
+cp .env.example .env.prod    # production server (update hosts to localhost)
 ```
 
-The app works **without** Supabase or Upstox: the API falls back to an
-in-memory store and a simulated tick stream so you can develop the UI offline.
+**Env file is selected automatically** — no manual step needed:
 
-### 4. Apply Supabase schema (when ready)
+| Scenario | Env loaded |
+|---|---|
+| Running on `209.182.232.165` | `.env.prod` |
+| Running on any other machine | `.env.local` |
+| `APP_ENV=prod` is set | `.env.prod` (explicit override) |
 
-In the Supabase SQL editor, run `supabase/schema.sql`. It creates:
-`strategies`, `trades`, `orders`, `logs`, `broker_accounts` with row-level
-security so each user only sees their own rows.
-
-### 5. Run the dev servers
+### 4. Run the dev servers
 
 ```bash
-# Terminal 1 — API
+# Terminal 1 — API  (auto-detects env)
 npm run api
 
-# Terminal 2 — Web
+# Terminal 2 — Web  (auto-detects env)
 npm run dev
 ```
 
-Open <http://localhost:3000>.
+Force production env from any machine:
+
+```bash
+npm run api --prod
+npm run dev --prod
+
+# Or with uvicorn directly:
+APP_ENV=prod uvicorn app.main:app --reload
+```
+
+> Both `npm run api` and `uvicorn app.main:app` read the same `APP_ENV` variable,
+> so you get identical behaviour regardless of how you launch the API.
+
+On startup the API prints a **connection status banner**:
+
+```
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  Signal AI — Service Connection Status
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  MySQL    209.182.232.165:3306      ●  CONNECTED   db=stocks  user=edr
+  Redis    209.182.232.165:6379      ●  CONNECTED   PONG
+  MongoDB  209.182.232.165:27017     ●  CONNECTED   db=stocks
+  QuestDB  209.182.232.165:9009      ●  CONNECTED   TCP reachable
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+```
+
+Open <http://localhost:3003>.
 
 ---
 
@@ -134,7 +165,7 @@ running engine.
 
 ## 🧠 Strategy JSON
 
-Stored as a single JSONB column in the `strategies` table. Versioned via the
+Stored as a single JSON column in the `strategies` table. Versioned via the
 top-level `version` field so the schema can evolve safely.
 
 ```jsonc
@@ -175,16 +206,6 @@ top-level `version` field so the schema can evolve safely.
 }
 ```
 
-Validation rules are enforced **both** in `packages/utils/validateStrategy`
-and `apps/api/app/validation.py`:
-
-- name + index + option type + strike + action + candle time required
-- quantity > 0
-- ≥ 1 entry condition (≤ 2 indicator conditions)
-- ≥ 1 exit condition, **stop loss is mandatory**
-- max daily loss > 0, auto square-off time set
-- live trading also requires a connected broker
-
 ---
 
 ## 🔌 API surface
@@ -216,23 +237,13 @@ WS     /ws                       # live ticks (simulated by default)
 
 ## 🧱 Architecture decisions
 
-- **Single `strategy_json` JSONB column** with a versioned schema → painless
-  migrations, no normalised join tables for every condition.
-- **Validation logic shared TS ↔ Python** so the UI fails fast and the API
-  is still authoritative.
-- **Indicator engine is pure pandas/numpy** – the same code paths run for
-  backtests and live paper trading; no duplication.
-- **Python 3.14t (free-threaded)** – pandas 2.3+ and numpy 2.2+ No-GIL builds
-  allow the indicator and paper engine to release the GIL for true multi-core
-  concurrency without extra processes.
-- **Live trading is gated by 4 independent layers** (env flag, strategy mode,
-  per-order confirmation, broker presence) instead of a single boolean.
-- **In-memory Supabase fallback** keeps the API usable offline so you can
-  build/demo the UI without setting up Supabase.
-- **Row-level security** in Postgres means a misconfigured frontend can never
-  leak strategies between users.
-- **Pluggable WS feed** – default is a deterministic simulator; swap with
-  Upstox `MarketDataFeed` by replacing `_broadcast_loop`.
+- **Single `strategy_json` column** with a versioned schema → painless migrations, no normalised join tables for every condition.
+- **Validation logic shared TS ↔ Python** so the UI fails fast and the API is still authoritative.
+- **Indicator engine is pure pandas/numpy** – the same code paths run for backtests and live paper trading.
+- **Python 3.14t (free-threaded)** – pandas 2.3+ and numpy 2.2+ No-GIL builds allow true multi-core concurrency without extra processes.
+- **Live trading is gated by 4 independent layers** (env flag, strategy mode, per-order confirmation, broker presence).
+- **Auto env detection** – `config.py` picks `.env.prod` or `.env.local` based on machine IP or `APP_ENV`, so the same codebase runs everywhere without manual switching.
+- **Pluggable WS feed** – default is a deterministic simulator; swap with Upstox `MarketDataFeed` by replacing `_broadcast_loop`.
 
 ---
 
@@ -253,3 +264,4 @@ WS     /ws                       # live ticks (simulated by default)
 Signal AI is provided **for educational purposes only**. Markets involve
 substantial risk; past performance is not indicative of future results. You
 are solely responsible for any orders placed through your broker connection.
+

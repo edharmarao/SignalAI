@@ -29,6 +29,92 @@ from .routers.auth import router as auth_router
 logger = logging.getLogger("signal_ai")
 _START_TIME = time.time()
 
+# ANSI colours for terminal output
+_GREEN  = "\033[92m"
+_RED    = "\033[91m"
+_YELLOW = "\033[93m"
+_CYAN   = "\033[96m"
+_BOLD   = "\033[1m"
+_RESET  = "\033[0m"
+
+
+def _print_connection_status() -> None:
+    """Print a startup banner showing connection status for all services."""
+    s = get_settings()
+
+    results: list[tuple[str, str, str, bool]] = []  # (service, host, detail, ok)
+
+    # ── MySQL ──────────────────────────────────────────────────────────────
+    try:
+        import pymysql
+        conn = pymysql.connect(
+            host=s.mysql_host, port=s.mysql_port,
+            user=s.mysql_user, password=s.mysql_password,
+            database=s.mysql_database, connect_timeout=3,
+        )
+        conn.close()
+        results.append(("MySQL   ", f"{s.mysql_host}:{s.mysql_port}", f"db={s.mysql_database}  user={s.mysql_user}", True))
+    except Exception as e:
+        results.append(("MySQL   ", f"{s.mysql_host}:{s.mysql_port}", str(e)[:60], False))
+
+    # ── Redis ──────────────────────────────────────────────────────────────
+    try:
+        import redis as _redis
+        r = _redis.Redis(
+            host=s.redis_host, port=s.redis_port,
+            password=s.redis_password or None,
+            socket_connect_timeout=3,
+        )
+        r.ping()
+        r.close()
+        results.append(("Redis   ", f"{s.redis_host}:{s.redis_port}", "PONG", True))
+    except Exception as e:
+        results.append(("Redis   ", f"{s.redis_host}:{s.redis_port}", str(e)[:60], False))
+
+    # ── MongoDB (optional) ─────────────────────────────────────────────────
+    try:
+        import importlib
+        pymongo = importlib.import_module("pymongo")
+        mongo_host = getattr(s, "mongodb_host", None) or "localhost"
+        mongo_port = int(getattr(s, "mongodb_port", 27017))
+        mongo_db   = getattr(s, "mongodb_db_name", "stocks")
+        client = pymongo.MongoClient(
+            host=mongo_host, port=mongo_port,
+            serverSelectionTimeoutMS=3000,
+        )
+        client.server_info()
+        client.close()
+        results.append(("MongoDB ", f"{mongo_host}:{mongo_port}", f"db={mongo_db}", True))
+    except ModuleNotFoundError:
+        results.append(("MongoDB ", "n/a", "pymongo not installed — skipped", False))
+    except Exception as e:
+        mongo_host = getattr(s, "mongodb_host", "localhost")
+        mongo_port = getattr(s, "mongodb_port", 27017)
+        results.append(("MongoDB ", f"{mongo_host}:{mongo_port}", str(e)[:60], False))
+
+    # ── QuestDB (TCP ping) ─────────────────────────────────────────────────
+    try:
+        import socket
+        quest_host = getattr(s, "questdb_host", "localhost")
+        quest_port = int(getattr(s, "questdb_port", 9009))
+        with socket.create_connection((quest_host, quest_port), timeout=3):
+            pass
+        results.append(("QuestDB ", f"{quest_host}:{quest_port}", "TCP reachable", True))
+    except Exception as e:
+        quest_host = getattr(s, "questdb_host", "localhost")
+        quest_port = getattr(s, "questdb_port", 9009)
+        results.append(("QuestDB ", f"{quest_host}:{quest_port}", str(e)[:60], False))
+
+    # ── Print banner ───────────────────────────────────────────────────────
+    width = 72
+    print(f"\n{_BOLD}{_CYAN}{'━' * width}{_RESET}")
+    print(f"{_BOLD}{_CYAN}  Signal AI — Service Connection Status{_RESET}")
+    print(f"{_BOLD}{_CYAN}{'━' * width}{_RESET}")
+    for service, host, detail, ok in results:
+        status = f"{_GREEN}●  CONNECTED{_RESET}" if ok else f"{_RED}✗  FAILED   {_RESET}"
+        print(f"  {_BOLD}{service}{_RESET}  {host:<26}  {status}  {detail}")
+    print(f"{_BOLD}{_CYAN}{'━' * width}{_RESET}\n")
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -43,6 +129,8 @@ async def lifespan(app: FastAPI):
     )
     if settings.allow_live_trading:
         logger.warning("LIVE TRADING IS ENABLED — real orders will be placed!")
+
+    _print_connection_status()
 
     # Pre-warm NSE instrument map in background (downloads Upstox CSV)
     import threading

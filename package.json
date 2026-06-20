@@ -7,10 +7,10 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "lsof -ti:${PORT:-3003} | xargs kill -9 2>/dev/null; npm run dev --workspace apps/web",
+    "dev": "REMOTE_HOST=209.182.232.165; CURRENT_IP=$(hostname -I 2>/dev/null | awk '{print $1}' || ipconfig getifaddr en0 2>/dev/null); ENV_FILE=$([ \"$npm_config_prod\" = 'true' ] && echo .env.prod || [ \"$CURRENT_IP\" = \"$REMOTE_HOST\" ] && echo .env.prod || echo .env.local); echo \"[dev] Using $ENV_FILE\"; set -a && source $ENV_FILE && set +a; PORT_TO_KILL=${PORT:-3003}; lsof -ti:$PORT_TO_KILL | xargs kill -9 2>/dev/null && echo \"[dev] Killed process on port $PORT_TO_KILL\" || true; npm run dev --workspace apps/web",
     "build": "npm run build --workspace apps/web",
     "lint": "npm run lint --workspaces --if-present",
-    "api": "lsof -ti:${API_PORT:-8003} | xargs kill -9 2>/dev/null; cd apps/api && uvicorn app.main:app --reload --port ${API_PORT:-8003}"
+    "api": "APP_ENV=$([ \"$npm_config_prod\" = 'true' ] && echo prod || echo ''); export APP_ENV; PORT_TO_KILL=8003; lsof -ti:$PORT_TO_KILL | xargs kill -9 2>/dev/null && echo \"[api] Killed process on port $PORT_TO_KILL\" || true; cd apps/api && uvicorn app.main:app --reload --host 0.0.0.0 --port $PORT_TO_KILL"
   },
   "engines": {
     "node": ">=22.17.1"

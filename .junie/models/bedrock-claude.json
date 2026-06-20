@@ -1,8 +1,0 @@
-{
-  "id": "bedrock-claude-4-6",
-  "name": "AWS Bedrock Claude Sonnet 4.6",
-  "provider": "bedrock",
-  "model": "us.anthropic.claude-sonnet-4-6",
-  "region": "us-east-1",
-  "profile": "gamekit-next-aq-prod-aws-bedrock-136172187201"
-}
