@@ -1,4 +1,5 @@
 "use client";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
@@ -140,38 +141,63 @@ export default function Sidebar() {
   const path = usePathname() ?? "/";
   const desk = currentDesk(path);
   const nav = navForDesk(desk);
+  const [collapsed, setCollapsed] = useState(false);
+
+  // Persist + broadcast collapse state
+  useEffect(() => {
+    const stored = localStorage.getItem("sidebar-collapsed");
+    if (stored === "1") setCollapsed(true);
+  }, []);
+
+  function toggle() {
+    const next = !collapsed;
+    setCollapsed(next);
+    localStorage.setItem("sidebar-collapsed", next ? "1" : "0");
+    window.dispatchEvent(new CustomEvent("sidebar-toggle", { detail: { collapsed: next } }));
+  }
 
   return (
-    <aside className="w-60 shrink-0 bg-slate-950/80 border-r border-slate-800 p-4 hidden md:flex flex-col">
-      {/* Logo */}
-      <Link href="/" className="flex items-center gap-2 mb-6 px-2">
-        <div className="w-9 h-9 shrink-0 rounded-lg bg-gradient-to-br from-emerald-400 via-emerald-500 to-sky-500 flex items-center justify-center shadow-lg shadow-emerald-500/30 ring-1 ring-white/10">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.25" strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5 text-slate-950">
-            <path d="M3 14l3.5-3.5 3 3L14 8l3 4 4-5" />
-            <circle cx="14" cy="8" r="1.6" fill="currentColor" stroke="none" />
-          </svg>
-        </div>
-        <div className="font-semibold tracking-tight text-slate-100">
-          Signal <span className="text-emerald-400">AI</span>
-        </div>
-      </Link>
+    <aside className={`shrink-0 bg-slate-950/80 border-r border-slate-800 hidden md:flex flex-col transition-all duration-200 ${collapsed ? "w-14 p-2" : "w-60 p-4"}`}>
+      {/* Logo + collapse button row */}
+      <div className={`flex items-center mb-6 ${collapsed ? "justify-center" : "justify-between px-2"}`}>
+        <Link href="/" className="flex items-center gap-2">
+          <div className="w-9 h-9 shrink-0 rounded-lg bg-gradient-to-br from-emerald-400 via-emerald-500 to-sky-500 flex items-center justify-center shadow-lg shadow-emerald-500/30 ring-1 ring-white/10">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.25" strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5 text-slate-950">
+              <path d="M3 14l3.5-3.5 3 3L14 8l3 4 4-5" />
+              <circle cx="14" cy="8" r="1.6" fill="currentColor" stroke="none" />
+            </svg>
+          </div>
+          {!collapsed && <div className="font-semibold tracking-tight text-slate-100">Signal <span className="text-emerald-400">AI</span></div>}
+        </Link>
+        {!collapsed && (
+          <button onClick={toggle} title="Collapse sidebar"
+            className="w-7 h-7 rounded-md flex items-center justify-center text-slate-500 hover:text-slate-200 hover:bg-slate-800 transition-colors">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
+              <path d="M11 19l-7-7 7-7M21 19l-7-7 7-7" />
+            </svg>
+          </button>
+        )}
+        {collapsed && (
+          <button onClick={toggle} title="Expand sidebar"
+            className="w-7 h-7 rounded-md flex items-center justify-center text-slate-500 hover:text-slate-200 hover:bg-slate-800 transition-colors mt-1">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
+              <path d="M13 5l7 7-7 7M3 5l7 7-7 7" />
+            </svg>
+          </button>
+        )}
+      </div>
 
       {/* Desk switcher */}
       <div className="mb-5">
-        <div className="text-[10px] uppercase text-slate-500 px-2 mb-2 tracking-wider">Section</div>
+        {!collapsed && <div className="text-[10px] uppercase text-slate-500 px-2 mb-2 tracking-wider">Section</div>}
         <div className="flex flex-col gap-1">
           {DESKS.map(({ id, emoji, label }) => (
-            <Link
-              key={id}
-              href={`/${id}`}
-              className={`flex items-center gap-2 px-3 py-2 rounded-md text-sm border transition ${
-                desk === id
-                  ? DESK_TAB[id]
-                  : "border-transparent text-slate-400 hover:text-slate-100 hover:bg-slate-800/60"
-              }`}
-            >
+            <Link key={id} href={`/${id}`} title={collapsed ? label : undefined}
+              className={`flex items-center gap-2 rounded-md text-sm border transition ${collapsed ? "justify-center p-2" : "px-3 py-2"} ${
+                desk === id ? DESK_TAB[id] : "border-transparent text-slate-400 hover:text-slate-100 hover:bg-slate-800/60"
+              }`}>
               <span>{emoji}</span>
-              <span className="font-medium">{label}</span>
+              {!collapsed && <span className="font-medium">{label}</span>}
             </Link>
           ))}
         </div>
@@ -185,15 +211,12 @@ export default function Sidebar() {
           const isActive = n.href === `/${desk}` ? path === n.href : path?.startsWith(n.href);
           const Icon = n.icon;
           return (
-            <Link
-              key={n.href}
-              href={n.href}
-              className={`flex items-center gap-3 px-3 py-2 rounded-md text-sm transition ${
+            <Link key={n.href} href={n.href} title={collapsed ? n.label : undefined}
+              className={`flex items-center gap-3 rounded-md text-sm transition ${collapsed ? "justify-center p-2" : "px-3 py-2"} ${
                 isActive ? `${DESK_ACTIVE_LINK[desk]} font-medium` : "text-slate-300 hover:bg-slate-800/60 hover:text-slate-100"
-              }`}
-            >
+              }`}>
               <Icon className={`w-4 h-4 shrink-0 ${isActive ? DESK_ACTIVE_ICON[desk] : "text-slate-400"}`} />
-              <span>{n.label}</span>
+              {!collapsed && <span>{n.label}</span>}
             </Link>
           );
         })}
@@ -201,28 +224,22 @@ export default function Sidebar() {
 
       {/* Charts + Settings */}
       <div className="mt-4 border-t border-slate-800 pt-4 flex flex-col gap-1">
-        <Link
-          href="/charts"
-          className={`flex items-center gap-3 px-3 py-2 rounded-md text-sm transition ${
-            path.startsWith("/charts")
-              ? "bg-amber-500/10 text-amber-300"
-              : "text-slate-400 hover:bg-slate-800/60 hover:text-slate-100"
-          }`}
-        >
+        <Link href="/charts" title={collapsed ? "Charts" : undefined}
+          className={`flex items-center gap-3 rounded-md text-sm transition ${collapsed ? "justify-center p-2" : "px-3 py-2"} ${
+            path.startsWith("/charts") ? "bg-amber-500/10 text-amber-300" : "text-slate-400 hover:bg-slate-800/60 hover:text-slate-100"
+          }`}>
           <I.charts className={`w-4 h-4 shrink-0 ${path.startsWith("/charts") ? "text-amber-400" : "text-slate-400"}`} />
-          <span>Charts</span>
+          {!collapsed && <span>Charts</span>}
         </Link>
-        <Link
-          href="/settings"
-          className={`flex items-center gap-3 px-3 py-2 rounded-md text-sm transition ${
+        <Link href="/settings" title={collapsed ? "Settings" : undefined}
+          className={`flex items-center gap-3 rounded-md text-sm transition ${collapsed ? "justify-center p-2" : "px-3 py-2"} ${
             path.startsWith("/settings") ? "bg-slate-800 text-slate-100" : "text-slate-400 hover:bg-slate-800/60 hover:text-slate-100"
-          }`}
-        >
+          }`}>
           <I.settings className="w-4 h-4 shrink-0" />
-          <span>Settings</span>
+          {!collapsed && <span>Settings</span>}
         </Link>
       </div>
-      <div className="text-[10px] text-slate-500 px-2 mt-3">v0.1.0</div>
+      {!collapsed && <div className="text-[10px] text-slate-500 px-2 mt-3">v0.1.0</div>}
     </aside>
   );
 }

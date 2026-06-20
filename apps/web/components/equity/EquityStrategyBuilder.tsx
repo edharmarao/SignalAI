@@ -779,19 +779,25 @@ function TradeDetailModal({ trade, symbol, tf, conds, sl, tp, tsl, exitMode, act
       .finally(() => setLoading(false));
   }, [trade, symbol, tf]);
 
-  // Build chart once candles loaded
+  // Build chart once candles loaded — fires after DOM update so chartRef is always present
   useEffect(() => {
     const el = chartRef.current;
     if (!el || candles.length === 0) return;
 
-    const chart = createChart(el, {
-      width: el.clientWidth, height: el.clientHeight,
-      layout: { background: { type: ColorType.Solid, color: "#0e1117" }, textColor: "#9598a1", fontSize: 11 },
-      grid: { vertLines: { color: "#1e222d" }, horzLines: { color: "#1e222d" } },
-      crosshair: { mode: CrosshairMode.Normal },
-      timeScale: { borderColor: "#2a2e39", timeVisible: true },
-      rightPriceScale: { borderColor: "#2a2e39" },
-    });
+    // Give browser one frame to size the element before creating chart
+    const frame = requestAnimationFrame(() => {
+      if (!chartRef.current) return;
+      const width  = el.clientWidth  || el.offsetWidth  || 800;
+      const height = el.clientHeight || el.offsetHeight || 420;
+
+      const chart = createChart(el, {
+        width, height,
+        layout: { background: { type: ColorType.Solid, color: "#0e1117" }, textColor: "#9598a1", fontSize: 11 },
+        grid: { vertLines: { color: "#1e222d" }, horzLines: { color: "#1e222d" } },
+        crosshair: { mode: CrosshairMode.Normal },
+        timeScale: { borderColor: "#2a2e39", timeVisible: true },
+        rightPriceScale: { borderColor: "#2a2e39" },
+      });
 
     // ── Candlestick series ────────────────────────────────────────────────────
     const cs = chart.addSeries(CandlestickSeries, {
@@ -848,9 +854,12 @@ function TradeDetailModal({ trade, symbol, tf, conds, sl, tp, tsl, exitMode, act
     // ── Zoom to trade window ──────────────────────────────────────────────────
     chart.timeScale().setVisibleRange({ from: (entryTs - 86400 * 5) as UTCTimestamp, to: (exitTs + 86400 * 5) as UTCTimestamp });
 
-    const ro = new ResizeObserver(() => { chart.applyOptions({ width: el.clientWidth, height: el.clientHeight }); });
+    const ro = new ResizeObserver(() => { chart.applyOptions({ width: el.clientWidth || 800, height: el.clientHeight || 420 }); });
     ro.observe(el);
     return () => { ro.disconnect(); chart.remove(); };
+    }); // end requestAnimationFrame
+
+    return () => { cancelAnimationFrame(frame); };
   }, [candles, trade, inds, slPrice, tpPrice, tslPrice]);
 
   const reasonStyle: Record<string, string> = {
@@ -903,20 +912,23 @@ function TradeDetailModal({ trade, symbol, tf, conds, sl, tp, tsl, exitMode, act
           </div>
         </div>
 
-        {/* Chart */}
-        <div className="flex-1 relative min-h-0" style={{height:360}}>
-          {loading ? (
-            <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
-              <div className="w-8 h-8 rounded-full border-2 border-blue-500 border-t-transparent animate-spin"/>
-              <p className="text-xs text-slate-500">Loading candles…</p>
+        {/* Chart — always rendered so chartRef is always attached */}
+        <div style={{height: 420, position: "relative", background: "#0e1117"}}>
+          {/* Loading / empty overlay */}
+          {(loading || (!loading && candles.length === 0)) && (
+            <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3" style={{background:"#0e1117"}}>
+              {loading ? (
+                <>
+                  <div className="w-8 h-8 rounded-full border-2 border-blue-500 border-t-transparent animate-spin"/>
+                  <p className="text-xs text-slate-500">Fetching {TF_TO_TIMEFRAME[tf] ?? "daily"} candles…</p>
+                </>
+              ) : (
+                <p className="text-sm text-slate-500">No candle data for this period.</p>
+              )}
             </div>
-          ) : candles.length === 0 ? (
-            <div className="absolute inset-0 flex items-center justify-center">
-              <p className="text-sm text-slate-500">No candle data available for this period.</p>
-            </div>
-          ) : (
-            <div ref={chartRef} className="absolute inset-0" />
           )}
+          {/* Chart div is ALWAYS rendered so ref is always available */}
+          <div ref={chartRef} style={{position:"absolute", inset:0, width:"100%", height:"100%"}} />
         </div>
 
         {/* Footer legend */}
@@ -1096,6 +1108,19 @@ export default function EquityStrategyBuilder({ editId }: { editId?: string }) {
 
   const [name, setName] = useState("Untitled Strategy");
   const nameRef = useRef<HTMLHeadingElement>(null);
+
+  // Sidebar width tracking (responsive to collapse)
+  const [sidebarLeft, setSidebarLeft] = useState(240);
+  useEffect(() => {
+    const stored = localStorage.getItem("sidebar-collapsed");
+    if (stored === "1") setSidebarLeft(56);
+    const handler = (e: Event) => {
+      const evt = e as CustomEvent<{collapsed: boolean}>;
+      setSidebarLeft(evt.detail.collapsed ? 56 : 240);
+    };
+    window.addEventListener("sidebar-toggle", handler);
+    return () => window.removeEventListener("sidebar-toggle", handler);
+  }, []);
 
   const [instruments, setInstruments] = useState<string[]>(["SBIN"]);
   const [active, setActive] = useState("SBIN");
@@ -1337,7 +1362,7 @@ export default function EquityStrategyBuilder({ editId }: { editId?: string }) {
   };
 
   return (
-    <div className="fixed flex flex-col" style={{top:60,left:240,right:0,bottom:0,zIndex:5,background:"#131722"}}>
+    <div className="fixed flex flex-col" style={{top:60,left:sidebarLeft,right:0,bottom:0,zIndex:5,background:"#131722",transition:"left 0.2s"}}>
 
       {/* ── CHART HEADER: instruments + price + TF + buy/sell ─────────────── */}
       <div className="flex items-center justify-between px-4 py-2 border-b shrink-0" style={{borderColor:"#2a2e39",background:"#131722"}}>
