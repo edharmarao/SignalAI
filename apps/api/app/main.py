@@ -110,6 +110,15 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.warning("Could not ensure stock data tables: %s", exc)
 
+    # Seed NSE index symbol membership table in background
+    def _seed_indexes():
+        try:
+            from .migrations.seed_index_symbols import run_seed
+            run_seed()
+        except Exception as exc:
+            logger.warning("Could not seed nse_symbol_indexes: %s", exc)
+    threading.Thread(target=_seed_indexes, daemon=True).start()
+
     yield
     logger.info("Signal AI API shutting down")
 

@@ -2,10 +2,6 @@ node_modules
 .next
 dist
 build
-# Both env files contain credentials — never commit them
-# Copy .env.example to .env after cloning and fill in your values
-.env
-.env.prod
 .env.local
 .env.*.local
 *.log

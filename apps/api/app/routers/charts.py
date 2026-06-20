@@ -23,7 +23,7 @@ import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
-from ..db import db_query
+from ..db import db_execute, db_query, db_upsert
 from ..deps import optional_user, get_current_user
 from ..services.upstox import TIMEFRAME_TO_UPSTOX, UpstoxClient
 
@@ -31,12 +31,25 @@ from ..services.upstox import TIMEFRAME_TO_UPSTOX, UpstoxClient
 logger = logging.getLogger("signal_ai")
 router = APIRouter(prefix="/charts", tags=["charts"])
 
-Timeframe = Literal["5m", "15m", "1D", "1W", "1M", "1Y"]
+Timeframe = Literal["5m", "15m", "1D", "1W", "1M", "1Y", "1H"]
 
 # ── Timeframe → stock_data_* table ───────────────────────────────────────────
+# Keys include both /charts/candles Literal values AND the string aliases sent
+# by the frontend TF_TO_TIMEFRAME mapping (e.g. "daily", "5min", "75min").
 _TF_TABLE: dict[str, str] = {
+    # Frontend TF_TO_TIMEFRAME aliases (what indicator-backtest receives)
+    "daily":   "stock_data_daily",
+    "weekly":  "stock_data_weekly",
+    "monthly": "stock_data_monthly",
+    "75min":   "stock_data_75min",
+    "15min":   "stock_data_15min",
+    "5min":    "stock_data_5min",
+    "25min":   "stock_data_25min",
+    "125min":  "stock_data_125min",
+    # /charts/candles Literal keys
     "5m":  "stock_data_5min",
     "15m": "stock_data_15min",
+    "1H":  "stock_data_75min",
     "1D":  "stock_data_daily",
     "1W":  "stock_data_weekly",
     "1M":  "stock_data_monthly",
@@ -348,6 +361,142 @@ def _run_indicator_backtest(
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
+
+# ── Index column name mapping ─────────────────────────────────────────────────
+_INDEX_COL: dict[str, str] = {
+    "n50":        "n50",
+    "next50":     "next50",
+    "n100":       "n100",
+    "midcap150":  "midcap150",
+    "midcap250":  "midcap250",
+    "smallcap250":"smallcap250",
+    "n500":       "n500",
+    "microcap250":"microcap250",
+    "fo":         "fo",
+}
+
+# Fallback hardcoded lists (used if nse_symbol_indexes table is not yet seeded)
+from ..migrations.seed_index_symbols import (
+    NIFTY_50, NIFTY_NEXT_50, NIFTY_MIDCAP_150,
+    NIFTY_SMALLCAP_250, NIFTY_MICROCAP_250, NSE_FO,
+)
+_FALLBACK: dict[str, list[str]] = {
+    "n50":        NIFTY_50,
+    "next50":     NIFTY_NEXT_50,
+    "n100":       NIFTY_50 + NIFTY_NEXT_50,
+    "midcap150":  NIFTY_MIDCAP_150,
+    "midcap250":  NIFTY_MIDCAP_150 + NIFTY_SMALLCAP_250[:100],
+    "smallcap250":NIFTY_SMALLCAP_250,
+    "n500":       NIFTY_50 + NIFTY_NEXT_50 + NIFTY_MIDCAP_150 + NIFTY_SMALLCAP_250,
+    "microcap250":NIFTY_MICROCAP_250,
+    "fo":         NSE_FO,
+}
+
+
+@router.get("/index-symbols")
+def get_index_symbols(
+    index: str = Query("n50",
+        description="n50 | next50 | n100 | midcap150 | midcap250 | smallcap250 | n500 | microcap250"),
+):
+    """Return NSE index constituent symbols with metadata.
+    Primary source: nse_symbol_indexes DB table (seeded on startup).
+    Falls back to hardcoded lists if table is not yet ready.
+    """
+    idx = index.lower()
+    col = _INDEX_COL.get(idx)
+    if not col:
+        raise HTTPException(400, f"Unknown index '{index}'. Choose from: {list(_INDEX_COL)}")
+
+    try:
+        rows = db_query(
+            f"SELECT symbol, script_name "
+            f"FROM nse_symbol_indexes "
+            f"WHERE `{col}` = 1 ORDER BY symbol"
+        )
+        if rows:
+            return {
+                "index": idx,
+                "count": len(rows),
+                "symbols": [r["symbol"] for r in rows],
+                "details": [{"symbol": r["symbol"], "name": r.get("script_name") or ""} for r in rows],
+                "source": "db",
+            }
+    except Exception as exc:
+        logger.warning("nse_symbol_indexes query failed (%s) — using fallback", exc)
+
+    # Fallback to hardcoded
+    symbols = _FALLBACK.get(idx, NIFTY_50)
+    return {
+        "index": idx,
+        "count": len(symbols),
+        "symbols": symbols,
+        "details": [{"symbol": s, "name": "", "sector": ""} for s in symbols],
+        "source": "fallback",
+    }
+
+
+@router.get("/all-indexes")
+def get_all_indexes():
+    """Return all index membership for every symbol — useful for building a symbol browser."""
+    try:
+        rows = db_query(
+            "SELECT symbol, script_name, "
+            "n50, next50, n100, midcap150, midcap250, "
+            "smallcap250, n500, microcap250, fo "
+            "FROM nse_symbol_indexes ORDER BY symbol"
+        )
+        result = []
+        for r in rows:
+            indexes = []
+            for col in ("n50","next50","n100","midcap150","midcap250","smallcap250","n500","microcap250","fo"):
+                if r.get(col):
+                    indexes.append(col)
+            result.append({
+                "symbol": r["symbol"],
+                "name":   r.get("script_name") or "",
+                "indexes": indexes,
+            })
+        return {"count": len(result), "symbols": result}
+    except Exception as exc:
+        logger.error("all-indexes query failed: %s", exc)
+        raise HTTPException(500, str(exc))
+
+
+@router.post("/reseed-indexes")
+def reseed_indexes(user=Depends(get_current_user)):
+    """Force re-seed nse_symbol_indexes table (admin use)."""
+    import threading
+    from ..migrations.seed_index_symbols import run_seed
+    threading.Thread(target=lambda: run_seed(force=True), daemon=True).start()
+    return {"status": "seeding started in background"}
+
+
+@router.post("/update-script-names")
+def update_script_names(payload: dict, user=Depends(get_current_user)):
+    """Bulk update script_name in nse_symbol_indexes and company_name in nse_eq_symbols.
+    Body: { "names": { "SYMBOL": "Company Name", ... } }
+    Uses executemany for efficiency with remote DB.
+    """
+    from ..db import _db
+    names: dict[str, str] = payload.get("names", {})
+    if not names:
+        raise HTTPException(400, "Provide { names: { SYMBOL: name } }")
+    pairs = [(name, sym) for sym, name in names.items()]
+    eq_updated = 0
+    idx_updated = 0
+    try:
+        with _db() as conn:
+            with conn.cursor() as cur:
+                cur.executemany("UPDATE nse_eq_symbols SET company_name=%s WHERE symbol=%s", pairs)
+                eq_updated = cur.rowcount
+                cur.executemany("UPDATE nse_symbol_indexes SET script_name=%s WHERE symbol=%s", pairs)
+                idx_updated = cur.rowcount
+    except Exception as exc:
+        logger.warning("bulk name update failed: %s", exc)
+        raise HTTPException(500, f"DB error: {exc}")
+    return {"eq_updated": eq_updated, "idx_updated": idx_updated, "total": len(names)}
+
+
 
 @router.get("/symbols")
 def list_chart_symbols():

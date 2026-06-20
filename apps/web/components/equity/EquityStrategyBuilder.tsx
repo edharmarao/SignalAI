@@ -175,8 +175,9 @@ function activeInds(conds: ECond[]) {
 
 
 // ── TradingChart ──────────────────────────────────────────────────────────────
-function TradingChart({ ohlcv, conds, trades, action }: {
+function TradingChart({ ohlcv, conds, trades, action, focusTrade }: {
   ohlcv: OHLCVRow[]; conds: ECond[]; trades?: Trade[]; action?: "BUY"|"SELL";
+  focusTrade?: Trade | null;
 }) {
   const mainRef = useRef<HTMLDivElement>(null);
   const rsiRef = useRef<HTMLDivElement>(null);
@@ -440,6 +441,17 @@ function TradingChart({ ohlcv, conds, trades, action }: {
     };
   }, [ohlcv, seriesData, hasRSI, hasMACD, rsiData, macdData, trades, action]);
 
+  // ── Zoom to focused trade when one is selected ──────────────────────────
+  useEffect(() => {
+    if (!focusTrade || !chartRefs.current.main) return;
+    const pad = 10 * 86400; // 10 day padding each side
+    const from = (Math.floor(new Date(focusTrade.entryDate + "T00:00:00Z").getTime() / 1000) - pad) as UTCTimestamp;
+    const to   = (Math.floor(new Date(focusTrade.exitDate  + "T23:59:59Z").getTime() / 1000) + pad) as UTCTimestamp;
+    try { chartRefs.current.main.timeScale().setVisibleRange({ from, to }); } catch {}
+    if (chartRefs.current.rsi)  try { chartRefs.current.rsi.timeScale().setVisibleRange({ from, to });  } catch {}
+    if (chartRefs.current.macd) try { chartRefs.current.macd.timeScale().setVisibleRange({ from, to }); } catch {}
+  }, [focusTrade]);
+
   return (
     <div className="flex h-full flex-col">
       <div ref={mainRef} className="min-h-0 flex-1" />
@@ -626,6 +638,266 @@ function InstrumentRow({ instruments, active, onSwitch, onRemove, onAdd }: {
   );
 }
 
+// ── Indicator Equity Curve ────────────────────────────────────────────────────
+function IndicatorEquityCurve({ trades }: { trades: Trade[] }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || !trades.length) return;
+    const sorted = [...trades].sort((a, b) => a.entryDate.localeCompare(b.entryDate));
+    // Aggregate P&L per date (avoid duplicate timestamps)
+    const dayMap = new Map<string, number>();
+    sorted.forEach(t => dayMap.set(t.entryDate, (dayMap.get(t.entryDate) ?? 0) + t.pnl));
+    let cum = 0;
+    const lineData: {time: UTCTimestamp; value: number}[] = [];
+    const histData: {time: UTCTimestamp; value: number; color: string}[] = [];
+    [...dayMap.entries()].sort().forEach(([d, pnl]) => {
+      cum += pnl;
+      const sec = Math.floor(new Date(d + "T00:00:00Z").getTime() / 1000) as UTCTimestamp;
+      lineData.push({ time: sec, value: cum });
+      histData.push({ time: sec, value: pnl, color: pnl >= 0 ? "rgba(38,166,154,0.6)" : "rgba(239,83,80,0.6)" });
+    });
+    const chart = createChart(el, {
+      width: el.clientWidth, height: el.clientHeight,
+      layout: { background: { type: ColorType.Solid, color: "#131722" }, textColor: "#d1d4dc", fontFamily: "'Inter',ui-sans-serif", fontSize: 11 },
+      grid: { vertLines: { color: "#1e2030" }, horzLines: { color: "#1e2030" } },
+      crosshair: { mode: CrosshairMode.Normal, vertLine: { color: "#758696", width: 1 as const, labelBackgroundColor: "#1e222d" }, horzLine: { color: "#758696", width: 1 as const, labelBackgroundColor: "#1e222d" } },
+      rightPriceScale: { borderColor: "#2a2e39" },
+      timeScale: { borderColor: "#2a2e39", timeVisible: true, secondsVisible: false,
+        tickMarkFormatter: (t: UTCTimestamp) => new Date((t as number)*1000).toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", day: "2-digit", month: "short" }) },
+      localization: { priceFormatter: (p: number) => `₹${p.toFixed(0)}` },
+    });
+    const bars = chart.addSeries(HistogramSeries, { priceScaleId: "bars" });
+    chart.priceScale("bars").applyOptions({ scaleMargins: { top: 0.75, bottom: 0 } });
+    bars.setData(histData);
+    const line = chart.addSeries(LineSeries, { color: cum >= 0 ? "#26a69a" : "#ef5350", lineWidth: 2, lastValueVisible: true });
+    line.priceScale().applyOptions({ scaleMargins: { top: 0.05, bottom: 0.28 } });
+    line.setData(lineData);
+    line.createPriceLine({ price: 0, color: "#475569", lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: false, title: "" });
+    // Legend
+    el.style.position = "relative";
+    const leg = document.createElement("div");
+    leg.style.cssText = "position:absolute;top:8px;left:12px;z-index:10;pointer-events:none;font-size:11px;color:#d1d4dc;background:rgba(19,23,34,0.85);padding:4px 10px;border-radius:4px;border:1px solid #2a2e39;";
+    el.appendChild(leg);
+    chart.subscribeCrosshairMove(p => {
+      const ld = p.seriesData.get(line) as any;
+      const bd = p.seriesData.get(bars) as any;
+      if (!ld && !bd) { leg.innerHTML = ""; return; }
+      const col = (ld?.value ?? 0) >= 0 ? "#26a69a" : "#ef5350";
+      const bc = (bd?.value ?? 0) >= 0 ? "#26a69a" : "#ef5350";
+      leg.innerHTML = `<span style="color:#787b86">Equity</span> <b style="color:${col}">${ld ? `₹${ld.value.toFixed(0)}` : "—"}</b>` + (bd ? `  <span style="color:#787b86">Day P&L</span> <b style="color:${bc}">₹${bd.value.toFixed(0)}</b>` : "");
+    });
+    chart.timeScale().fitContent();
+    const ro = new ResizeObserver(() => chart.applyOptions({ width: el.clientWidth, height: el.clientHeight }));
+    ro.observe(el);
+    return () => { ro.disconnect(); if (el.contains(leg)) el.removeChild(leg); chart.remove(); };
+  }, [trades]);
+  if (!trades.length) return <div className="flex items-center justify-center h-full text-slate-600 text-xs">No trades</div>;
+  return <div ref={ref} className="w-full h-full" />;
+}
+
+// ── Monthly P&L Grid (indicator) ─────────────────────────────────────────────
+function IndicatorMonthlyGrid({ trades }: { trades: Trade[] }) {
+  const monthly = useMemo(() => {
+    const map: Record<string, { pnl: number; count: number; wins: number }> = {};
+    for (const t of trades) {
+      const d = t.entryDate.slice(0, 7); // YYYY-MM
+      if (!map[d]) map[d] = { pnl: 0, count: 0, wins: 0 };
+      map[d].pnl += t.pnl; map[d].count++; if (t.pnl > 0) map[d].wins++;
+    }
+    return Object.entries(map).sort(([a], [b]) => a.localeCompare(b));
+  }, [trades]);
+  if (!monthly.length) return null;
+  const maxAbs = Math.max(...monthly.map(([, v]) => Math.abs(v.pnl)), 1);
+  return (
+    <div>
+      <p className="text-[10px] font-bold text-[#787b86] uppercase tracking-widest mb-2">Monthly P&L</p>
+      <div className="flex flex-wrap gap-2">
+        {monthly.map(([key, v]) => {
+          const monthName = new Date(key + "-01").toLocaleDateString("en-IN", { month: "short", year: "2-digit" });
+          const intensity = Math.min(Math.abs(v.pnl) / maxAbs, 1);
+          const bg = v.pnl >= 0 ? `rgba(38,166,154,${0.08 + intensity * 0.4})` : `rgba(239,83,80,${0.08 + intensity * 0.4})`;
+          const border = v.pnl >= 0 ? "rgba(38,166,154,0.3)" : "rgba(239,83,80,0.3)";
+          const col = v.pnl >= 0 ? "#26a69a" : "#ef5350";
+          return (
+            <div key={key} className="rounded-lg p-2.5 text-center min-w-[72px]" style={{ background: bg, border: `1px solid ${border}` }}>
+              <p className="text-[9px] text-[#787b86] font-bold">{monthName}</p>
+              <p className="text-sm font-bold font-mono mt-0.5" style={{ color: col }}>{v.pnl >= 0 ? "+" : "−"}₹{Math.abs(v.pnl).toLocaleString("en-IN", { maximumFractionDigits: 0 })}</p>
+              <p className="text-[8px] text-[#787b86] mt-0.5">{v.count}t · {Math.round(v.wins / v.count * 100)}%</p>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ── Indicator Trade Log ────────────────────────────────────────────────────────
+function IndicatorTradeLog({ trades, symbol, onTradeClick, activeTrade }: {
+  trades: Trade[];
+  symbol: string;
+  onTradeClick?: (trade: Trade | null) => void;
+  activeTrade?: Trade | null;
+}) {
+  const [filter, setFilter] = useState<"all"|"win"|"loss">("all");
+  const [search, setSearch] = useState("");
+  const [sortK, setSortK] = useState<"entryDate"|"pnl"|"holdDays">("entryDate");
+  const [asc, setAsc] = useState(true);
+  const filtered = useMemo(() => {
+    let rows = [...trades];
+    if (filter === "win") rows = rows.filter(t => t.pnl > 0);
+    if (filter === "loss") rows = rows.filter(t => t.pnl <= 0);
+    if (search) rows = rows.filter(t => t.entryDate.includes(search) || t.exitReason.toLowerCase().includes(search.toLowerCase()));
+    rows.sort((a, b) => {
+      const va = a[sortK], vb = b[sortK];
+      if (va < vb) return asc ? -1 : 1;
+      if (va > vb) return asc ? 1 : -1;
+      return 0;
+    });
+    return rows;
+  }, [trades, filter, search, sortK, asc]);
+  function thClick(k: typeof sortK) { if (sortK === k) setAsc(x => !x); else { setSortK(k); setAsc(true); } }
+  const Th = ({ k, label }: { k: typeof sortK; label: string }) => (
+    <th className="pb-2 pr-3 text-left text-[10px] uppercase tracking-widest cursor-pointer hover:text-slate-300 select-none whitespace-nowrap" onClick={() => thClick(k)}>
+      {label} {sortK === k ? (asc ? "▲" : "▼") : <span className="opacity-30">⇅</span>}
+    </th>
+  );
+  const reasonStyle: Record<string, string> = {
+    SL:  "bg-[#ef5350]/20 text-[#ef5350] border-[#ef5350]/30",
+    TP:  "bg-[#26a69a]/20 text-[#26a69a] border-[#26a69a]/30",
+    TSL: "bg-amber-500/20 text-amber-400 border-amber-500/30",
+    END: "bg-slate-700 text-slate-400 border-slate-600",
+  };
+
+  // Total stats
+  const wins  = trades.filter(t => t.pnl > 0).length;
+  const total = trades.length;
+  const totalPnl = trades.reduce((a, t) => a + t.pnl, 0);
+  const avgHold  = total ? Math.round(trades.reduce((a, t) => a + t.holdDays, 0) / total) : 0;
+
+  return (
+    <div>
+      {/* Header + filters */}
+      <div className="flex items-center gap-3 mb-3 flex-wrap">
+        <p className="text-[10px] font-bold uppercase tracking-widest" style={{color:"#787b86"}}>{symbol} — Trade Log</p>
+        <div className="flex gap-1">
+          {(["all","win","loss"] as const).map(f => (
+            <button key={f} onClick={() => setFilter(f)}
+              className={`px-2.5 py-0.5 rounded-lg text-[10px] font-bold capitalize transition-all ${filter===f
+                ? f==="win"  ? "bg-[#26a69a]/20 text-[#26a69a] border border-[#26a69a]/40"
+                : f==="loss" ? "bg-[#ef5350]/20 text-[#ef5350] border border-[#ef5350]/40"
+                             : "bg-slate-700 text-slate-300 border border-slate-600"
+                : "text-[#787b86] border border-transparent hover:text-slate-300"}`}>
+              {f === "all" ? `All (${total})` : f === "win" ? `✓ Wins (${wins})` : `✗ Loss (${total - wins})`}
+            </button>
+          ))}
+        </div>
+        <span className="text-[10px]" style={{color: totalPnl >= 0 ? "#26a69a" : "#ef5350"}}>
+          Net: {totalPnl >= 0 ? "+" : ""}₹{totalPnl.toLocaleString("en-IN", {maximumFractionDigits: 0})}
+        </span>
+        <span className="text-[10px]" style={{color:"#787b86"}}>Avg hold: {avgHold}d</span>
+        <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Filter…"
+          className="ml-auto bg-[#131722] border border-[#2a2e39] rounded-lg px-3 py-0.5 text-xs text-slate-300 focus:outline-none focus:border-[#26a69a] w-28"
+          style={{background:"#131722"}} />
+        <span className="text-[10px]" style={{color:"#787b86"}}>{filtered.length} rows</span>
+      </div>
+
+      {/* Active trade detail card */}
+      {activeTrade && (
+        <div className="mb-3 rounded-xl p-3 flex flex-wrap items-center gap-4" style={{background:"rgba(41,98,255,0.08)",border:"1px solid rgba(41,98,255,0.3)"}}>
+          <div>
+            <p className="text-[9px] uppercase tracking-widest mb-0.5" style={{color:"#787b86"}}>Entry</p>
+            <p className="text-xs font-mono text-slate-200">{activeTrade.entryDate}</p>
+            <p className="text-sm font-bold font-mono text-slate-100">₹{activeTrade.entryPrice.toFixed(2)}</p>
+          </div>
+          <div className="text-[#2962ff] text-lg">→</div>
+          <div>
+            <p className="text-[9px] uppercase tracking-widest mb-0.5" style={{color:"#787b86"}}>Exit</p>
+            <p className="text-xs font-mono text-slate-200">{activeTrade.exitDate}</p>
+            <p className="text-sm font-bold font-mono text-slate-100">₹{activeTrade.exitPrice.toFixed(2)}</p>
+          </div>
+          <div className="h-8 w-px" style={{background:"#2a2e39"}}/>
+          <div>
+            <p className="text-[9px] uppercase tracking-widest mb-0.5" style={{color:"#787b86"}}>P&L</p>
+            <p className={`text-base font-bold font-mono ${activeTrade.pnl >= 0 ? "text-[#26a69a]" : "text-[#ef5350]"}`}>
+              {activeTrade.pnl >= 0 ? "+" : ""}₹{activeTrade.pnl.toFixed(0)}
+            </p>
+            <p className={`text-[10px] font-mono ${activeTrade.pnlPct >= 0 ? "text-[#26a69a]/70" : "text-[#ef5350]/70"}`}>
+              {activeTrade.pnlPct >= 0 ? "+" : ""}{activeTrade.pnlPct.toFixed(2)}%
+            </p>
+          </div>
+          <div>
+            <p className="text-[9px] uppercase tracking-widest mb-0.5" style={{color:"#787b86"}}>Hold</p>
+            <p className="text-base font-bold text-slate-200">{activeTrade.holdDays}<span className="text-xs text-slate-500 ml-1">days</span></p>
+          </div>
+          <div>
+            <p className="text-[9px] uppercase tracking-widest mb-0.5" style={{color:"#787b86"}}>Exit Reason</p>
+            <span className={`px-2 py-0.5 rounded text-xs font-bold border ${reasonStyle[activeTrade.exitReason] ?? "text-slate-500 border-slate-700"}`}>
+              {activeTrade.exitReason}
+            </span>
+          </div>
+          <button onClick={() => onTradeClick?.(null)}
+            className="ml-auto text-slate-600 hover:text-slate-300 text-lg leading-none transition-colors">×</button>
+        </div>
+      )}
+
+      {/* Trade table */}
+      <div className="overflow-x-auto overflow-y-auto max-h-72 rounded-xl" style={{border:"1px solid #2a2e39"}}>
+        <table className="w-full text-[11px]">
+          <thead className="sticky top-0 z-10" style={{background:"#1a1f2e",borderBottom:"1px solid #2a2e39"}}>
+            <tr className="text-[#787b86]">
+              <th className="pb-2 pr-3 pl-3 text-left text-[10px] uppercase tracking-widest">#</th>
+              <Th k="entryDate" label="Entry Date" />
+              <th className="pb-2 pr-3 text-left text-[10px] uppercase tracking-widest">Entry ₹</th>
+              <th className="pb-2 pr-3 text-left text-[10px] uppercase tracking-widest">Exit Date</th>
+              <th className="pb-2 pr-3 text-left text-[10px] uppercase tracking-widest">Exit ₹</th>
+              <th className="pb-2 pr-3 text-left text-[10px] uppercase tracking-widest">Reason</th>
+              <Th k="pnl" label="P&L ₹" />
+              <th className="pb-2 pr-3 text-left text-[10px] uppercase tracking-widest">P&L%</th>
+              <Th k="holdDays" label="Hold" />
+              <th className="pb-2 pr-3 text-left text-[10px] uppercase tracking-widest">Chart</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-[#1e222d]">
+            {filtered.map((t, i) => {
+              const isActive = activeTrade?.entryDate === t.entryDate && activeTrade?.exitDate === t.exitDate;
+              return (
+                <tr key={i}
+                  onClick={() => onTradeClick?.(isActive ? null : t)}
+                  className="cursor-pointer transition-colors"
+                  style={{background: isActive ? "rgba(41,98,255,0.12)" : t.pnl > 0 ? "rgba(38,166,154,0.02)" : "rgba(239,83,80,0.02)"}}>
+                  <td className="py-2 pr-3 pl-3 text-[#787b86]">{i + 1}</td>
+                  <td className="py-2 pr-3 font-mono text-slate-300 whitespace-nowrap">{t.entryDate}</td>
+                  <td className="py-2 pr-3 font-mono text-slate-200">{t.entryPrice.toFixed(2)}</td>
+                  <td className="py-2 pr-3 font-mono text-slate-300 whitespace-nowrap">{t.exitDate}</td>
+                  <td className="py-2 pr-3 font-mono text-slate-200">{t.exitPrice.toFixed(2)}</td>
+                  <td className="py-2 pr-3">
+                    <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold border ${reasonStyle[t.exitReason] ?? "text-slate-500 border-slate-700"}`}>
+                      {t.exitReason}
+                    </span>
+                  </td>
+                  <td className={`py-2 pr-3 font-mono font-bold ${t.pnl > 0 ? "text-[#26a69a]" : "text-[#ef5350]"}`}>
+                    {t.pnl >= 0 ? "+" : ""}₹{t.pnl.toFixed(0)}
+                  </td>
+                  <td className={`py-2 pr-3 font-mono text-xs ${t.pnlPct > 0 ? "text-[#26a69a]/80" : "text-[#ef5350]/80"}`}>
+                    {t.pnlPct >= 0 ? "+" : ""}{t.pnlPct.toFixed(2)}%
+                  </td>
+                  <td className="py-2 pr-3 text-slate-500">{t.holdDays}d</td>
+                  <td className="py-2 pr-3">
+                    <span className={`text-[9px] px-1.5 py-0.5 rounded transition-colors ${isActive ? "text-blue-300 border border-blue-500/40 bg-blue-500/10" : "text-[#787b86] border border-[#2a2e39] hover:border-blue-500/40 hover:text-blue-400"}`}>
+                      {isActive ? "● Viewing" : "📈 View"}
+                    </span>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 // ── Main export ───────────────────────────────────────────────────────────────
 export default function EquityStrategyBuilder({ editId }: { editId?: string }) {
   const router = useRouter();
@@ -654,6 +926,9 @@ export default function EquityStrategyBuilder({ editId }: { editId?: string }) {
   const [error, setError] = useState<string|null>(null);
   const [loadingEdit, setLoadingEdit] = useState(!!editId);
 
+  // ── Focus trade (for chart zoom from trade log click) ─────────────────
+  const [focusTrade, setFocusTrade] = useState<Trade|null>(null);
+
   // ── Chart OHLCV from DB ──────────────────────────────────────────────────
   const [ohlcv, setOhlcv] = useState<OHLCVRow[]>([]);
   const [chartLoading, setChartLoading] = useState(false);
@@ -675,10 +950,14 @@ export default function EquityStrategyBuilder({ editId }: { editId?: string }) {
 
   useEffect(()=>{ fetchChartData(active, tf); },[active, tf, fetchChartData]);
 
-  // ── Backtest state ───────────────────────────────────────────────────────
   const [activeTab, setActiveTab] = useState<"builder"|"backtest">("builder");
-  const [btUniverse, setBtUniverse] = useState<"selected"|"n50"|"n100"|"n500">("selected");
-  const [btPeriod, setBtPeriod] = useState<"180"|"365"|"730">("365");
+  const [btUniverse, setBtUniverse] = useState<"selected"|"n50"|"next50"|"n100"|"midcap150"|"midcap250"|"smallcap250"|"n500"|"microcap250"|"fo">("selected");
+  const [btUniverseCount, setBtUniverseCount] = useState<number|null>(null);
+  const [btFromDate, setBtFromDate] = useState(() => {
+    const d = new Date(); d.setFullYear(d.getFullYear() - 1);
+    return d.toISOString().slice(0,10);
+  });
+  const [btToDate, setBtToDate] = useState(() => new Date().toISOString().slice(0,10));
   const [btQty, setBtQty] = useState("100");
   const [btResults, setBtResults] = useState<StockResult[]>([]);
   const [btRunning, setBtRunning] = useState(false);
@@ -692,8 +971,23 @@ export default function EquityStrategyBuilder({ editId }: { editId?: string }) {
     api<any>(`/strategies/${editId}`).then(row=>{
       const s=row.strategy_json;
       setName(s.name??"Untitled Strategy");
-      if(s.symbol){ setInstruments([s.symbol]); setActive(s.symbol); }
+      // Restore all selected instruments (multi-symbol support)
+      const syms: string[] = s.symbols?.length ? s.symbols : s.symbol ? [s.symbol] : ["SBIN"];
+      setInstruments(syms);
+      setActive(s.symbol ?? syms[0]);
       if(s.action) setAction(s.action);
+      if(s.tf) setTf(s.tf);
+      if(s.exitMode) setExitMode(s.exitMode as ExitM);
+      if(s.sl != null) setSl(String(s.sl));
+      if(s.tp != null) setTp(String(s.tp));
+      if(s.tsl != null) setTsl(String(s.tsl));
+      if(s.risk?.maxLossPerDay != null) setMaxLoss(String(s.risk.maxLossPerDay));
+      if(s.risk?.maxTradesPerDay != null) setMaxTrades(String(s.risk.maxTradesPerDay));
+      if(s.risk?.holdDays != null) setHoldDays(String(s.risk.holdDays));
+      // Restore raw conditions for round-trip editing
+      if(s.rawConditions?.length){
+        setConds(s.rawConditions.map((c: any)=>({...c, id: uid()})));
+      }
       setLoadingEdit(false);
     }).catch(()=>setLoadingEdit(false));
   },[editId]);
@@ -743,10 +1037,9 @@ export default function EquityStrategyBuilder({ editId }: { editId?: string }) {
   const selectedBtResult = useMemo(()=>btResults.find(r=>r.symbol===btSelectedSym)||null,[btResults,btSelectedSym]);
 
   const chartTrades = useMemo(()=>{
-    if(activeTab!=="backtest") return undefined;
     const r = btResults.find(x=>x.symbol===active);
     return r?.trades;
-  },[activeTab,btResults,active]);
+  },[btResults,active]);
 
   // ── Server-side backtest (real DB data) ──────────────────────────────────
   async function runBacktest() {
@@ -754,17 +1047,17 @@ export default function EquityStrategyBuilder({ editId }: { editId?: string }) {
     if(!parseFloat(sl)){ setError("Stop Loss required for backtesting"); return; }
     setError(null); setBtResults([]); setBtProgress(0); setBtRunning(true); setBtSelectedSym(null);
 
-    const toDate   = new Date().toISOString().slice(0,10);
-    const fromDate = new Date(Date.now() - parseInt(btPeriod)*86400000).toISOString().slice(0,10);
+    const toDate   = btToDate;
+    const fromDate = btFromDate;
     const tfKey    = TF_TO_TIMEFRAME[tf] ?? "daily";
 
     // Build symbol list from universe selection
     let symbols: string[] = instruments;
     if (btUniverse !== "selected") {
       try {
-        const all = await api<NSESymbol[]>("/charts/symbols");
-        const n = btUniverse === "n50" ? 50 : btUniverse === "n100" ? 100 : all.length;
-        symbols = all.slice(0, n).map(s => s.symbol);
+        const resp = await api<{symbols: string[], count: number}>(`/charts/index-symbols?index=${btUniverse}`);
+        symbols = resp.symbols.length ? resp.symbols : instruments;
+        setBtUniverseCount(resp.count);
       } catch { symbols = instruments; }
     }
 
@@ -808,7 +1101,16 @@ export default function EquityStrategyBuilder({ editId }: { editId?: string }) {
       ...(c.rhs.kind==="value"?{value:c.rhs.value}:{compareTo:"indicator" as const,rhsIndicator:c.rhs.kind as any,rhsPeriod:c.rhs.period}),
     }));
     const stratJson:any={
-      version:1, name, desk:"equity", symbol:active, action,
+      version:1, name, desk:"equity",
+      symbols: instruments,          // all selected symbols
+      symbol:active,                 // primary/preview symbol
+      action,
+      tf,
+      exitMode,
+      sl: parseFloat(sl)||0,
+      tp: parseFloat(tp)||0,
+      tsl: parseFloat(tsl)||0,
+      rawConditions: conds,          // raw conditions for round-trip edit
       candleTime:tf==="1D"?"EOD":tf==="1H"?"1H":tf==="15m"?"15min":"5min",
       quantity:100, mode:"paper", status:"draft",
       entry:{logic:"AND",conditions:entryC},
@@ -843,430 +1145,413 @@ export default function EquityStrategyBuilder({ editId }: { editId?: string }) {
   };
 
   return (
-    <div className="fixed flex flex-col bg-slate-950" style={{top:60,left:240,right:0,bottom:0,zIndex:5}}>
+    <div className="fixed flex flex-col" style={{top:60,left:240,right:0,bottom:0,zIndex:5,background:"#131722"}}>
 
-      {/* TOP: Chart ──────────────────────────────────────────────────────── */}
-      <div className="flex flex-col shrink-0" style={{height:"52%"}}>
-        <div className="flex items-center justify-between px-4 py-2 border-b border-slate-800 bg-slate-950 shrink-0">
-          <div className="flex items-center gap-0 overflow-x-auto" style={{scrollbarWidth:"none"}}>
-            {instruments.map(sym=>(
-              <button key={sym} onClick={()=>setActive(sym)}
-                className={`flex items-center gap-1.5 px-3 py-1.5 border-b-2 text-xs font-semibold transition-all whitespace-nowrap ${sym===active
-                  ?"border-blue-500 text-blue-300":"border-transparent text-slate-600 hover:text-slate-400"}`}>
-                <span className="w-4 h-4 rounded-full bg-gradient-to-br from-blue-600 to-purple-600 flex items-center justify-center text-[7px] font-bold text-white">{sym[0]}</span>
-                {sym}
-              </button>
-            ))}
-          </div>
-          <div className="flex items-center gap-2 mx-4">
-            <span className="font-bold text-slate-100 text-sm">{active}</span>
-            <span className="text-[10px] text-slate-600 border border-slate-800 rounded px-1">NSE</span>
-            <span className={`text-sm font-semibold ${lastClose.pct>=0?"text-emerald-400":"text-rose-400"}`}>
-              Rs.{lastClose.price.toFixed(2)}
-            </span>
-            <span className={`text-xs ${lastClose.pct>=0?"text-emerald-500":"text-rose-500"}`}>
-              ({lastClose.pct>=0?"+":""}{lastClose.pct.toFixed(2)}%)
-            </span>
-            {chartLoading && <span className="text-[10px] text-slate-600 animate-pulse">Loading…</span>}
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="flex items-center gap-1.5 mr-2">
-              {legend.map(ind=>(
-                <span key={`${ind.kind}-${ind.period}`} className="flex items-center gap-1 text-[10px] text-slate-500">
-                  <span className="w-4 h-0.5 rounded" style={{backgroundColor:ind.color}}/>
-                  {ind.kind}({ind.period})
-                </span>
-              ))}
-              {hasRSI&&<span className="text-[10px] text-purple-400 border border-purple-500/20 rounded px-1.5 py-0.5 bg-purple-500/10">RSI</span>}
-              {hasMACD&&<span className="text-[10px] text-blue-400 border border-blue-500/20 rounded px-1.5 py-0.5 bg-blue-500/10">MACD</span>}
-            </div>
-            <select value={tf} onChange={e=>setTf(e.target.value)}
-              className="bg-slate-900 border border-slate-800 rounded-lg px-2 py-1 text-xs text-slate-400 focus:outline-none">
-              {TFs.map(t=><option key={t}>{t}</option>)}
-            </select>
-            <button className="flex items-center gap-1 px-2.5 py-1 text-[10px] text-slate-600 hover:text-slate-300 border border-slate-800 rounded-lg transition-colors">
-              <span className="font-mono font-bold text-[9px]">fx</span> Indicators
+      {/* ── CHART HEADER: instruments + price + TF + buy/sell ─────────────── */}
+      <div className="flex items-center justify-between px-4 py-2 border-b shrink-0" style={{borderColor:"#2a2e39",background:"#131722"}}>
+        {/* Instrument tabs */}
+        <div className="flex items-center gap-0 overflow-x-auto shrink-0" style={{scrollbarWidth:"none"}}>
+          {instruments.map(sym=>(
+            <button key={sym} onClick={()=>setActive(sym)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 border-b-2 text-xs font-semibold transition-all whitespace-nowrap ${sym===active
+                ?"border-blue-500 text-blue-300":"border-transparent text-slate-600 hover:text-slate-400"}`}>
+              <span className="w-4 h-4 rounded-full bg-gradient-to-br from-blue-600 to-purple-600 flex items-center justify-center text-[7px] font-bold text-white shrink-0">{sym[0]}</span>
+              {sym}
             </button>
-            <div className="flex bg-slate-900 border border-slate-800 rounded-lg p-0.5">
-              <button onClick={()=>setAction("BUY")} className={`px-3 py-1 rounded-md text-xs font-semibold transition-all ${action==="BUY"?"bg-emerald-600 text-white":"text-slate-500 hover:text-slate-300"}`}>Buy</button>
-              <button onClick={()=>setAction("SELL")} className={`px-3 py-1 rounded-md text-xs font-semibold transition-all ${action==="SELL"?"bg-rose-600 text-white":"text-slate-500 hover:text-slate-300"}`}>Sell</button>
-            </div>
-          </div>
+          ))}
         </div>
-        <div className="flex-1 min-h-0 relative">
-          <TradingChart ohlcv={ohlcv} conds={conds} trades={chartTrades} action={action} key={`${active}-${hasRSI}-${hasMACD}-${activeTab}`} />
+        {/* Price */}
+        <div className="flex items-center gap-2 mx-3">
+          <span className="font-bold text-slate-100 text-sm">{active}</span>
+          <span className="text-[10px] text-slate-600 border border-slate-800 rounded px-1">NSE</span>
+          <span className={`text-sm font-semibold ${lastClose.pct>=0?"text-emerald-400":"text-rose-400"}`}>₹{lastClose.price.toFixed(2)}</span>
+          <span className={`text-xs ${lastClose.pct>=0?"text-emerald-500":"text-rose-500"}`}>({lastClose.pct>=0?"+":""}{lastClose.pct.toFixed(2)}%)</span>
+          {chartLoading&&<span className="text-[10px] text-slate-600 animate-pulse">Loading…</span>}
+        </div>
+        {/* Right controls */}
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 mr-1">
+            {legend.map(ind=>(
+              <span key={`${ind.kind}-${ind.period}`} className="flex items-center gap-1 text-[10px] text-slate-500">
+                <span className="w-4 h-0.5 rounded" style={{backgroundColor:ind.color}}/>
+                {ind.kind}({ind.period})
+              </span>
+            ))}
+            {hasRSI&&<span className="text-[10px] text-purple-400 border border-purple-500/20 rounded px-1.5 py-0.5 bg-purple-500/10">RSI</span>}
+            {hasMACD&&<span className="text-[10px] text-blue-400 border border-blue-500/20 rounded px-1.5 py-0.5 bg-blue-500/10">MACD</span>}
+          </div>
+          <select value={tf} onChange={e=>setTf(e.target.value)}
+            className="rounded-lg px-2 py-1 text-xs text-slate-400 focus:outline-none"
+            style={{background:"#1e222d",border:"1px solid #2a2e39"}}>
+            {TFs.map(t=><option key={t}>{t}</option>)}
+          </select>
+          <div className="flex rounded-lg p-0.5" style={{background:"#1e222d",border:"1px solid #2a2e39"}}>
+            <button onClick={()=>setAction("BUY")} className={`px-3 py-1 rounded-md text-xs font-semibold transition-all ${action==="BUY"?"bg-emerald-600 text-white":"text-slate-500 hover:text-slate-300"}`}>Buy</button>
+            <button onClick={()=>setAction("SELL")} className={`px-3 py-1 rounded-md text-xs font-semibold transition-all ${action==="SELL"?"bg-rose-600 text-white":"text-slate-500 hover:text-slate-300"}`}>Sell</button>
+          </div>
         </div>
       </div>
 
-      {/* BOTTOM: Tabbed panel ──────────────────────────────────────────────── */}
-      <div className="flex flex-col flex-1 min-h-0 border-t border-slate-800">
-        {/* Combined header: name | tabs | save */}
-        <div className="flex items-center justify-between px-4 py-2 border-b border-slate-800 bg-slate-950 shrink-0">
-          {/* Left: Strategy name */}
-          <div className="flex items-center gap-3 min-w-0">
-            <h1 ref={nameRef} contentEditable suppressContentEditableWarning
-              onBlur={()=>setName(nameRef.current?.textContent?.trim()||"Untitled Strategy")}
-              className="text-sm font-semibold text-slate-100 focus:outline-none focus:border-b focus:border-emerald-500 cursor-text min-w-[120px] truncate max-w-[160px]">
-              {name}
-            </h1>
-            {editId&&<span className="text-[10px] text-amber-400 border border-amber-500/30 rounded px-1.5 py-0.5 bg-amber-500/10 shrink-0">Editing</span>}
+      {/* ── OHLCV Chart ────────────────────────────────────────────────────── */}
+      <div className="shrink-0 relative" style={{height:"42%"}}>
+        <TradingChart ohlcv={ohlcv} conds={conds} trades={chartTrades} action={action}
+          focusTrade={focusTrade}
+          key={`${active}-${hasRSI}-${hasMACD}`} />
+      </div>
+
+      {/* ── STRATEGY NAME BAR ──────────────────────────────────────────────── */}
+      <div className="flex items-center justify-between px-4 py-2 border-t border-b shrink-0" style={{borderColor:"#2a2e39",background:"#0e1117"}}>
+        <div className="flex items-center gap-2">
+          <h1 ref={nameRef} contentEditable suppressContentEditableWarning
+            onBlur={()=>setName(nameRef.current?.textContent?.trim()||"Untitled Strategy")}
+            className="text-sm font-semibold text-slate-100 focus:outline-none cursor-text min-w-[120px] truncate max-w-[200px]"
+            style={{borderBottom:"1px solid transparent"}}
+            onFocus={e=>(e.currentTarget.style.borderBottomColor="#26a69a")}
+            onBlurCapture={e=>(e.currentTarget.style.borderBottomColor="transparent")}>
+            {name}
+          </h1>
+          {editId&&<span className="text-[10px] text-amber-400 border border-amber-500/30 rounded px-1.5 py-0.5 bg-amber-500/10 shrink-0">Editing</span>}
+        </div>
+        <div className="flex items-center gap-2">
+          <button onClick={()=>router.push("/equity/strategies")}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-slate-500 hover:text-slate-300 transition-colors rounded-lg"
+            style={{border:"1px solid #2a2e39"}}>
+            ← Strategies
+          </button>
+          {error&&<span className="text-xs text-rose-400 max-w-[180px] truncate">{error}</span>}
+          <button onClick={save} disabled={saving}
+            className="px-4 py-1.5 text-white text-xs font-semibold rounded-lg transition-colors disabled:opacity-50"
+            style={{background:saving?"#1e222d":"#2962ff"}}>
+            {saving?"Saving…":editId?"Update":"Save Strategy"}
+          </button>
+        </div>
+      </div>
+
+      {/* ── SINGLE SCROLL COLUMN: config → backtest results ─────────────── */}
+      <div className="flex-1 overflow-y-auto p-5 space-y-5" style={{background:"#131722"}}>
+
+        {/* ── Instruments + Candle Period ──────────────────────────────────── */}
+        <div className="rounded-xl p-4" style={{background:"#1e222d",border:"1px solid #2a2e39"}}>
+          <div className="flex items-center justify-between mb-3">
+            <p className="text-[10px] font-bold uppercase tracking-widest" style={{color:"#787b86"}}>Instruments</p>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px]" style={{color:"#787b86"}}>Candle Period</span>
+              <select value={tf} onChange={e=>setTf(e.target.value)}
+                className="rounded-lg px-2.5 py-1 text-xs text-slate-300 focus:outline-none"
+                style={{background:"#131722",border:"1px solid #2a2e39"}}>
+                {TFs.map(t=><option key={t}>{t}</option>)}
+              </select>
+              <div className="flex rounded-lg p-0.5" style={{background:"#131722",border:"1px solid #2a2e39"}}>
+                <button onClick={()=>setAction("BUY")} className={`px-2.5 py-0.5 rounded-md text-xs font-semibold transition-all ${action==="BUY"?"bg-emerald-600 text-white":"text-slate-500 hover:text-slate-300"}`}>Buy</button>
+                <button onClick={()=>setAction("SELL")} className={`px-2.5 py-0.5 rounded-md text-xs font-semibold transition-all ${action==="SELL"?"bg-rose-600 text-white":"text-slate-500 hover:text-slate-300"}`}>Sell</button>
+              </div>
+            </div>
           </div>
-          {/* Center: Tab buttons */}
-          <div className="flex items-center gap-1 bg-slate-900/60 border border-slate-800 rounded-lg p-0.5">
-            <button onClick={()=>setActiveTab("builder")}
-              className={`px-4 py-1 rounded-md text-xs font-semibold transition-all ${activeTab==="builder"
-                ?"bg-slate-800 text-blue-300 border-b-2 border-blue-500"
-                :"text-slate-500 hover:text-slate-300"}`}>
-              Builder
-            </button>
-            <button onClick={()=>setActiveTab("backtest")}
-              className={`px-4 py-1 rounded-md text-xs font-semibold transition-all ${activeTab==="backtest"
-                ?"bg-slate-800 text-blue-300 border-b-2 border-blue-500"
-                :"text-slate-500 hover:text-slate-300"}`}>
-              Backtest
-            </button>
+          <InstrumentRow
+            instruments={instruments} active={active}
+            onSwitch={setActive}
+            onRemove={sym=>{ const n=instruments.filter(s=>s!==sym); setInstruments(n); if(active===sym) setActive(n[0]); }}
+            onAdd={sym=>{ if(!instruments.includes(sym)){setInstruments(p=>[...p,sym]);} setActive(sym); }}
+          />
+        </div>
+
+        {/* ── Entry Conditions ──────────────────────────────────────────────── */}
+        <div className="rounded-xl p-4" style={{background:"#1e222d",border:"1px solid #2a2e39"}}>
+          <div className="flex items-center justify-between mb-3">
+            <p className="text-[10px] font-bold uppercase tracking-widest" style={{color:"#787b86"}}>Entry Conditions</p>
+            <span className="text-[9px] rounded-full px-2 py-0.5 font-bold" style={{background:"rgba(38,166,154,0.12)",color:"#26a69a",border:"1px solid rgba(38,166,154,0.3)"}}>{conds.length} condition{conds.length!==1?"s":""}</span>
           </div>
-          {/* Right: error + save */}
-          <div className="flex items-center gap-2">
-            <button onClick={()=>router.push("/equity/strategies")}
-              className="flex items-center gap-1.5 px-3 py-1.5 border border-slate-800 rounded-lg text-xs text-slate-500 hover:border-slate-600 hover:text-slate-300 transition-colors">
-              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="w-3.5 h-3.5"><path d="M2 4h12M2 8h12M2 12h8"/></svg>
-              My Strategies
+          <div className="space-y-1">
+            {conds.map((c,i)=>(
+              <CondRow key={c.id} cond={c} isFirst={i===0} onChange={nc=>updCond(c.id,nc)} onDel={()=>delCond(c.id)}/>
+            ))}
+            {!conds.length&&<p className="text-xs py-1" style={{color:"#4a4f5a"}}>No conditions yet — add one below.</p>}
+          </div>
+          <div className="flex items-center gap-3 mt-3 flex-wrap">
+            <button onClick={addCond}
+              className="flex items-center gap-1.5 text-xs transition-colors group"
+              style={{color:"#787b86"}}>
+              <span className="w-5 h-5 rounded-full flex items-center justify-center text-base leading-none" style={{border:"1px dashed #2a2e39"}}>+</span>
+              Add Condition
             </button>
-            {error&&<span className="text-xs text-rose-400 max-w-[140px] truncate">{error}</span>}
-            <button onClick={save} disabled={saving}
-              className="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-xs font-semibold rounded-lg transition-colors shadow shadow-blue-600/20">
-              {saving?"Saving...":editId?"Update":"Save Strategy"}
-            </button>
+            <span style={{color:"#2a2e39"}}>|</span>
+            <p className="text-[10px]" style={{color:"#4a4f5a"}}>Quick:</p>
+            {SETUPS.map(s=>(
+              <button key={s.name} onClick={()=>setConds(p=>[...p,s.mk()])}
+                className="px-2.5 py-1 rounded-lg text-[10px] font-semibold transition-all hover:text-slate-200"
+                style={{background:"#131722",border:"1px solid #2a2e39",color:"#787b86"}}>
+                {s.name}
+              </button>
+            ))}
           </div>
         </div>
 
-        {/* ── Builder Tab ─────────────────────────────────────────────────── */}
-        {activeTab==="builder"&&(
-          <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-slate-950">
-            <Accordion title="Entry" badge={`${conds.length} condition${conds.length!==1?"s":""}`}>
-              <div className="space-y-1.5">
-                <p className="text-[10px] font-bold text-slate-600 uppercase tracking-widest">Instruments</p>
-                <InstrumentRow
-                  instruments={instruments} active={active}
-                  onSwitch={setActive}
-                  onRemove={sym=>{ const n=instruments.filter(s=>s!==sym); setInstruments(n); if(active===sym) setActive(n[0]); }}
-                  onAdd={sym=>{ if(!instruments.includes(sym)){setInstruments(p=>[...p,sym]);} setActive(sym); }}
-                />
-              </div>
-              <div className="space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <p className="text-[10px] font-bold text-slate-600 uppercase tracking-widest">Conditions</p>
-                  <button className="flex items-center gap-1 text-[10px] text-slate-600 hover:text-emerald-400 border border-slate-800 hover:border-emerald-600 rounded-lg px-2 py-0.5 transition-colors">
-                    Assist
-                  </button>
+        {/* ── Exit + Risk in a row ──────────────────────────────────────────── */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {/* Exit */}
+          <div className="rounded-xl p-4" style={{background:"#1e222d",border:"1px solid #2a2e39"}}>
+            <p className="text-[10px] font-bold uppercase tracking-widest mb-3" style={{color:"#787b86"}}>Exit Rules</p>
+            <div className="grid grid-cols-3 gap-3 mb-3">
+              {([["Stop Loss *",sl,setSl],["Target Profit",tp,setTp],["Trailing SL",tsl,setTsl]] as const).map(([lbl,val,set]: any)=>(
+                <div key={lbl}>
+                  <p className="text-[10px] mb-1" style={{color:"#787b86"}}>{lbl}</p>
+                  <div className="flex items-center rounded-lg overflow-hidden" style={{background:"#131722",border:"1px solid #2a2e39"}}>
+                    <input type="number" min="0" step="0.01" value={val} onChange={(e:any)=>set(e.target.value)}
+                      placeholder="0.00"
+                      className="flex-1 bg-transparent px-2 py-2 text-xs text-slate-200 placeholder-slate-700 focus:outline-none min-w-0"/>
+                    <span className="px-2 text-[10px] border-l" style={{borderColor:"#2a2e39",color:"#787b86"}}>
+                      {exitMode==="%"?"%":exitMode==="pts"?"pts":"₹"}
+                    </span>
+                  </div>
                 </div>
-                <div className="space-y-0.5">
-                  {conds.map((c,i)=>(
-                    <CondRow key={c.id} cond={c} isFirst={i===0} onChange={nc=>updCond(c.id,nc)} onDel={()=>delCond(c.id)}/>
-                  ))}
-                  {!conds.length&&<p className="text-xs text-slate-700 py-1">No conditions yet.</p>}
+              ))}
+            </div>
+            <div className="flex items-center gap-4">
+              {(["%","pts","₹"] as ExitM[]).map(m=>(
+                <label key={m} className="flex items-center gap-1.5 cursor-pointer">
+                  <input type="radio" name="exitMode" value={m} checked={exitMode===m} onChange={()=>setExitMode(m)} className="accent-blue-500"/>
+                  <span className="text-xs" style={{color:"#787b86"}}>{m==="%" ? "Percentage" : m==="pts" ? "Points" : "PNL (₹)"}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+
+          {/* Risk Controls */}
+          <div className="rounded-xl p-4" style={{background:"#1e222d",border:"1px solid #2a2e39"}}>
+            <p className="text-[10px] font-bold uppercase tracking-widest mb-3" style={{color:"#787b86"}}>Risk Controls</p>
+            <div className="grid grid-cols-3 gap-3">
+              {([["Max Loss/Day ₹",maxLoss,setMaxLoss],["Max Trades/Day",maxTrades,setMaxTrades],["Hold Days",holdDays,setHoldDays]] as const).map(([lbl,val,set]: any)=>(
+                <div key={lbl}>
+                  <p className="text-[10px] mb-1" style={{color:"#787b86"}}>{lbl}</p>
+                  <input type="number" min="0" value={val} onChange={(e:any)=>set(e.target.value)}
+                    className="w-full px-2.5 py-2 text-xs text-slate-200 focus:outline-none rounded-lg"
+                    style={{background:"#131722",border:"1px solid #2a2e39"}}/>
                 </div>
-                <button onClick={addCond}
-                  className="flex items-center gap-1.5 text-xs text-slate-600 hover:text-emerald-400 transition-colors mt-1 group">
-                  <span className="w-5 h-5 rounded-full border border-dashed border-slate-700 group-hover:border-emerald-600 flex items-center justify-center text-base leading-none">+</span>
-                  Add Condition
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* ── Backtest Controls ─────────────────────────────────────────────── */}
+        <div className="rounded-xl p-4" style={{background:"rgba(245,158,11,0.04)",border:"1px solid rgba(245,158,11,0.2)"}}>
+          <p className="text-[10px] font-bold uppercase tracking-widest mb-3" style={{color:"#f59e0b"}}>Backtest Settings</p>
+
+          {/* Universe selection */}
+          <div className="mb-4">
+            <p className="text-[10px] mb-2" style={{color:"#787b86"}}>Stock Universe</p>
+            <div className="flex gap-2 flex-wrap mb-2">
+              {([
+                ["selected", `My Selection (${instruments.length})`],
+                ["n50",        "Nifty 50"],
+                ["next50",     "Nifty Next 50"],
+                ["n100",       "Nifty 100"],
+                ["midcap150",  "Midcap 150"],
+                ["midcap250",  "Midcap 250"],
+                ["smallcap250","Smallcap 250"],
+                ["n500",       "Nifty 500"],
+                ["microcap250","Microcap 250"],
+                ["fo",         "F&O Stocks"],
+              ] as const).map(([val, label]) => (
+                <button key={val} onClick={()=>{ setBtUniverse(val as typeof btUniverse); setBtUniverseCount(null); }}
+                  className="px-3 py-1.5 rounded-lg text-xs font-semibold transition-all"
+                  style={btUniverse===val
+                    ? {background:"#f59e0b",color:"#0e1117"}
+                    : {background:"#131722",border:"1px solid #2a2e39",color:"#787b86"}}>
+                  {label}
                 </button>
+              ))}
+            </div>
+            {/* Show selected symbols pill list when "My Selection" */}
+            {btUniverse==="selected" && (
+              <div className="flex flex-wrap gap-1.5 mt-2 p-2 rounded-lg min-h-8" style={{background:"#131722",border:"1px solid #2a2e39"}}>
+                {instruments.length===0
+                  ? <span className="text-[10px] self-center" style={{color:"#787b86"}}>No symbols — add in Instruments above</span>
+                  : instruments.map(s=>(
+                    <span key={s} className="px-2 py-0.5 rounded text-[10px] font-mono font-semibold" style={{background:"#1e222d",color:"#e2e8f0",border:"1px solid #2a2e39"}}>{s}</span>
+                  ))
+                }
               </div>
-              <div className="space-y-1.5">
-                <p className="text-[10px] font-bold text-slate-600 uppercase tracking-widest">Quick Setups</p>
-                <div className="flex gap-2 overflow-x-auto pb-1" style={{scrollbarWidth:"none"}}>
-                  {SETUPS.map(s=>(
-                    <button key={s.name} onClick={()=>setConds(p=>[...p,s.mk()])}
-                      className="flex-none flex flex-col items-center gap-1.5 px-3 py-2 rounded-xl border border-slate-800 bg-slate-900 hover:border-emerald-600/40 hover:bg-slate-800 transition-all group min-w-[64px]">
-                      <svg viewBox="0 0 36 24" className="w-9 h-6 opacity-50 group-hover:opacity-90 transition-opacity">
-                        {[3,5,4,8,6,11,9,14,12,17,15,20,18].map((h,i)=>(
-                          <rect key={i} x={i*2.7+0.5} y={24-h} width="1.8" height={h} fill={i%3===0?"#f43f5e":"#10b981"} rx="0.4"/>
-                        ))}
-                        <path d="M0,14 Q4,12 9,10 Q14,8 18,6 Q23,5 36,3" stroke="#f59e0b" strokeWidth="1.2" fill="none"/>
-                      </svg>
-                      <span className="text-[9px] text-slate-600 group-hover:text-slate-300 text-center leading-tight transition-colors whitespace-nowrap">{s.name}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </Accordion>
+            )}
+            {btUniverse!=="selected" && (
+              <p className="text-[10px] mt-1" style={{color:"#787b86"}}>
+                {btUniverseCount!=null ? `${btUniverseCount} symbols loaded from DB` : "Symbols loaded from DB on Run"}
+                {" · "}{btUniverse==="n500"||btUniverse==="microcap250"?"⚠ Large universe — daily TF recommended":""}
+              </p>
+            )}
+          </div>
 
-            <Accordion title="Exit" defaultOpen>
-              <div className="grid grid-cols-3 gap-3">
-                {([["Stop Loss",sl,setSl,true],["Target Profit",tp,setTp,false],["Trailing SL",tsl,setTsl,false]] as const).map(
-                  ([lbl,val,set,req]: any)=>(
-                    <div key={lbl}>
-                      <p className="text-[10px] text-slate-600 mb-1.5">{lbl}{req&&<span className="text-rose-500 ml-0.5">*</span>}</p>
-                      <div className="flex items-center bg-slate-900 border border-slate-800 rounded-lg overflow-hidden focus-within:border-slate-600 transition-colors">
-                        <input type="number" min="0" step="0.01" value={val} onChange={(e:any)=>set(e.target.value)}
-                          placeholder="0.00"
-                          className="flex-1 bg-transparent px-2.5 py-2 text-sm text-slate-200 placeholder-slate-700 focus:outline-none min-w-0"/>
-                        <span className="px-2 text-xs text-slate-600 border-l border-slate-800">
-                          {exitMode==="%"?"%":exitMode==="pts"?"pts":"₹"}
-                        </span>
-                      </div>
-                    </div>
-                  )
-                )}
+          <div className="grid grid-cols-3 gap-4 mb-4">
+            <div>
+              <p className="text-[10px] mb-1" style={{color:"#787b86"}}>From Date</p>
+              <input type="date" value={btFromDate} onChange={e=>setBtFromDate(e.target.value)}
+                className="w-full px-2.5 py-2 text-xs text-slate-300 focus:outline-none rounded-lg"
+                style={{background:"#1e222d",border:"1px solid #2a2e39",colorScheme:"dark"}}/>
+            </div>
+            <div>
+              <p className="text-[10px] mb-1" style={{color:"#787b86"}}>To Date</p>
+              <input type="date" value={btToDate} onChange={e=>setBtToDate(e.target.value)}
+                className="w-full px-2.5 py-2 text-xs text-slate-300 focus:outline-none rounded-lg"
+                style={{background:"#1e222d",border:"1px solid #2a2e39",colorScheme:"dark"}}/>
+            </div>
+            <div>
+              <p className="text-[10px] mb-1" style={{color:"#787b86"}}>Quantity</p>
+              <input type="number" min="1" value={btQty} onChange={e=>setBtQty(e.target.value)}
+                className="w-full px-2.5 py-2 text-xs text-slate-300 focus:outline-none rounded-lg"
+                style={{background:"#1e222d",border:"1px solid #2a2e39"}}/>
+            </div>
+          </div>
+          {btRunning&&(
+            <div className="mb-3 space-y-1">
+              <p className="text-[10px]" style={{color:"#787b86"}}>Running backtest… {btProgress}%</p>
+              <div className="w-full h-1.5 rounded-full overflow-hidden" style={{background:"#1e222d"}}>
+                <div className="h-full rounded-full transition-all duration-300" style={{width:`${btProgress}%`,background:"#f59e0b"}}/>
               </div>
-              <div className="flex items-center gap-4">
-                {(["%","pts","₹"] as ExitM[]).map(m=>(
-                  <label key={m} className="flex items-center gap-1.5 cursor-pointer">
-                    <input type="radio" name="exitMode" value={m} checked={exitMode===m} onChange={()=>setExitMode(m)} className="accent-blue-500"/>
-                    <span className="text-xs text-slate-500">{m==="%" ? "Percentage" : m==="pts" ? "Points" : "PNL (\u20b9)"}</span>
-                  </label>
-                ))}
-              </div>
-            </Accordion>
+            </div>
+          )}
+          <button onClick={runBacktest} disabled={btRunning}
+            className="w-full py-3 rounded-xl text-sm font-bold transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+            style={{background:btRunning?"#1e222d":"#f59e0b",color:btRunning?"#787b86":"#0e1117"}}>
+            {btRunning?(
+              <svg className="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
+              </svg>
+            ):"▶"} {btRunning?"Running…":"Run Backtest"}
+          </button>
+        </div>
 
-            <Accordion title="Risk Controls" defaultOpen={false}>
-              <div className="grid grid-cols-3 gap-3">
-                {([
-                  ["Max Loss / Day (Rs.)", maxLoss, setMaxLoss] as const,
-                  ["Max Trades / Day",     maxTrades, setMaxTrades] as const,
-                  ["Hold Days",            holdDays,  setHoldDays] as const,
-                ]).map(([lbl, val, set]) => (
-                  <div key={lbl}>
-                    <p className="text-[10px] text-slate-600 mb-1.5">{lbl}</p>
-                    <input type="number" min="0" value={val}
-                      onChange={(e) => set(e.target.value)}
-                      className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-2 text-sm text-slate-200 focus:outline-none focus:border-slate-600 transition-colors"/>
+        {/* ── Backtest Results ──────────────────────────────────────────────── */}
+        {btSummary&&(
+          <>
+            {/* KPI cards */}
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-widest mb-3" style={{color:"#787b86"}}>
+                Results · {sortedResults.length} symbol{sortedResults.length!==1?"s":""} · {btFromDate} → {btToDate}
+              </p>
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+                {[
+                  {icon:"📈",label:"Trades",value:String(btSummary.totalTrades),sub:`${btResults.reduce((a,r)=>a+r.winTrades,0)}W / ${btSummary.totalTrades-btResults.reduce((a,r)=>a+r.winTrades,0)}L`,col:"text-slate-100"},
+                  {icon:"🎯",label:"Win Rate",value:`${btSummary.winRate.toFixed(1)}%`,sub:"all symbols",col:btSummary.winRate>=50?"text-[#26a69a]":btSummary.winRate>=40?"text-amber-400":"text-[#ef5350]"},
+                  {icon:"💰",label:"Total P&L",value:`${btSummary.totalPnl>=0?"+":""}₹${Math.abs(btSummary.totalPnl).toLocaleString("en-IN",{maximumFractionDigits:0})}`,sub:"combined",col:btSummary.totalPnl>=0?"text-[#26a69a]":"text-[#ef5350]"},
+                  {icon:"📉",label:"Max DD",value:`${btSummary.maxDD.toFixed(1)}%`,sub:"worst symbol",col:"text-[#ef5350]"},
+                  {icon:"📊",label:"Avg Return",value:`${btSummary.avgReturn>=0?"+":""}${btSummary.avgReturn.toFixed(2)}%`,sub:"per trade",col:btSummary.avgReturn>=0?"text-[#26a69a]":"text-[#ef5350]"},
+                  {icon:"🏆",label:"Best Stock",value:btSummary.bestStock?.symbol??"—",sub:btSummary.bestStock?`+₹${btSummary.bestStock.totalPnl.toLocaleString("en-IN",{maximumFractionDigits:0})}`:undefined,col:"text-[#26a69a]"},
+                ].map(c=>(
+                  <div key={c.label} className="rounded-xl p-3" style={{background:"#1e222d",border:"1px solid #2a2e39"}}>
+                    <div className="flex items-center gap-1.5 mb-1.5"><span className="text-sm">{c.icon}</span><p className="text-[9px] font-bold uppercase tracking-widest" style={{color:"#787b86"}}>{c.label}</p></div>
+                    <p className={`text-lg font-bold font-mono ${c.col}`}>{c.value}</p>
+                    {c.sub&&<p className="text-[9px] mt-0.5" style={{color:"#787b86"}}>{c.sub}</p>}
                   </div>
                 ))}
               </div>
-            </Accordion>
-          </div>
-        )}
-
-        {/* ── Backtest Tab ─────────────────────────────────────────────────── */}
-        {activeTab==="backtest"&&(
-          <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-slate-950">
-            {/* Controls */}
-            <div className="flex items-end gap-3 flex-wrap">
-              <div>
-                <p className="text-[10px] text-slate-600 uppercase mb-1">Universe</p>
-                <select value={btUniverse} onChange={e=>setBtUniverse(e.target.value as any)}
-                  className="bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-300 focus:outline-none">
-                  <option value="selected">Selected Stocks</option>
-                  <option value="n50">Nifty 50</option>
-                  <option value="n100">Nifty 100</option>
-                  <option value="n500">Nifty 500</option>
-                </select>
-              </div>
-              <div>
-                <p className="text-[10px] text-slate-600 uppercase mb-1">Period</p>
-                <select value={btPeriod} onChange={e=>setBtPeriod(e.target.value as any)}
-                  className="bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-300 focus:outline-none">
-                  <option value="180">6M (180d)</option>
-                  <option value="365">1Y (365d)</option>
-                  <option value="730">2Y (730d)</option>
-                </select>
-              </div>
-              <div>
-                <p className="text-[10px] text-slate-600 uppercase mb-1">Quantity</p>
-                <input type="number" min="1" value={btQty} onChange={e=>setBtQty(e.target.value)}
-                  className="w-24 bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-300 focus:outline-none"/>
-              </div>
-              <button onClick={runBacktest} disabled={btRunning}
-                className="flex items-center gap-2 px-5 py-1.5 bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 text-white text-xs font-semibold rounded-lg transition-colors shadow shadow-emerald-800/30">
-                {btRunning?(
-                  <svg className="w-3.5 h-3.5 animate-spin" viewBox="0 0 24 24" fill="none">
-                    <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeDasharray="30 70"/>
-                  </svg>
-                ):"▶"} {btRunning?"Running...":"Run Backtest"}
-              </button>
             </div>
 
-            {/* Progress bar */}
-            {btRunning&&(
-              <div className="space-y-1">
-                <p className="text-[10px] text-slate-500">
-                  Running server-side backtest… {btProgress}%
-                </p>
-                <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
-                  <div className="h-full bg-emerald-500 rounded-full transition-all duration-200" style={{width:`${btProgress}%`}}/>
-                </div>
+            {/* Per-symbol table */}
+            <div className="rounded-xl overflow-hidden" style={{border:"1px solid #2a2e39"}}>
+              <div className="px-4 py-2 flex items-center justify-between" style={{background:"#1e222d",borderBottom:"1px solid #2a2e39"}}>
+                <span className="text-[10px] font-bold uppercase tracking-widest" style={{color:"#787b86"}}>Per-Symbol Results</span>
+                <span className="text-[9px]" style={{color:"#787b86"}}>↑ Click row → drill down + switch chart</span>
               </div>
-            )}
-
-            {/* Results */}
-            {btSummary&&(
-              <div className="space-y-3">
-                {/* Summary cards row 1 */}
-                <div className="grid grid-cols-4 gap-2">
-                  {[
-                    {label:"Total Trades",    value:String(btSummary.totalTrades),     color:"text-slate-100"},
-                    {label:"Win Rate",        value:`${btSummary.winRate.toFixed(1)}%`, color:"text-emerald-400"},
-                    {label:"Total P&L (Rs.)", value:`${btSummary.totalPnl>=0?"+":""}${btSummary.totalPnl.toLocaleString("en-IN",{maximumFractionDigits:0})}`, color:btSummary.totalPnl>=0?"text-emerald-400":"text-rose-400"},
-                    {label:"Max Drawdown",    value:`${btSummary.maxDD.toFixed(1)}%`,   color:"text-rose-400"},
-                  ].map(c=>(
-                    <div key={c.label} className="bg-slate-900/60 border border-slate-800 rounded-xl p-3">
-                      <p className="text-[10px] text-slate-600 mb-1">{c.label}</p>
-                      <p className={`text-lg font-bold ${c.color}`}>{c.value}</p>
-                    </div>
-                  ))}
-                </div>
-                {/* Summary cards row 2 */}
-                <div className="grid grid-cols-3 gap-2">
-                  <div className="bg-slate-900/60 border border-slate-800 rounded-xl p-3">
-                    <p className="text-[10px] text-slate-600 mb-1">Avg Return / Trade</p>
-                    <p className={`text-base font-bold ${btSummary.avgReturn>=0?"text-emerald-400":"text-rose-400"}`}>
-                      {btSummary.avgReturn>=0?"+":""}{btSummary.avgReturn.toFixed(2)}%
-                    </p>
-                  </div>
-                  <div className="bg-slate-900/60 border border-slate-800 rounded-xl p-3">
-                    <p className="text-[10px] text-slate-600 mb-1">Best Stock</p>
-                    {btSummary.bestStock?(
-                      <p className="text-base font-bold text-emerald-400">
-                        {btSummary.bestStock.symbol}
-                        <span className="text-xs ml-1 text-emerald-500/70">
-                          +{btSummary.bestStock.totalPnl.toLocaleString("en-IN",{maximumFractionDigits:0})}
-                        </span>
-                      </p>
-                    ):<p className="text-slate-600 text-xs">—</p>}
-                  </div>
-                  <div className="bg-slate-900/60 border border-slate-800 rounded-xl p-3">
-                    <p className="text-[10px] text-slate-600 mb-1">Worst Stock</p>
-                    {btSummary.worstStock?(
-                      <p className="text-base font-bold text-rose-400">
-                        {btSummary.worstStock.symbol}
-                        <span className="text-xs ml-1 text-rose-500/70">
-                          {btSummary.worstStock.totalPnl.toLocaleString("en-IN",{maximumFractionDigits:0})}
-                        </span>
-                      </p>
-                    ):<p className="text-slate-600 text-xs">—</p>}
-                  </div>
-                </div>
-
-                {/* Sortable table */}
-                <div className="border border-slate-800 rounded-xl overflow-hidden">
-                  <div className="overflow-x-auto max-h-52 overflow-y-auto">
-                    <table className="w-full text-xs">
-                      <thead className="sticky top-0 bg-slate-900 border-b border-slate-800">
-                        <tr>
-                          {[
-                            {label:"Stock",      col:null},
-                            {label:"Sector",     col:null},
-                            {label:"Trades",     col:"totalTrades" as const},
-                            {label:"Win%",       col:"winRate" as const},
-                            {label:"Net P&L (Rs.)", col:"totalPnl" as const},
-                            {label:"Return%",    col:null},
-                            {label:"Max DD%",    col:"maxDD" as const},
-                            {label:"Sharpe",     col:"sharpe" as const},
-                            {label:"Signal",     col:null},
-                          ].map(({label,col})=>(
-                            <th key={label}
-                              onClick={col?()=>toggleSort(col):undefined}
-                              className={`px-3 py-2 text-left text-[10px] font-semibold text-slate-500 uppercase tracking-wide whitespace-nowrap ${col?"cursor-pointer hover:text-slate-300":""}`}>
-                              {label} {col?sortIcon(col):""}
-                            </th>
-                          ))}
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead className="sticky top-0 z-10" style={{background:"#1a1f2e",borderBottom:"1px solid #2a2e39"}}>
+                    <tr>
+                      {[
+                        {label:"Symbol",col:null},
+                        {label:"Trades",col:"totalTrades" as const},
+                        {label:"Win%",col:"winRate" as const},
+                        {label:"Net P&L ₹",col:"totalPnl" as const},
+                        {label:"Avg Ret%",col:null},
+                        {label:"Max DD%",col:"maxDD" as const},
+                        {label:"Sharpe",col:"sharpe" as const},
+                        {label:"",col:null},
+                      ].map(({label,col})=>(
+                        <th key={label} onClick={col?()=>toggleSort(col):undefined}
+                          className={`px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-wide whitespace-nowrap ${col?"cursor-pointer hover:text-slate-300 select-none":""}`}
+                          style={{color:"#787b86"}}>
+                          {label}{col?" "+sortIcon(col):""}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sortedResults.map((r,idx)=>{
+                      const avgRet=r.trades.length?r.trades.reduce((a,t)=>a+t.pnlPct,0)/r.trades.length:0;
+                      const isSel=r.symbol===btSelectedSym;
+                      return (
+                        <tr key={r.symbol}
+                          onClick={()=>{ setBtSelectedSym(isSel?null:r.symbol); setActive(r.symbol); setFocusTrade(null); }}
+                          className="border-b cursor-pointer transition-colors hover:bg-white/5"
+                          style={{borderColor:"#1e2030",background:isSel?"rgba(41,98,255,0.1)":idx%2===0?"#131722":"#0f131a"}}>
+                          <td className="px-3 py-2 font-semibold text-slate-200 whitespace-nowrap">
+                            <span className="flex items-center gap-2">
+                              <span className="w-5 h-5 rounded-full bg-gradient-to-br from-blue-600 to-purple-600 flex items-center justify-center text-[8px] font-bold text-white shrink-0">{r.symbol[0]}</span>
+                              {r.symbol}
+                            </span>
+                          </td>
+                          <td className="px-3 py-2 text-slate-400">{r.totalTrades}</td>
+                          <td className={`px-3 py-2 ${r.winRate>=50?"text-[#26a69a]":"text-amber-400"}`}>{r.winRate.toFixed(1)}%</td>
+                          <td className={`px-3 py-2 font-semibold font-mono ${r.totalPnl>=0?"text-[#26a69a]":"text-[#ef5350]"}`}>
+                            {r.totalPnl>=0?"+":""}₹{Math.abs(r.totalPnl).toLocaleString("en-IN",{maximumFractionDigits:0})}
+                          </td>
+                          <td className={`px-3 py-2 font-mono text-xs ${avgRet>=0?"text-[#26a69a]/80":"text-[#ef5350]/80"}`}>{avgRet>=0?"+":""}{avgRet.toFixed(2)}%</td>
+                          <td className="px-3 py-2 font-mono text-[#ef5350]">{r.maxDD.toFixed(1)}%</td>
+                          <td className={`px-3 py-2 font-mono ${r.sharpe>=1?"text-blue-400":r.sharpe>=0?"text-slate-400":"text-slate-600"}`}>{r.sharpe.toFixed(2)}</td>
+                          <td className="px-3 py-2">
+                            {r.totalTrades===0
+                              ?<span className="text-[9px] rounded px-1.5 py-0.5" style={{border:"1px solid #2a2e39",color:"#4a4f5a"}}>No Signal</span>
+                              :<span className="text-[9px] rounded px-1.5 py-0.5" style={{background:"rgba(38,166,154,0.1)",border:"1px solid rgba(38,166,154,0.3)",color:"#26a69a"}}>Done</span>
+                            }
+                          </td>
                         </tr>
-                      </thead>
-                      <tbody>
-                        {sortedResults.map((r,idx)=>{
-                          const avgRetPct = r.trades.length ? r.trades.reduce((a,t)=>a+t.pnlPct,0)/r.trades.length : 0;
-                          const lastTrade = r.trades[r.trades.length-1];
-                          const isActive = lastTrade && lastTrade.exitReason==="END" && lastTrade.exitDate===r.trades[r.trades.length-1]?.exitDate;
-                          const isSelected = r.symbol===btSelectedSym;
-                          return (
-                            <tr key={r.symbol}
-                              onClick={()=>{ setBtSelectedSym(isSelected?null:r.symbol); setActive(r.symbol); }}
-                              className={`border-b border-slate-800/50 cursor-pointer transition-colors ${isSelected?"bg-blue-500/10":idx%2===0?"bg-slate-950":"bg-slate-900/40"} hover:bg-slate-800/60`}>
-                              <td className="px-3 py-2 font-semibold text-slate-200 whitespace-nowrap">
-                                <span className="flex items-center gap-1.5">
-                                  <span className="w-4 h-4 rounded-full bg-gradient-to-br from-blue-600 to-purple-600 flex items-center justify-center text-[7px] font-bold text-white shrink-0">{r.symbol[0]}</span>
-                                  {r.symbol}
-                                </span>
-                              </td>
-                              <td className="px-3 py-2 text-slate-600">—</td>
-                              <td className="px-3 py-2 text-slate-400">{r.totalTrades}</td>
-                              <td className="px-3 py-2 text-emerald-400">{r.winRate.toFixed(1)}%</td>
-                              <td className={`px-3 py-2 font-semibold ${r.totalPnl>=0?"text-emerald-400":"text-rose-400"}`}>
-                                {r.totalPnl>=0?"+":""}{r.totalPnl.toLocaleString("en-IN",{maximumFractionDigits:0})}
-                              </td>
-                              <td className={`px-3 py-2 ${avgRetPct>=0?"text-emerald-400":"text-rose-400"}`}>
-                                {avgRetPct>=0?"+":""}{avgRetPct.toFixed(2)}%
-                              </td>
-                              <td className="px-3 py-2 text-rose-400">{r.maxDD.toFixed(1)}%</td>
-                              <td className={`px-3 py-2 ${r.sharpe>=0?"text-blue-400":"text-slate-500"}`}>{r.sharpe.toFixed(2)}</td>
-                              <td className="px-3 py-2">
-                                {r.totalTrades===0?(
-                                  <span className="text-[9px] text-slate-700 border border-slate-800 rounded px-1.5 py-0.5">No Signal</span>
-                                ):isActive?(
-                                  <span className="text-[9px] text-emerald-400 border border-emerald-500/30 rounded px-1.5 py-0.5 bg-emerald-500/10">Active</span>
-                                ):(
-                                  <span className="text-[9px] text-slate-400 border border-slate-700 rounded px-1.5 py-0.5">Done</span>
-                                )}
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Selected symbol drill-down */}
+            {selectedBtResult&&selectedBtResult.trades.length>0&&(
+              <>
+                {/* Equity Curve */}
+                <div className="rounded-xl overflow-hidden" style={{border:"1px solid #2a2e39"}}>
+                  <div className="px-4 py-2 flex items-center gap-2" style={{background:"#1e222d",borderBottom:"1px solid #2a2e39"}}>
+                    <span className="text-[10px] font-bold uppercase tracking-widest" style={{color:"#787b86"}}>Equity Curve</span>
+                    <span className="text-[10px]" style={{color:"#787b86"}}>· {selectedBtResult.symbol}</span>
+                    <span className="ml-auto text-[9px]" style={{color:"#787b86"}}>{selectedBtResult.totalTrades} trades</span>
+                  </div>
+                  <div style={{height:220}}>
+                    <IndicatorEquityCurve trades={selectedBtResult.trades} key={selectedBtResult.symbol}/>
                   </div>
                 </div>
 
-                {/* Trade detail panel */}
-                {selectedBtResult&&selectedBtResult.trades.length>0&&(
-                  <div className="border border-slate-800 rounded-xl overflow-hidden">
-                    <div className="px-4 py-2 bg-slate-900/60 border-b border-slate-800 flex items-center justify-between">
-                      <span className="text-xs font-semibold text-slate-300">
-                        {selectedBtResult.symbol} — {selectedBtResult.totalTrades} trade{selectedBtResult.totalTrades!==1?"s":""}
-                      </span>
-                      <button onClick={()=>setBtSelectedSym(null)} className="text-slate-600 hover:text-slate-300 text-sm">x</button>
-                    </div>
-                    <div className="overflow-x-auto max-h-40 overflow-y-auto">
-                      <table className="w-full text-xs">
-                        <thead className="sticky top-0 bg-slate-900 border-b border-slate-800">
-                          <tr>
-                            {["#","Entry Date","Entry Rs.","Exit Date","Exit Rs.","Reason","P&L (Rs.)","Hold"].map(h=>(
-                              <th key={h} className="px-3 py-1.5 text-left text-[10px] font-semibold text-slate-600 uppercase tracking-wide whitespace-nowrap">{h}</th>
-                            ))}
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {selectedBtResult.trades.map((t,i)=>{
-                            const reasonColor = t.exitReason==="SL"?"text-rose-400 bg-rose-500/10 border-rose-500/30":
-                              t.exitReason==="TP"?"text-blue-400 bg-blue-500/10 border-blue-500/30":
-                              t.exitReason==="TSL"?"text-orange-400 bg-orange-500/10 border-orange-500/30":
-                              "text-slate-400 bg-slate-800 border-slate-700";
-                            return (
-                              <tr key={i} className={`border-b border-slate-800/50 ${t.pnl>0?"bg-emerald-950/30":"bg-rose-950/20"}`}>
-                                <td className="px-3 py-1.5 text-slate-600">{i+1}</td>
-                                <td className="px-3 py-1.5 text-slate-400 font-mono">{t.entryDate}</td>
-                                <td className="px-3 py-1.5 text-slate-300">{t.entryPrice.toFixed(2)}</td>
-                                <td className="px-3 py-1.5 text-slate-400 font-mono">{t.exitDate}</td>
-                                <td className="px-3 py-1.5 text-slate-300">{t.exitPrice.toFixed(2)}</td>
-                                <td className="px-3 py-1.5">
-                                  <span className={`text-[9px] border rounded px-1.5 py-0.5 font-semibold ${reasonColor}`}>{t.exitReason}</span>
-                                </td>
-                                <td className={`px-3 py-1.5 font-semibold ${t.pnl>=0?"text-emerald-400":"text-rose-400"}`}>
-                                  {t.pnl>=0?"+":""}{t.pnl.toFixed(0)}
-                                </td>
-                                <td className="px-3 py-1.5 text-slate-500">{t.holdDays}d</td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                )}
-              </div>
+                {/* Monthly P&L */}
+                <div className="rounded-xl p-4" style={{background:"#1e222d",border:"1px solid #2a2e39"}}>
+                  <IndicatorMonthlyGrid trades={selectedBtResult.trades}/>
+                </div>
+
+                {/* Trade Log */}
+                <div className="rounded-xl p-4" style={{background:"#1e222d",border:"1px solid #2a2e39"}}>
+                  <IndicatorTradeLog
+                    trades={selectedBtResult.trades}
+                    symbol={selectedBtResult.symbol}
+                    activeTrade={focusTrade}
+                    onTradeClick={trade => {
+                      setFocusTrade(trade);
+                    }}
+                  />
+                </div>
+              </>
             )}
 
-            {!btRunning&&!btSummary&&(
-              <div className="flex flex-col items-center justify-center py-10 text-center">
-                <div className="w-12 h-12 rounded-full bg-slate-900 border border-slate-800 flex items-center justify-center mb-3 text-2xl">
-                  ▶
-                </div>
-                <p className="text-sm text-slate-500 font-medium">Run a backtest to see results</p>
-                <p className="text-xs text-slate-700 mt-1">Configure universe and period, then click Run Backtest</p>
+            {selectedBtResult&&selectedBtResult.trades.length===0&&(
+              <div className="rounded-xl p-6 text-center" style={{background:"#1e222d",border:"1px solid #2a2e39"}}>
+                <p className="text-slate-400 font-medium mb-1">No trades for {selectedBtResult.symbol}</p>
+                <p className="text-xs" style={{color:"#787b86"}}>Conditions did not trigger in this period.</p>
               </div>
             )}
-          </div>
+          </>
         )}
       </div>
     </div>

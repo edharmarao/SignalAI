@@ -1,0 +1,463 @@
+{
+  "info": {
+    "name": "SignalAI API",
+    "_postman_id": "signal-ai-collection",
+    "description": "SignalAI FastAPI \u2014 all endpoints. Base URL: http://localhost:8003/api/v1\nAuth: Basic Auth (edrao / <password from .env API_PASSWORD>)",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "basic",
+    "basic": [
+      {
+        "key": "username",
+        "value": "{{api_username}}",
+        "type": "string"
+      },
+      {
+        "key": "password",
+        "value": "{{api_password}}",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:8003/api/v1"
+    },
+    {
+      "key": "api_username",
+      "value": "edrao"
+    },
+    {
+      "key": "api_password",
+      "value": "prabhas123*"
+    }
+  ],
+  "item": [
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Login",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/auth/login",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{api_username}}\",\n  \"password\": \"{{api_password}}\"\n}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Charts",
+      "item": [
+        {
+          "name": "List Symbols",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/charts/symbols",
+            "description": "Returns all NSE EQ symbols from nse_eq_symbols table."
+          }
+        },
+        {
+          "name": "Get OHLCV Candles (Daily)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/charts/candles?symbol=RELIANCE&timeframe=1D&from=2025-01-01&to=2026-06-01&limit=500",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "charts",
+                "candles"
+              ],
+              "query": [
+                {
+                  "key": "symbol",
+                  "value": "RELIANCE"
+                },
+                {
+                  "key": "timeframe",
+                  "value": "1D",
+                  "description": "5m | 15m | 1H | 1D | 1W | 1M"
+                },
+                {
+                  "key": "from",
+                  "value": "2025-01-01"
+                },
+                {
+                  "key": "to",
+                  "value": "2026-06-01"
+                },
+                {
+                  "key": "limit",
+                  "value": "500"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get OHLCV Candles (5min)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/charts/candles?symbol=RELIANCE&timeframe=5m&from=2026-05-01&to=2026-06-01&limit=500",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "charts",
+                "candles"
+              ],
+              "query": [
+                {
+                  "key": "symbol",
+                  "value": "RELIANCE"
+                },
+                {
+                  "key": "timeframe",
+                  "value": "5m"
+                },
+                {
+                  "key": "from",
+                  "value": "2026-05-01"
+                },
+                {
+                  "key": "to",
+                  "value": "2026-06-01"
+                },
+                {
+                  "key": "limit",
+                  "value": "500"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Symbol Summary",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/charts/summary?symbol=RELIANCE",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "charts",
+                "summary"
+              ],
+              "query": [
+                {
+                  "key": "symbol",
+                  "value": "RELIANCE"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Indicator Backtest \u2014 EMA Cross (Daily)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/charts/indicator-backtest",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"symbols\": [\"RELIANCE\", \"TCS\"],\n  \"timeframe\": \"daily\",\n  \"from_date\": \"2025-01-01\",\n  \"to_date\": \"2026-06-01\",\n  \"conditions\": [\n    {\n      \"lhs\": { \"kind\": \"EMA\", \"src\": \"close\", \"period\": 9 },\n      \"op\": \"crosses above\",\n      \"rhs\": { \"kind\": \"EMA\", \"src\": \"close\", \"period\": 21 }\n    }\n  ],\n  \"action\": \"BUY\",\n  \"sl_pct\": 2.0,\n  \"tp_pct\": 4.0,\n  \"tsl_pct\": 0.0,\n  \"qty\": 100,\n  \"max_hold_days\": 30\n}"
+            },
+            "description": "Run indicator strategy backtest on daily data. Supported timeframe values: daily, weekly, 75min, 15min, 5min, 25min, 125min"
+          }
+        },
+        {
+          "name": "Indicator Backtest \u2014 EMA Cross (5min)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/charts/indicator-backtest",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"symbols\": [\"RELIANCE\"],\n  \"timeframe\": \"5min\",\n  \"from_date\": \"2026-05-01\",\n  \"to_date\": \"2026-06-05\",\n  \"conditions\": [\n    {\n      \"lhs\": { \"kind\": \"EMA\", \"src\": \"close\", \"period\": 9 },\n      \"op\": \"crosses above\",\n      \"rhs\": { \"kind\": \"EMA\", \"src\": \"close\", \"period\": 21 }\n    }\n  ],\n  \"action\": \"BUY\",\n  \"sl_pct\": 0.5,\n  \"tp_pct\": 1.0,\n  \"tsl_pct\": 0.0,\n  \"qty\": 100,\n  \"max_hold_days\": 2\n}"
+            }
+          }
+        },
+        {
+          "name": "Indicator Backtest \u2014 RSI Oversold (Daily)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/charts/indicator-backtest",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"symbols\": [\"RELIANCE\"],\n  \"timeframe\": \"daily\",\n  \"from_date\": \"2024-01-01\",\n  \"to_date\": \"2026-06-01\",\n  \"conditions\": [\n    {\n      \"lhs\": { \"kind\": \"RSI\", \"src\": \"close\", \"period\": 14 },\n      \"op\": \"crosses above\",\n      \"rhs\": { \"kind\": \"value\", \"value\": 40 }\n    }\n  ],\n  \"action\": \"BUY\",\n  \"sl_pct\": 3.0,\n  \"tp_pct\": 6.0,\n  \"tsl_pct\": 1.0,\n  \"qty\": 50,\n  \"max_hold_days\": 45\n}"
+            }
+          }
+        },
+        {
+          "name": "Indicator Backtest \u2014 SMA + Supertrend (Multi-condition)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/charts/indicator-backtest",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"symbols\": [\"RELIANCE\", \"TCS\", \"INFY\"],\n  \"timeframe\": \"daily\",\n  \"from_date\": \"2025-01-01\",\n  \"to_date\": \"2026-06-01\",\n  \"conditions\": [\n    {\n      \"lhs\": { \"kind\": \"SMA\", \"src\": \"close\", \"period\": 9 },\n      \"op\": \"crosses above\",\n      \"rhs\": { \"kind\": \"SMA\", \"src\": \"close\", \"period\": 21 }\n    },\n    {\n      \"lhs\": { \"kind\": \"SUPERTREND\", \"src\": \"close\", \"period\": 10 },\n      \"op\": \"crosses above\",\n      \"rhs\": { \"kind\": \"price\" }\n    }\n  ],\n  \"action\": \"BUY\",\n  \"sl_pct\": 2.5,\n  \"tp_pct\": 5.0,\n  \"tsl_pct\": 0.0,\n  \"qty\": 100,\n  \"max_hold_days\": 30\n}"
+            }
+          }
+        },
+        {
+          "name": "Get Index Symbols (F&O)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/charts/index-symbols?index=fo",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "charts",
+                "index-symbols"
+              ],
+              "query": [
+                {
+                  "key": "index",
+                  "value": "fo",
+                  "description": "n50|next50|n100|midcap150|midcap250|smallcap250|n500|microcap250|fo"
+                }
+              ]
+            },
+            "description": "Get all F&O eligible NSE stocks"
+          }
+        },
+        {
+          "name": "All Indexes (symbol browser)",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/charts/all-indexes",
+            "description": "Returns all 750 symbols with their index membership (n50, next50, n100, midcap150, midcap250, smallcap250, n500, microcap250, fo)"
+          }
+        },
+        {
+          "name": "Reseed Index Symbols (admin)",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/charts/reseed-indexes",
+            "description": "Force re-populate nse_symbol_indexes table from latest data"
+          }
+        }
+      ]
+    },
+    {
+      "name": "ORB Chart Data",
+      "item": [
+        {
+          "name": "Get ORB Chart Data (Daily)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/orb/chart-data?symbol=RELIANCE&timeframe=daily&from_date=2025-01-01&to_date=2026-06-05&limit=500",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "orb",
+                "chart-data"
+              ],
+              "query": [
+                {
+                  "key": "symbol",
+                  "value": "RELIANCE"
+                },
+                {
+                  "key": "timeframe",
+                  "value": "daily",
+                  "description": "1min|5min|15min|25min|75min|125min|daily|weekly"
+                },
+                {
+                  "key": "from_date",
+                  "value": "2025-01-01"
+                },
+                {
+                  "key": "to_date",
+                  "value": "2026-06-05"
+                },
+                {
+                  "key": "limit",
+                  "value": "500"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get ORB Chart Data (5min)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/orb/chart-data?symbol=RELIANCE&timeframe=5min&from_date=2026-05-01&to_date=2026-06-05&limit=1000",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "orb",
+                "chart-data"
+              ],
+              "query": [
+                {
+                  "key": "symbol",
+                  "value": "RELIANCE"
+                },
+                {
+                  "key": "timeframe",
+                  "value": "5min"
+                },
+                {
+                  "key": "from_date",
+                  "value": "2026-05-01"
+                },
+                {
+                  "key": "to_date",
+                  "value": "2026-06-05"
+                },
+                {
+                  "key": "limit",
+                  "value": "1000"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "List ORB Stocks",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/orb/stocks?timeframe=daily&q=",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "orb",
+                "stocks"
+              ],
+              "query": [
+                {
+                  "key": "timeframe",
+                  "value": "daily"
+                },
+                {
+                  "key": "q",
+                  "value": ""
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Strategies",
+      "item": [
+        {
+          "name": "List Strategies",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/strategies"
+          }
+        },
+        {
+          "name": "Get Strategy by ID",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/strategies/:id",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "strategies",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "replace-with-strategy-id"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Create Indicator Strategy",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/strategies",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"EMA 9/21 Cross\",\n  \"type\": \"indicator\",\n  \"strategy_json\": {\n    \"symbol\": \"RELIANCE\",\n    \"symbols\": [\"RELIANCE\", \"TCS\"],\n    \"tf\": \"1D\",\n    \"action\": \"BUY\",\n    \"exitMode\": \"Both\",\n    \"sl\": \"2\",\n    \"tp\": \"4\",\n    \"tsl\": \"1\",\n    \"rawConditions\": [\n      {\n        \"id\": \"c1\",\n        \"lhs\": { \"kind\": \"EMA\", \"src\": \"close\", \"period\": 9 },\n        \"op\": \"crosses above\",\n        \"rhs\": { \"kind\": \"EMA\", \"src\": \"close\", \"period\": 21 }\n      }\n    ],\n    \"entry\": {\n      \"conditions\": [\n        {\n          \"lhs\": { \"kind\": \"EMA\", \"src\": \"close\", \"period\": 9 },\n          \"op\": \"crosses above\",\n          \"rhs\": { \"kind\": \"EMA\", \"src\": \"close\", \"period\": 21 }\n        }\n      ]\n    },\n    \"risk\": { \"maxLossPerDay\": 2000, \"maxTrades\": 5 }\n  }\n}"
+            }
+          }
+        },
+        {
+          "name": "Delete Strategy",
+          "request": {
+            "method": "DELETE",
+            "url": {
+              "raw": "{{base_url}}/strategies/:id",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "strategies",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "replace-with-strategy-id"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
