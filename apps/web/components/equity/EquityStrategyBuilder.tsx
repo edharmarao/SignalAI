@@ -765,7 +765,7 @@ function TradeDetailModal({ trade, symbol, tf, conds, sl, tp, tsl, exitMode, act
 
   // Fetch candles for the trade's date window (with padding)
   useEffect(() => {
-    const timeframe = TF_TO_TIMEFRAME[tf] ?? "daily";
+    const timeframe = tf; // /charts/candles expects "1D","5m","1H" etc. directly
     const padDays = tf === "1D" || tf === "1W" ? 30 : 5;
     const from = new Date(trade.entryDate); from.setDate(from.getDate() - padDays);
     const to   = new Date(trade.exitDate);  to.setDate(to.getDate() + padDays);
@@ -773,8 +773,15 @@ function TradeDetailModal({ trade, symbol, tf, conds, sl, tp, tsl, exitMode, act
     const toStr   = to.toISOString().slice(0, 10);
 
     setLoading(true);
-    api<OHLCVRow[]>(`/charts/candles?symbol=${symbol}&timeframe=${timeframe}&from=${fromStr}&to=${toStr}`)
-      .then(data => setCandles(data ?? []))
+    api<{candles: Array<{t:number;o:number;h:number;l:number;c:number;v:number}>}>(`/charts/candles?symbol=${symbol}&timeframe=${timeframe}&from=${fromStr}&to=${toStr}`)
+      .then(resp => {
+        // /charts/candles returns {candles:[{t,o,h,l,c,v}]} where t is epoch ms
+        const rows: OHLCVRow[] = (resp.candles ?? []).map(r => ({
+          time: new Date(r.t).toISOString().slice(0, 10),
+          open: r.o, high: r.h, low: r.l, close: r.c, volume: r.v,
+        }));
+        setCandles(rows);
+      })
       .catch(() => setCandles([]))
       .finally(() => setLoading(false));
   }, [trade, symbol, tf]);
@@ -807,7 +814,8 @@ function TradeDetailModal({ trade, symbol, tf, conds, sl, tp, tsl, exitMode, act
       priceLineVisible: false,
     });
     const candleData = candles.map(r => ({
-      time: (Math.floor(new Date(r.time.replace(" ", "T") + (r.time.length === 10 ? "T00:00:00" : "") + "+05:30").getTime() / 1000)) as UTCTimestamp,
+      // r.time is "YYYY-MM-DD" — use as date string directly for LW charts
+      time: r.time as unknown as UTCTimestamp,
       open: r.open, high: r.high, low: r.low, close: r.close,
     }));
     cs.setData(candleData);
@@ -844,15 +852,20 @@ function TradeDetailModal({ trade, symbol, tf, conds, sl, tp, tsl, exitMode, act
 
     // ── Entry / Exit markers ──────────────────────────────────────────────────
     const markers: Parameters<typeof createSeriesMarkers>[1] = [];
-    const entryTs = Math.floor(new Date(trade.entryDate + "T00:00:00+05:30").getTime() / 1000) as UTCTimestamp;
-    const exitTs  = Math.floor(new Date(trade.exitDate  + "T00:00:00+05:30").getTime() / 1000) as UTCTimestamp;
+    const entryTs = trade.entryDate as unknown as UTCTimestamp;
+    const exitTs  = trade.exitDate  as unknown as UTCTimestamp;
     markers.push({ time: entryTs, position: "belowBar", color: "#3b82f6", shape: "arrowUp",   text: `▶ Entry ₹${trade.entryPrice.toFixed(2)}` });
     markers.push({ time: exitTs,  position: "aboveBar", color: trade.pnl >= 0 ? "#26a69a" : "#ef5350", shape: "arrowDown", text: `◀ ${trade.exitReason} ₹${trade.exitPrice.toFixed(2)}` });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     createSeriesMarkers(cs as any, markers);
 
     // ── Zoom to trade window ──────────────────────────────────────────────────
-    chart.timeScale().setVisibleRange({ from: (entryTs - 86400 * 5) as UTCTimestamp, to: (exitTs + 86400 * 5) as UTCTimestamp });
+    // Pad 10 candles each side by adding days to date string
+    const pad = (dateStr: string, days: number) => {
+      const d = new Date(dateStr); d.setDate(d.getDate() + days);
+      return d.toISOString().slice(0, 10) as unknown as UTCTimestamp;
+    };
+    chart.timeScale().setVisibleRange({ from: pad(trade.entryDate, -10), to: pad(trade.exitDate, 10) });
 
     const ro = new ResizeObserver(() => { chart.applyOptions({ width: el.clientWidth || 800, height: el.clientHeight || 420 }); });
     ro.observe(el);
@@ -920,7 +933,7 @@ function TradeDetailModal({ trade, symbol, tf, conds, sl, tp, tsl, exitMode, act
               {loading ? (
                 <>
                   <div className="w-8 h-8 rounded-full border-2 border-blue-500 border-t-transparent animate-spin"/>
-                  <p className="text-xs text-slate-500">Fetching {TF_TO_TIMEFRAME[tf] ?? "daily"} candles…</p>
+                  <p className="text-xs text-slate-500">Fetching {tf} candles…</p>
                 </>
               ) : (
                 <p className="text-sm text-slate-500">No candle data for this period.</p>
