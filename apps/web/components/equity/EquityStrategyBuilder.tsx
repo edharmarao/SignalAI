@@ -733,20 +733,39 @@ function IndicatorMonthlyGrid({ trades }: { trades: Trade[] }) {
 }
 
 // ── Trade Detail Modal ─────────────────────────────────────────────────────────
-function TradeDetailModal({ trade, symbol, tf, onClose }: {
+function TradeDetailModal({ trade, symbol, tf, conds, sl, tp, tsl, exitMode, action, onClose }: {
   trade: Trade;
   symbol: string;
   tf: string;
+  conds: ECond[];
+  sl: string; tp: string; tsl: string;
+  exitMode: ExitM;
+  action: "BUY" | "SELL";
   onClose: () => void;
 }) {
   const chartRef = useRef<HTMLDivElement>(null);
   const [candles, setCandles] = useState<OHLCVRow[]>([]);
   const [loading, setLoading] = useState(true);
 
+  // Compute SL/TP price levels from entry price and exit params
+  function calcLevel(entry: number, value: string, mode: ExitM, isSL: boolean): number | null {
+    const v = parseFloat(value);
+    if (!v) return null;
+    const dir = action === "BUY" ? 1 : -1;
+    if (mode === "%")   return entry * (1 + dir * (isSL ? -v : v) / 100);
+    if (mode === "pts") return entry + dir * (isSL ? -v : v);
+    return null; // ₹ mode is total P&L, not per-share — skip
+  }
+  const slPrice  = calcLevel(trade.entryPrice, sl,  exitMode, true);
+  const tpPrice  = calcLevel(trade.entryPrice, tp,  exitMode, false);
+  const tslPrice = calcLevel(trade.entryPrice, tsl, exitMode, true);
+
+  // Active indicators from conditions
+  const inds = useMemo(() => activeInds(conds), [conds]);
+
   // Fetch candles for the trade's date window (with padding)
   useEffect(() => {
     const timeframe = TF_TO_TIMEFRAME[tf] ?? "daily";
-    // Pad by 30 candles worth of days
     const padDays = tf === "1D" || tf === "1W" ? 30 : 5;
     const from = new Date(trade.entryDate); from.setDate(from.getDate() - padDays);
     const to   = new Date(trade.exitDate);  to.setDate(to.getDate() + padDays);
@@ -774,32 +793,65 @@ function TradeDetailModal({ trade, symbol, tf, onClose }: {
       rightPriceScale: { borderColor: "#2a2e39" },
     });
 
+    // ── Candlestick series ────────────────────────────────────────────────────
     const cs = chart.addSeries(CandlestickSeries, {
       upColor: "#26a69a", downColor: "#ef5350",
       borderUpColor: "#26a69a", borderDownColor: "#ef5350",
       wickUpColor: "#26a69a", wickDownColor: "#ef5350",
+      priceLineVisible: false,
     });
-    cs.setData(candles.map(r => ({
+    const candleData = candles.map(r => ({
       time: (Math.floor(new Date(r.time.replace(" ", "T") + (r.time.length === 10 ? "T00:00:00" : "") + "+05:30").getTime() / 1000)) as UTCTimestamp,
       open: r.open, high: r.high, low: r.low, close: r.close,
-    })));
+    }));
+    cs.setData(candleData);
 
-    // Entry / Exit markers
+    // ── Indicator overlay lines ───────────────────────────────────────────────
+    const closes = candles.map(r => r.close);
+    for (const ind of inds) {
+      if (ind.kind === "RSI" || ind.kind === "MACD") continue; // skip sub-pane indicators
+      let vals: number[];
+      if      (ind.kind === "SMA")        vals = sma(closes, ind.period);
+      else if (ind.kind === "EMA")        vals = ema(closes, ind.period);
+      else if (ind.kind === "WMA")        vals = sma(closes, ind.period);
+      else if (ind.kind === "VWAP")       vals = vwap(candles);
+      else if (ind.kind === "SUPERTREND") vals = supertrend(candles, ind.period, 3);
+      else if (ind.kind === "BBANDS") {
+        const { upper, mid, lower } = bbands(closes, ind.period, 2);
+        for (const [arr, col] of [[upper, ind.color], [mid, "#94a3b8"], [lower, ind.color]] as [number[], string][]) {
+          const ls = chart.addSeries(LineSeries, { color: col, lineWidth: 1 as const, priceLineVisible: false, lastValueVisible: false });
+          ls.setData(candles.map((r, i) => ({ time: candleData[i].time, value: arr[i] })).filter(x => !isNaN(x.value)));
+        }
+        continue;
+      } else continue;
+      const ls = chart.addSeries(LineSeries, { color: ind.color, lineWidth: 1 as const, priceLineVisible: false, lastValueVisible: true, title: `${ind.kind}(${ind.period})` });
+      ls.setData(candles.map((r, i) => ({ time: candleData[i].time, value: vals[i] })).filter(x => !isNaN(x.value)));
+    }
+
+    // ── Entry price line ──────────────────────────────────────────────────────
+    cs.createPriceLine({ price: trade.entryPrice, color: "#3b82f6", lineWidth: 1 as const, lineStyle: LineStyle.Dashed, axisLabelVisible: true, title: `Entry ₹${trade.entryPrice.toFixed(2)}` });
+
+    // ── SL / TP / TSL price lines ─────────────────────────────────────────────
+    if (slPrice  !== null) cs.createPriceLine({ price: slPrice,  color: "#ef5350", lineWidth: 1 as const, lineStyle: LineStyle.Dashed, axisLabelVisible: true, title: `SL ₹${slPrice.toFixed(2)}` });
+    if (tpPrice  !== null) cs.createPriceLine({ price: tpPrice,  color: "#26a69a", lineWidth: 1 as const, lineStyle: LineStyle.Dashed, axisLabelVisible: true, title: `TP ₹${tpPrice.toFixed(2)}` });
+    if (tslPrice !== null && tslPrice !== slPrice) cs.createPriceLine({ price: tslPrice, color: "#f59e0b", lineWidth: 1 as const, lineStyle: LineStyle.Dotted, axisLabelVisible: true, title: `TSL ₹${tslPrice.toFixed(2)}` });
+
+    // ── Entry / Exit markers ──────────────────────────────────────────────────
     const markers: Parameters<typeof createSeriesMarkers>[1] = [];
     const entryTs = Math.floor(new Date(trade.entryDate + "T00:00:00+05:30").getTime() / 1000) as UTCTimestamp;
     const exitTs  = Math.floor(new Date(trade.exitDate  + "T00:00:00+05:30").getTime() / 1000) as UTCTimestamp;
-    markers.push({ time: entryTs, position: "belowBar", color: "#26a69a", shape: "arrowUp",   text: `Entry ₹${trade.entryPrice.toFixed(2)}` });
-    markers.push({ time: exitTs,  position: "aboveBar", color: trade.pnl >= 0 ? "#26a69a" : "#ef5350", shape: "arrowDown", text: `Exit ₹${trade.exitPrice.toFixed(2)} (${trade.exitReason})` });
+    markers.push({ time: entryTs, position: "belowBar", color: "#3b82f6", shape: "arrowUp",   text: `▶ Entry ₹${trade.entryPrice.toFixed(2)}` });
+    markers.push({ time: exitTs,  position: "aboveBar", color: trade.pnl >= 0 ? "#26a69a" : "#ef5350", shape: "arrowDown", text: `◀ ${trade.exitReason} ₹${trade.exitPrice.toFixed(2)}` });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     createSeriesMarkers(cs as any, markers);
 
-    // Zoom to trade window
-    chart.timeScale().setVisibleRange({ from: (entryTs - 86400 * 3) as UTCTimestamp, to: (exitTs + 86400 * 3) as UTCTimestamp });
+    // ── Zoom to trade window ──────────────────────────────────────────────────
+    chart.timeScale().setVisibleRange({ from: (entryTs - 86400 * 5) as UTCTimestamp, to: (exitTs + 86400 * 5) as UTCTimestamp });
 
     const ro = new ResizeObserver(() => { chart.applyOptions({ width: el.clientWidth, height: el.clientHeight }); });
     ro.observe(el);
     return () => { ro.disconnect(); chart.remove(); };
-  }, [candles, trade]);
+  }, [candles, trade, inds, slPrice, tpPrice, tslPrice]);
 
   const reasonStyle: Record<string, string> = {
     SL:  "bg-[#ef5350]/20 text-[#ef5350] border-[#ef5350]/30",
@@ -867,9 +919,23 @@ function TradeDetailModal({ trade, symbol, tf, onClose }: {
           )}
         </div>
 
-        {/* Footer hint */}
-        <div className="px-5 py-2 border-t text-[10px] text-[#787b86] shrink-0" style={{borderColor:"#2a2e39",background:"#0e1117"}}>
-          🟢 Entry marker · 🔴 Exit marker · Scroll to zoom · Drag to pan
+        {/* Footer legend */}
+        <div className="px-5 py-2 border-t shrink-0 flex items-center gap-4 flex-wrap" style={{borderColor:"#2a2e39",background:"#0e1117"}}>
+          <span className="flex items-center gap-1 text-[10px]" style={{color:"#787b86"}}>
+            <span className="text-blue-400">▶</span> Entry
+          </span>
+          <span className="flex items-center gap-1 text-[10px]" style={{color:"#787b86"}}>
+            <span style={{color: trade.pnl >= 0 ? "#26a69a" : "#ef5350"}}>◀</span> {trade.exitReason} Exit
+          </span>
+          {slPrice  !== null && <span className="flex items-center gap-1 text-[10px] text-[#ef5350]"><span className="w-5 border-t-2 border-dashed border-[#ef5350]"/>SL ₹{slPrice.toFixed(0)}</span>}
+          {tpPrice  !== null && <span className="flex items-center gap-1 text-[10px] text-[#26a69a]"><span className="w-5 border-t-2 border-dashed border-[#26a69a]"/>TP ₹{tpPrice.toFixed(0)}</span>}
+          {tslPrice !== null && tslPrice !== slPrice && <span className="flex items-center gap-1 text-[10px] text-amber-400"><span className="w-5 border-t-2 border-dotted border-amber-400"/>TSL ₹{tslPrice.toFixed(0)}</span>}
+          {inds.filter(i => i.kind !== "RSI" && i.kind !== "MACD").map(ind => (
+            <span key={`${ind.kind}-${ind.period}`} className="flex items-center gap-1 text-[10px]" style={{color: ind.color}}>
+              <span className="w-4 border-t-2" style={{borderColor: ind.color}}/>{ind.kind}({ind.period})
+            </span>
+          ))}
+          <span className="ml-auto text-[9px]" style={{color:"#4a4f5a"}}>Scroll to zoom · Drag to pan</span>
         </div>
       </div>
     </div>
@@ -877,10 +943,14 @@ function TradeDetailModal({ trade, symbol, tf, onClose }: {
 }
 
 // ── Indicator Trade Log ────────────────────────────────────────────────────────
-function IndicatorTradeLog({ trades, symbol, tf, onTradeClick, activeTrade }: {
+function IndicatorTradeLog({ trades, symbol, tf, conds, sl, tp, tsl, exitMode, action, onTradeClick, activeTrade }: {
   trades: Trade[];
   symbol: string;
   tf: string;
+  conds: ECond[];
+  sl: string; tp: string; tsl: string;
+  exitMode: ExitM;
+  action: "BUY" | "SELL";
   onTradeClick?: (trade: Trade | null) => void;
   activeTrade?: Trade | null;
 }) {
@@ -930,6 +1000,10 @@ function IndicatorTradeLog({ trades, symbol, tf, onTradeClick, activeTrade }: {
           trade={modalTrade}
           symbol={symbol}
           tf={tf}
+          conds={conds}
+          sl={sl} tp={tp} tsl={tsl}
+          exitMode={exitMode}
+          action={action}
           onClose={() => { setModalTrade(null); onTradeClick?.(null); }}
         />
       )}
@@ -1655,10 +1729,12 @@ export default function EquityStrategyBuilder({ editId }: { editId?: string }) {
                     trades={selectedBtResult.trades}
                     symbol={selectedBtResult.symbol}
                     tf={tf}
+                    conds={conds}
+                    sl={sl} tp={tp} tsl={tsl}
+                    exitMode={exitMode}
+                    action={action}
                     activeTrade={focusTrade}
-                    onTradeClick={trade => {
-                      setFocusTrade(trade);
-                    }}
+                    onTradeClick={trade => { setFocusTrade(trade); }}
                   />
                 </div>
               </>
