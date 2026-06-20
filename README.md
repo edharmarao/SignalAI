@@ -68,77 +68,52 @@ packages/
 
 ## 🚀 Quick start
 
-### 1. Install JS deps
+After cloning, run the **one-time bootstrap** — it sets up everything:
 
 ```bash
-npm install
+bash scripts/bootstrap.sh
 ```
 
-### 2. Install API deps
+This single command:
+| Step | What it does |
+|---|---|
+| 1 | Sets git identity → `edharmarao / edharmarao@gmail.com` |
+| 2 | Reads `GITHUB_TOKEN` from `.env` and wires the git remote so `git push` works without prompts |
+| 3 | Runs `npm install` — installs all JS deps and workspaces (`apps/web`, `packages/*`) |
+| 4 | Creates `apps/api/.venv` and runs `pip install -r requirements.txt` |
+| 5 | Prints a ready-to-run summary |
 
-```bash
-cd apps/api
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-```
+> **Python 3.14t (free-threaded)** is recommended. Download from [python.org](https://www.python.org/downloads/) or use `pyenv`. Falls back to any available `python3`.
 
-> **Python 3.14t (free-threaded)** is required. Download from [python.org](https://www.python.org/downloads/) or use `pyenv`.
+---
 
-### 3. Git identity
-
-The repo is configured for a single committer. `npm run api` sets this automatically on every start:
-
-```bash
-git config user.email "edharmarao@gmail.com"
-git config user.name  "edharmarao"
-```
-
-To set it once manually:
-
-```bash
-git config user.email "edharmarao@gmail.com"
-git config user.name  "edharmarao"
-```
-
-### 4. Configure env
-
-The project uses two env files at the repo root:
+### Env files
 
 | File | When used |
 |---|---|
-| `.env` | **All machines** — connects to remote host (`209.182.232.165`) |
-| `.env.prod` | **Remote host only** — services connect to `localhost` |
+| `.env` | **All machines** — DB/Redis connect to remote host (`209.182.232.165`) |
+| `.env.prod` | **Remote host only** — DB/Redis connect to `localhost` |
 
-The correct file is **picked automatically** — no manual step needed:
+The correct file is picked **automatically** at runtime — no manual switching needed.
 
-| Scenario | Env loaded |
-|---|---|
-| Running on `209.182.232.165` | `.env.prod` |
-| Running on any other machine | `.env` |
-| `APP_ENV=prod` is set explicitly | `.env.prod` |
+---
 
-### 5. Run the dev servers
+### Run the servers
 
 ```bash
-# Terminal 1 — API  (auto-detects env)
+# Terminal 1 — API (hot reload, uses .env)
 npm run api
 
-# Terminal 2 — Web  (auto-detects env)
+# Terminal 2 — Web (hot reload, uses .env)
 npm run dev
 ```
 
-Force production env from any machine:
+**On the remote host (`209.182.232.165`) or to force prod:**
 
 ```bash
-npm run api --prod
-npm run dev --prod
-
-# Or with uvicorn directly:
-APP_ENV=prod uvicorn app.main:app --reload
+npm run api:prod    # API using .env.prod
+npm run start       # Web using .env.prod (built)
 ```
-
-> Both `npm run api` and `uvicorn app.main:app` read the same `APP_ENV` variable,
-> so you get identical behaviour regardless of how you launch the API.
 
 On startup the API prints a **connection status banner**:
 
@@ -148,8 +123,6 @@ On startup the API prints a **connection status banner**:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   MySQL    209.182.232.165:3306      ●  CONNECTED   db=stocks  user=edr
   Redis    209.182.232.165:6379      ●  CONNECTED   PONG
-  MongoDB  209.182.232.165:27017     ●  CONNECTED   db=stocks
-  QuestDB  209.182.232.165:9009      ●  CONNECTED   TCP reachable
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ```
 

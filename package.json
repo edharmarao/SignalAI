@@ -7,12 +7,12 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "set -a && source .env && set +a; PORT_TO_KILL=${PORT:-3003}; lsof -ti:$PORT_TO_KILL | xargs kill -9 2>/dev/null && echo \"[dev] Killed process on port $PORT_TO_KILL\" || true; echo \"[dev] Using .env\"; npm run dev --workspace apps/web",
-    "start": "set -a && source .env.prod && set +a; PORT_TO_KILL=${PORT:-3003}; lsof -ti:$PORT_TO_KILL | xargs kill -9 2>/dev/null && echo \"[start] Killed process on port $PORT_TO_KILL\" || true; echo \"[start] Using .env.prod\"; APP_ENV=prod npm run start --workspace apps/web",
-    "build": "npm run build --workspace apps/web",
-    "lint": "npm run lint --workspaces --if-present",
-    "api": "set -a && source .env && set +a; git config user.email \"edharmarao@gmail.com\" && git config user.name \"edharmarao\"; PORT_TO_KILL=${API_PORT:-8003}; lsof -ti:$PORT_TO_KILL | xargs kill -9 2>/dev/null && echo \"[api] Killed process on port $PORT_TO_KILL\" || true; echo \"[api] Using .env\"; cd apps/api && .venv/bin/uvicorn app.main:app --reload --host 0.0.0.0 --port $PORT_TO_KILL",
-    "api:prod": "APP_ENV=prod set -a && source .env.prod && set +a; git config user.email \"edharmarao@gmail.com\" && git config user.name \"edharmarao\"; PORT_TO_KILL=${API_PORT:-8003}; lsof -ti:$PORT_TO_KILL | xargs kill -9 2>/dev/null && echo \"[api:prod] Killed process on port $PORT_TO_KILL\" || true; echo \"[api:prod] Using .env.prod\"; cd apps/api && APP_ENV=prod .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port $PORT_TO_KILL"
+    "dev":      "set -a && source .env && set +a; lsof -ti:${PORT:-3003} | xargs kill -9 2>/dev/null || true; npm run dev --workspace apps/web",
+    "start":    "set -a && source .env.prod && set +a; lsof -ti:${PORT:-3003} | xargs kill -9 2>/dev/null || true; APP_ENV=prod npm run start --workspace apps/web",
+    "build":    "npm run build --workspace apps/web",
+    "lint":     "npm run lint --workspaces --if-present",
+    "api":      "set -a && source .env && set +a; lsof -ti:${API_PORT:-8003} | xargs kill -9 2>/dev/null || true; cd apps/api && .venv/bin/uvicorn app.main:app --reload --host 0.0.0.0 --port ${API_PORT:-8003}",
+    "api:prod": "set -a && source .env.prod && set +a; lsof -ti:${API_PORT:-8003} | xargs kill -9 2>/dev/null || true; cd apps/api && APP_ENV=prod .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port ${API_PORT:-8003}"
   },
   "engines": {
     "node": ">=22.17.1"
