@@ -732,10 +732,155 @@ function IndicatorMonthlyGrid({ trades }: { trades: Trade[] }) {
   );
 }
 
+// ── Trade Detail Modal ─────────────────────────────────────────────────────────
+function TradeDetailModal({ trade, symbol, tf, onClose }: {
+  trade: Trade;
+  symbol: string;
+  tf: string;
+  onClose: () => void;
+}) {
+  const chartRef = useRef<HTMLDivElement>(null);
+  const [candles, setCandles] = useState<OHLCVRow[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  // Fetch candles for the trade's date window (with padding)
+  useEffect(() => {
+    const timeframe = TF_TO_TIMEFRAME[tf] ?? "daily";
+    // Pad by 30 candles worth of days
+    const padDays = tf === "1D" || tf === "1W" ? 30 : 5;
+    const from = new Date(trade.entryDate); from.setDate(from.getDate() - padDays);
+    const to   = new Date(trade.exitDate);  to.setDate(to.getDate() + padDays);
+    const fromStr = from.toISOString().slice(0, 10);
+    const toStr   = to.toISOString().slice(0, 10);
+
+    setLoading(true);
+    api<OHLCVRow[]>(`/charts/candles?symbol=${symbol}&timeframe=${timeframe}&from=${fromStr}&to=${toStr}`)
+      .then(data => setCandles(data ?? []))
+      .catch(() => setCandles([]))
+      .finally(() => setLoading(false));
+  }, [trade, symbol, tf]);
+
+  // Build chart once candles loaded
+  useEffect(() => {
+    const el = chartRef.current;
+    if (!el || candles.length === 0) return;
+
+    const chart = createChart(el, {
+      width: el.clientWidth, height: el.clientHeight,
+      layout: { background: { type: ColorType.Solid, color: "#0e1117" }, textColor: "#9598a1", fontSize: 11 },
+      grid: { vertLines: { color: "#1e222d" }, horzLines: { color: "#1e222d" } },
+      crosshair: { mode: CrosshairMode.Normal },
+      timeScale: { borderColor: "#2a2e39", timeVisible: true },
+      rightPriceScale: { borderColor: "#2a2e39" },
+    });
+
+    const cs = chart.addSeries(CandlestickSeries, {
+      upColor: "#26a69a", downColor: "#ef5350",
+      borderUpColor: "#26a69a", borderDownColor: "#ef5350",
+      wickUpColor: "#26a69a", wickDownColor: "#ef5350",
+    });
+    cs.setData(candles.map(r => ({
+      time: (Math.floor(new Date(r.time.replace(" ", "T") + (r.time.length === 10 ? "T00:00:00" : "") + "+05:30").getTime() / 1000)) as UTCTimestamp,
+      open: r.open, high: r.high, low: r.low, close: r.close,
+    })));
+
+    // Entry / Exit markers
+    const markers: Parameters<typeof createSeriesMarkers>[1] = [];
+    const entryTs = Math.floor(new Date(trade.entryDate + "T00:00:00+05:30").getTime() / 1000) as UTCTimestamp;
+    const exitTs  = Math.floor(new Date(trade.exitDate  + "T00:00:00+05:30").getTime() / 1000) as UTCTimestamp;
+    markers.push({ time: entryTs, position: "belowBar", color: "#26a69a", shape: "arrowUp",   text: `Entry ₹${trade.entryPrice.toFixed(2)}` });
+    markers.push({ time: exitTs,  position: "aboveBar", color: trade.pnl >= 0 ? "#26a69a" : "#ef5350", shape: "arrowDown", text: `Exit ₹${trade.exitPrice.toFixed(2)} (${trade.exitReason})` });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    createSeriesMarkers(cs as any, markers);
+
+    // Zoom to trade window
+    chart.timeScale().setVisibleRange({ from: (entryTs - 86400 * 3) as UTCTimestamp, to: (exitTs + 86400 * 3) as UTCTimestamp });
+
+    const ro = new ResizeObserver(() => { chart.applyOptions({ width: el.clientWidth, height: el.clientHeight }); });
+    ro.observe(el);
+    return () => { ro.disconnect(); chart.remove(); };
+  }, [candles, trade]);
+
+  const reasonStyle: Record<string, string> = {
+    SL:  "bg-[#ef5350]/20 text-[#ef5350] border-[#ef5350]/30",
+    TP:  "bg-[#26a69a]/20 text-[#26a69a] border-[#26a69a]/30",
+    TSL: "bg-amber-500/20 text-amber-400 border-amber-500/30",
+    END: "bg-slate-700 text-slate-400 border-slate-600",
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{background:"rgba(0,0,0,0.75)"}}>
+      <div className="relative flex flex-col rounded-2xl overflow-hidden shadow-2xl w-full max-w-3xl"
+        style={{background:"#131722",border:"1px solid #2a2e39",maxHeight:"90vh"}}>
+
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-3 border-b shrink-0" style={{borderColor:"#2a2e39",background:"#0e1117"}}>
+          <div className="flex items-center gap-3">
+            <span className="w-7 h-7 rounded-full bg-gradient-to-br from-blue-600 to-purple-600 flex items-center justify-center text-xs font-bold text-white">
+              {symbol[0]}
+            </span>
+            <div>
+              <p className="text-sm font-bold text-slate-100">{symbol} — Trade Detail</p>
+              <p className="text-[10px] text-[#787b86]">{trade.entryDate} → {trade.exitDate} · {tf} candles</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="w-7 h-7 rounded-lg flex items-center justify-center text-slate-500 hover:text-slate-200 transition-colors text-lg leading-none" style={{background:"#1e222d"}}>×</button>
+        </div>
+
+        {/* Stats row */}
+        <div className="flex items-stretch gap-0 border-b shrink-0" style={{borderColor:"#2a2e39",background:"#1a1f2e"}}>
+          {[
+            { label: "Entry", value: `₹${trade.entryPrice.toFixed(2)}`, sub: trade.entryDate, col: "text-slate-100" },
+            { label: "Exit",  value: `₹${trade.exitPrice.toFixed(2)}`,  sub: trade.exitDate,  col: "text-slate-100" },
+            { label: "P&L",   value: `${trade.pnl >= 0 ? "+" : ""}₹${trade.pnl.toFixed(0)}`,
+              sub: `${trade.pnlPct >= 0 ? "+" : ""}${trade.pnlPct.toFixed(2)}%`,
+              col: trade.pnl >= 0 ? "text-[#26a69a]" : "text-[#ef5350]" },
+            { label: "Hold",  value: `${trade.holdDays}d`, sub: "days", col: "text-slate-200" },
+          ].map((s, i) => (
+            <div key={i} className="flex-1 px-5 py-3 border-r last:border-r-0" style={{borderColor:"#2a2e39"}}>
+              <p className="text-[9px] uppercase tracking-widest mb-0.5" style={{color:"#787b86"}}>{s.label}</p>
+              <p className={`text-base font-bold font-mono ${s.col}`}>{s.value}</p>
+              <p className="text-[10px] font-mono" style={{color:"#787b86"}}>{s.sub}</p>
+            </div>
+          ))}
+          <div className="flex-1 px-5 py-3">
+            <p className="text-[9px] uppercase tracking-widest mb-1.5" style={{color:"#787b86"}}>Exit Reason</p>
+            <span className={`px-2.5 py-1 rounded text-xs font-bold border ${reasonStyle[trade.exitReason] ?? "text-slate-500 border-slate-700"}`}>
+              {trade.exitReason}
+            </span>
+          </div>
+        </div>
+
+        {/* Chart */}
+        <div className="flex-1 relative min-h-0" style={{height:360}}>
+          {loading ? (
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
+              <div className="w-8 h-8 rounded-full border-2 border-blue-500 border-t-transparent animate-spin"/>
+              <p className="text-xs text-slate-500">Loading candles…</p>
+            </div>
+          ) : candles.length === 0 ? (
+            <div className="absolute inset-0 flex items-center justify-center">
+              <p className="text-sm text-slate-500">No candle data available for this period.</p>
+            </div>
+          ) : (
+            <div ref={chartRef} className="absolute inset-0" />
+          )}
+        </div>
+
+        {/* Footer hint */}
+        <div className="px-5 py-2 border-t text-[10px] text-[#787b86] shrink-0" style={{borderColor:"#2a2e39",background:"#0e1117"}}>
+          🟢 Entry marker · 🔴 Exit marker · Scroll to zoom · Drag to pan
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Indicator Trade Log ────────────────────────────────────────────────────────
-function IndicatorTradeLog({ trades, symbol, onTradeClick, activeTrade }: {
+function IndicatorTradeLog({ trades, symbol, tf, onTradeClick, activeTrade }: {
   trades: Trade[];
   symbol: string;
+  tf: string;
   onTradeClick?: (trade: Trade | null) => void;
   activeTrade?: Trade | null;
 }) {
@@ -743,6 +888,8 @@ function IndicatorTradeLog({ trades, symbol, onTradeClick, activeTrade }: {
   const [search, setSearch] = useState("");
   const [sortK, setSortK] = useState<"entryDate"|"pnl"|"holdDays">("entryDate");
   const [asc, setAsc] = useState(true);
+  const [modalTrade, setModalTrade] = useState<Trade|null>(null);
+
   const filtered = useMemo(() => {
     let rows = [...trades];
     if (filter === "win") rows = rows.filter(t => t.pnl > 0);
@@ -777,6 +924,16 @@ function IndicatorTradeLog({ trades, symbol, onTradeClick, activeTrade }: {
 
   return (
     <div>
+      {/* Modal popup for trade detail + chart */}
+      {modalTrade && (
+        <TradeDetailModal
+          trade={modalTrade}
+          symbol={symbol}
+          tf={tf}
+          onClose={() => { setModalTrade(null); onTradeClick?.(null); }}
+        />
+      )}
+
       {/* Header + filters */}
       <div className="flex items-center gap-3 mb-3 flex-wrap">
         <p className="text-[10px] font-bold uppercase tracking-widest" style={{color:"#787b86"}}>{symbol} — Trade Log</p>
@@ -802,45 +959,6 @@ function IndicatorTradeLog({ trades, symbol, onTradeClick, activeTrade }: {
         <span className="text-[10px]" style={{color:"#787b86"}}>{filtered.length} rows</span>
       </div>
 
-      {/* Active trade detail card */}
-      {activeTrade && (
-        <div className="mb-3 rounded-xl p-3 flex flex-wrap items-center gap-4" style={{background:"rgba(41,98,255,0.08)",border:"1px solid rgba(41,98,255,0.3)"}}>
-          <div>
-            <p className="text-[9px] uppercase tracking-widest mb-0.5" style={{color:"#787b86"}}>Entry</p>
-            <p className="text-xs font-mono text-slate-200">{activeTrade.entryDate}</p>
-            <p className="text-sm font-bold font-mono text-slate-100">₹{activeTrade.entryPrice.toFixed(2)}</p>
-          </div>
-          <div className="text-[#2962ff] text-lg">→</div>
-          <div>
-            <p className="text-[9px] uppercase tracking-widest mb-0.5" style={{color:"#787b86"}}>Exit</p>
-            <p className="text-xs font-mono text-slate-200">{activeTrade.exitDate}</p>
-            <p className="text-sm font-bold font-mono text-slate-100">₹{activeTrade.exitPrice.toFixed(2)}</p>
-          </div>
-          <div className="h-8 w-px" style={{background:"#2a2e39"}}/>
-          <div>
-            <p className="text-[9px] uppercase tracking-widest mb-0.5" style={{color:"#787b86"}}>P&L</p>
-            <p className={`text-base font-bold font-mono ${activeTrade.pnl >= 0 ? "text-[#26a69a]" : "text-[#ef5350]"}`}>
-              {activeTrade.pnl >= 0 ? "+" : ""}₹{activeTrade.pnl.toFixed(0)}
-            </p>
-            <p className={`text-[10px] font-mono ${activeTrade.pnlPct >= 0 ? "text-[#26a69a]/70" : "text-[#ef5350]/70"}`}>
-              {activeTrade.pnlPct >= 0 ? "+" : ""}{activeTrade.pnlPct.toFixed(2)}%
-            </p>
-          </div>
-          <div>
-            <p className="text-[9px] uppercase tracking-widest mb-0.5" style={{color:"#787b86"}}>Hold</p>
-            <p className="text-base font-bold text-slate-200">{activeTrade.holdDays}<span className="text-xs text-slate-500 ml-1">days</span></p>
-          </div>
-          <div>
-            <p className="text-[9px] uppercase tracking-widest mb-0.5" style={{color:"#787b86"}}>Exit Reason</p>
-            <span className={`px-2 py-0.5 rounded text-xs font-bold border ${reasonStyle[activeTrade.exitReason] ?? "text-slate-500 border-slate-700"}`}>
-              {activeTrade.exitReason}
-            </span>
-          </div>
-          <button onClick={() => onTradeClick?.(null)}
-            className="ml-auto text-slate-600 hover:text-slate-300 text-lg leading-none transition-colors">×</button>
-        </div>
-      )}
-
       {/* Trade table */}
       <div className="overflow-x-auto overflow-y-auto max-h-72 rounded-xl" style={{border:"1px solid #2a2e39"}}>
         <table className="w-full text-[11px]">
@@ -863,9 +981,9 @@ function IndicatorTradeLog({ trades, symbol, onTradeClick, activeTrade }: {
               const isActive = activeTrade?.entryDate === t.entryDate && activeTrade?.exitDate === t.exitDate;
               return (
                 <tr key={i}
-                  onClick={() => onTradeClick?.(isActive ? null : t)}
-                  className="cursor-pointer transition-colors"
-                  style={{background: isActive ? "rgba(41,98,255,0.12)" : t.pnl > 0 ? "rgba(38,166,154,0.02)" : "rgba(239,83,80,0.02)"}}>
+                  onClick={() => { setModalTrade(t); onTradeClick?.(t); }}
+                  className="cursor-pointer transition-colors hover:bg-white/5"
+                  style={{background: isActive ? "rgba(41,98,255,0.08)" : t.pnl > 0 ? "rgba(38,166,154,0.02)" : "rgba(239,83,80,0.02)"}}>
                   <td className="py-2 pr-3 pl-3 text-[#787b86]">{i + 1}</td>
                   <td className="py-2 pr-3 font-mono text-slate-300 whitespace-nowrap">{t.entryDate}</td>
                   <td className="py-2 pr-3 font-mono text-slate-200">{t.entryPrice.toFixed(2)}</td>
@@ -884,8 +1002,8 @@ function IndicatorTradeLog({ trades, symbol, onTradeClick, activeTrade }: {
                   </td>
                   <td className="py-2 pr-3 text-slate-500">{t.holdDays}d</td>
                   <td className="py-2 pr-3">
-                    <span className={`text-[9px] px-1.5 py-0.5 rounded transition-colors ${isActive ? "text-blue-300 border border-blue-500/40 bg-blue-500/10" : "text-[#787b86] border border-[#2a2e39] hover:border-blue-500/40 hover:text-blue-400"}`}>
-                      {isActive ? "● Viewing" : "📈 View"}
+                    <span className="text-[9px] px-1.5 py-0.5 rounded border text-[#787b86] border-[#2a2e39] hover:border-blue-500/40 hover:text-blue-400 transition-colors">
+                      📈 View
                     </span>
                   </td>
                 </tr>
@@ -1536,6 +1654,7 @@ export default function EquityStrategyBuilder({ editId }: { editId?: string }) {
                   <IndicatorTradeLog
                     trades={selectedBtResult.trades}
                     symbol={selectedBtResult.symbol}
+                    tf={tf}
                     activeTrade={focusTrade}
                     onTradeClick={trade => {
                       setFocusTrade(trade);
