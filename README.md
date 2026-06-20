@@ -90,23 +90,16 @@ The project uses two env files at the repo root:
 
 | File | When used |
 |---|---|
-| `.env.local` | Local machine → connects to **remote host** (`209.182.232.165`) |
-| `.env.prod` | Remote host → connects to **localhost** (services run on the same machine) |
+| `.env` | **All machines** — connects to remote host (`209.182.232.165`) |
+| `.env.prod` | **Remote host only** — services connect to `localhost` |
 
-Copy the example to get started:
-
-```bash
-cp .env.example .env.local   # local dev
-cp .env.example .env.prod    # production server (update hosts to localhost)
-```
-
-**Env file is selected automatically** — no manual step needed:
+The correct file is **picked automatically** — no manual step needed:
 
 | Scenario | Env loaded |
 |---|---|
 | Running on `209.182.232.165` | `.env.prod` |
-| Running on any other machine | `.env.local` |
-| `APP_ENV=prod` is set | `.env.prod` (explicit override) |
+| Running on any other machine | `.env` |
+| `APP_ENV=prod` is set explicitly | `.env.prod` |
 
 ### 4. Run the dev servers
 

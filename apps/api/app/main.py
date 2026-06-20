@@ -71,40 +71,6 @@ def _print_connection_status() -> None:
     except Exception as e:
         results.append(("Redis   ", f"{s.redis_host}:{s.redis_port}", str(e)[:60], False))
 
-    # ── MongoDB (optional) ─────────────────────────────────────────────────
-    try:
-        import importlib
-        pymongo = importlib.import_module("pymongo")
-        mongo_host = getattr(s, "mongodb_host", None) or "localhost"
-        mongo_port = int(getattr(s, "mongodb_port", 27017))
-        mongo_db   = getattr(s, "mongodb_db_name", "stocks")
-        client = pymongo.MongoClient(
-            host=mongo_host, port=mongo_port,
-            serverSelectionTimeoutMS=3000,
-        )
-        client.server_info()
-        client.close()
-        results.append(("MongoDB ", f"{mongo_host}:{mongo_port}", f"db={mongo_db}", True))
-    except ModuleNotFoundError:
-        results.append(("MongoDB ", "n/a", "pymongo not installed — skipped", False))
-    except Exception as e:
-        mongo_host = getattr(s, "mongodb_host", "localhost")
-        mongo_port = getattr(s, "mongodb_port", 27017)
-        results.append(("MongoDB ", f"{mongo_host}:{mongo_port}", str(e)[:60], False))
-
-    # ── QuestDB (TCP ping) ─────────────────────────────────────────────────
-    try:
-        import socket
-        quest_host = getattr(s, "questdb_host", "localhost")
-        quest_port = int(getattr(s, "questdb_port", 9009))
-        with socket.create_connection((quest_host, quest_port), timeout=3):
-            pass
-        results.append(("QuestDB ", f"{quest_host}:{quest_port}", "TCP reachable", True))
-    except Exception as e:
-        quest_host = getattr(s, "questdb_host", "localhost")
-        quest_port = getattr(s, "questdb_port", 9009)
-        results.append(("QuestDB ", f"{quest_host}:{quest_port}", str(e)[:60], False))
-
     # ── Print banner ───────────────────────────────────────────────────────
     width = 72
     print(f"\n{_BOLD}{_CYAN}{'━' * width}{_RESET}")

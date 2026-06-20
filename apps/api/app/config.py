@@ -1,50 +1,48 @@
 from __future__ import annotations
 import os
 import socket
+from pathlib import Path
 from functools import lru_cache
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _REMOTE_HOST = "209.182.232.165"
 
 
-def _resolve_env_files() -> tuple[str, ...]:
+def _get_local_ip() -> str:
+    """Return the primary outbound IP without making a real network call."""
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        return ""
+
+
+def _resolve_env_file() -> str:
     """
-    Pick the right .env file based on priority:
-      1. APP_ENV=prod  (explicit override via env var or CLI)
-      2. Machine IP == remote host  (auto-detect)
-      3. Fallback → .env.local
-    Tries both root-relative (../../) and cwd paths for each candidate.
+    Remote host (209.182.232.165) or APP_ENV=prod → .env.prod
+    Everything else                                → .env
     """
-    # 1. Explicit override
-    if os.environ.get("APP_ENV", "").lower() == "prod":
+    repo_root = Path(__file__).resolve().parents[3]
+
+    if os.environ.get("APP_ENV", "").lower() == "prod" or _get_local_ip() == _REMOTE_HOST:
         chosen = ".env.prod"
     else:
-        # 2. Auto-detect by IP
-        try:
-            local_ip = socket.gethostbyname(socket.gethostname())
-        except Exception:
-            local_ip = ""
-        chosen = ".env.prod" if local_ip == _REMOTE_HOST else ".env.local"
+        chosen = ".env"
 
-    return (f"../../{chosen}", chosen)
-
-
-def _log_env_choice() -> None:
-    chosen = ".env.prod" if os.environ.get("APP_ENV", "").lower() == "prod" else None
-    if chosen is None:
-        try:
-            local_ip = socket.gethostbyname(socket.gethostname())
-        except Exception:
-            local_ip = ""
-        chosen = ".env.prod" if local_ip == _REMOTE_HOST else ".env.local"
-    print(f"\033[96m[config] Loading {chosen}\033[0m")
-
-
-_log_env_choice()
+    full_path = repo_root / chosen
+    print(
+        f"\033[96m[config] env → {chosen}"
+        f"  (IP: {_get_local_ip() or 'unknown'}"
+        f"  APP_ENV: {os.environ.get('APP_ENV', 'not set')})\033[0m"
+    )
+    return str(full_path)
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=_resolve_env_files(), extra="ignore")
+    model_config = SettingsConfigDict(env_file=_resolve_env_file(), extra="ignore")
 
     api_host: str = "0.0.0.0"
     api_port: int = 8003
@@ -56,7 +54,7 @@ class Settings(BaseSettings):
     redis_password: str = ""
     redis_db: int = 0
 
-    # Single-user Basic Auth credentials (stored in .env, validated in-memory)
+    # Single-user Basic Auth credentials
     api_username: str = "edrao"
     api_password: str = "chiru123"
 

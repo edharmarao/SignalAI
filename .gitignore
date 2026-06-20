@@ -2,9 +2,10 @@ node_modules
 .next
 dist
 build
-.env
-.env.local
+# .env is committed (safe defaults for all non-remote machines)
+# .env.prod is NOT committed (production credentials)
 .env.prod
+.env.local
 .env.*.local
 *.log
 .DS_Store
