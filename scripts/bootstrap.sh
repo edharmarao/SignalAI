@@ -46,11 +46,11 @@ log "Checking env files..."
 
 if [ ! -f "$ROOT/.env" ]; then
   if [ -f "$ROOT/.env.prod" ]; then
-    warn ".env not found — copying .env.prod as base"
+    warn ".env not found — copying .env.prod as base (fill in GITHUB_TOKEN)"
     cp "$ROOT/.env.prod" "$ROOT/.env"
-    ok ".env created from .env.prod"
+    ok ".env created from .env.prod — update GITHUB_TOKEN inside"
   else
-    err ".env and .env.prod both missing — please create .env manually"
+    err ".env missing. Create it with your credentials (see README)."
     exit 1
   fi
 else
