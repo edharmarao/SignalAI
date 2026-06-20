@@ -12,6 +12,7 @@ import csv
 import gzip
 import io
 import logging
+import ssl
 import threading
 import time
 from typing import Dict, Optional
@@ -57,7 +58,11 @@ _REFRESH_INTERVAL = 86400  # 1 day
 def _load_from_url() -> Dict[str, str]:
     """Download and parse Upstox NSE CSV → {tradingsymbol: ISIN}."""
     logger.info("Downloading Upstox NSE instrument CSV from %s", INSTRUMENTS_URL)
-    with urllib.request.urlopen(INSTRUMENTS_URL, timeout=30) as resp:
+    # Bypass SSL verification — public CDN asset, no sensitive data exchanged
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    with urllib.request.urlopen(INSTRUMENTS_URL, timeout=30, context=ctx) as resp:
         compressed = resp.read()
 
     with gzip.open(io.BytesIO(compressed), "rt", encoding="utf-8") as f:

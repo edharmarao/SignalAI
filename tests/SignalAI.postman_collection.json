@@ -1,0 +1,1537 @@
+{
+  "info": {
+    "name": "SignalAI API",
+    "description": "Updated SignalAI API collection covering meta, auth, broker, strategies, backtest, records, orders, prices, instruments, Upstox market data, charts, and ORB routes.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:8003/api/v1"
+    },
+    {
+      "key": "api_root",
+      "value": "http://localhost:8003"
+    },
+    {
+      "key": "auth_token",
+      "value": "ZWRyYW86cHJhYmhhczEyMyo="
+    },
+    {
+      "key": "strategy_id",
+      "value": ""
+    }
+  ],
+  "auth": {
+    "type": "basic",
+    "basic": [
+      {
+        "key": "username",
+        "value": "edrao",
+        "type": "string"
+      },
+      {
+        "key": "password",
+        "value": "prabhas123*",
+        "type": "string"
+      }
+    ]
+  },
+  "item": [
+    {
+      "name": "\ud83c\udfe5 Meta",
+      "item": [
+        {
+          "name": "GET /",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Basic {{auth_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{api_root}}/",
+              "host": [
+                "{{api_root}}"
+              ],
+              "path": []
+            },
+            "description": "Root endpoint. Returns API metadata: {name, version, live_trading_enabled, disclaimer}."
+          }
+        },
+        {
+          "name": "GET /health",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Basic {{auth_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{api_root}}/health",
+              "host": [
+                "{{api_root}}"
+              ],
+              "path": [
+                "health"
+              ]
+            },
+            "description": "Health endpoint. Returns {ok, version, uptime_seconds, environment, request_id}."
+          }
+        }
+      ]
+    },
+    {
+      "name": "\ud83d\udd10 Auth",
+      "item": [
+        {
+          "name": "POST /auth/login",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "Authorization",
+                "value": "Basic {{auth_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/auth/login",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "auth",
+                "login"
+              ]
+            },
+            "description": "Validate credentials. Returns {ok: true, user_id} on success.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"edrao\",\n  \"password\": \"chiru123\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "GET /auth/me",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Basic {{auth_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/auth/me",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "auth",
+                "me"
+              ]
+            },
+            "description": "Returns the authenticated user object from Basic auth."
+          }
+        }
+      ]
+    },
+    {
+      "name": "\ud83d\udd17 Broker",
+      "item": [
+        {
+          "name": "GET /broker/upstox/login-url",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Basic {{auth_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/broker/upstox/login-url",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "broker",
+                "upstox",
+                "login-url"
+              ]
+            },
+            "description": "Returns {url} for Upstox OAuth login."
+          }
+        },
+        {
+          "name": "POST /broker/upstox/connect",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "Authorization",
+                "value": "Basic {{auth_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/broker/upstox/connect",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "broker",
+                "upstox",
+                "connect"
+              ]
+            },
+            "description": "Exchange Upstox OAuth code and persist token. Returns {ok, client_id}.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code\": \"AUTH_CODE_FROM_UPSTOX\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "GET /broker/upstox/status",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Basic {{auth_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/broker/upstox/status",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "broker",
+                "upstox",
+                "status"
+              ]
+            },
+            "description": "Returns {connected: true|false}."
+          }
+        },
+        {
+          "name": "POST /broker/disconnect",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Basic {{auth_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/broker/disconnect",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "broker",
+                "disconnect"
+              ]
+            },
+            "description": "Disconnect broker session. Returns {ok: true}."
+          }
+        }
+      ]
+    },
+    {
+      "name": "\ud83d\udccb Strategies",
+      "item": [
+        {
+          "name": "GET /strategies?desk=equity",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Basic {{auth_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/strategies?desk=equity",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "strategies"
+              ],
+              "query": [
+                {
+                  "key": "desk",
+                  "value": "equity"
+                }
+              ]
+            },
+            "description": "List strategies, optionally filtered by desk. Response is an array of strategy rows."
+          }
+        },
+        {
+          "name": "POST /strategies",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "Authorization",
+                "value": "Basic {{auth_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/strategies",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "strategies"
+              ]
+            },
+            "description": "Create a strategy. Returns created strategy row including id, strategy_json, mode, status, created_at, updated_at.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"NIFTY ORB Strategy\",\n  \"strategy_json\": {\n    \"version\": 1,\n    \"name\": \"NIFTY ORB Strategy\",\n    \"desk\": \"equity\",\n    \"index\": \"NIFTY\",\n    \"symbol\": \"NIFTY\",\n    \"action\": \"BUY\",\n    \"candleTime\": \"5min\",\n    \"quantity\": 1,\n    \"mode\": \"paper\",\n    \"status\": \"draft\",\n    \"entry\": {\n      \"logic\": \"AND\",\n      \"conditions\": [\n        {\n          \"type\": \"level\",\n          \"field\": \"price\",\n          \"operator\": \">\",\n          \"value\": 22000\n        }\n      ]\n    },\n    \"exit\": {\n      \"logic\": \"OR\",\n      \"conditions\": [\n        {\n          \"type\": \"stop_loss\",\n          \"value\": 20\n        }\n      ]\n    },\n    \"risk\": {\n      \"maxLossPerDay\": 1000,\n      \"maxTradesPerDay\": 3,\n      \"maxOpenPositions\": 1,\n      \"autoSquareOffTime\": \"15:20\"\n    }\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "try {",
+                  "  const data = pm.response.json();",
+                  "  if (data && data.id) { pm.collectionVariables.set('strategy_id', data.id); }",
+                  "} catch (e) {}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /strategies/{{strategy_id}}",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Basic {{auth_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/strategies/{{strategy_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "strategies",
+                "{{strategy_id}}"
+              ]
+            },
+            "description": "Fetch one strategy by id. Returns strategy row or 404."
+          }
+        },
+        {
+          "name": "PATCH /strategies/{{strategy_id}}",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "Authorization",
+                "value": "Basic {{auth_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/strategies/{{strategy_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "strategies",
+                "{{strategy_id}}"
+              ]
+            },
+            "description": "Update mutable strategy fields. Returns {ok: true}.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"active\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "POST /strategies/{{strategy_id}}/duplicate",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Basic {{auth_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/strategies/{{strategy_id}}/duplicate",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "strategies",
+                "{{strategy_id}}",
+                "duplicate"
+              ]
+            },
+            "description": "Duplicate a strategy. Returns copied strategy row with a new id."
+          }
+        },
+        {
+          "name": "DELETE /strategies/{{strategy_id}}",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Basic {{auth_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/strategies/{{strategy_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "strategies",
+                "{{strategy_id}}"
+              ]
+            },
+            "description": "Delete a strategy. Returns {ok: true}."
+          }
+        }
+      ]
+    },
+    {
+      "name": "\ud83d\udd04 Backtest",
+      "item": [
+        {
+          "name": "POST /backtest",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "Authorization",
+                "value": "Basic {{auth_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/backtest",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "backtest"
+              ]
+            },
+            "description": "Run a strategy backtest. Actual request uses strategy_json plus optional candles/days; unknown helper fields are ignored. Returns totals and trades[].",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"symbol\": \"RELIANCE\",\n  \"from_date\": \"2025-01-01\",\n  \"to_date\": \"2025-03-31\",\n  \"strategy_json\": {\n    \"version\": 1,\n    \"name\": \"ORB Backtest Sample\",\n    \"desk\": \"equity\",\n    \"symbol\": \"RELIANCE\",\n    \"action\": \"BUY\",\n    \"candleTime\": \"5min\",\n    \"quantity\": 1,\n    \"mode\": \"paper\",\n    \"status\": \"draft\",\n    \"entry\": {\n      \"logic\": \"AND\",\n      \"conditions\": [\n        {\n          \"type\": \"orb_breakout\",\n          \"direction\": \"both\"\n        }\n      ]\n    },\n    \"exit\": {\n      \"logic\": \"OR\",\n      \"conditions\": [\n        {\n          \"type\": \"stop_loss\"\n        },\n        {\n          \"type\": \"target_rr\",\n          \"value\": 1.0\n        }\n      ]\n    },\n    \"risk\": {\n      \"maxLossPerDay\": 5000,\n      \"maxTradesPerDay\": 3,\n      \"maxOpenPositions\": 1,\n      \"killSwitch\": false\n    }\n  },\n  \"candles\": null,\n  \"days\": 30\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "\ud83d\udce6 Orders",
+      "item": [
+        {
+          "name": "POST /orders/place",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "Authorization",
+                "value": "Basic {{auth_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "unique-key-123",
+                "type": "text",
+                "description": "Optional: prevents duplicate orders within 5 minutes"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/orders/place",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "orders",
+                "place"
+              ]
+            },
+            "description": "Place a paper/live order. Actual API requires strategy_id, side, quantity, price, order_type, mode, confirm_live. Returns created order row.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"strategy_id\": \"{{strategy_id}}\",\n  \"symbol\": \"NIFTY\",\n  \"side\": \"BUY\",\n  \"quantity\": 1,\n  \"price\": 0,\n  \"order_type\": \"MARKET\",\n  \"mode\": \"paper\",\n  \"confirm_live\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "GET /orders?desk=equity",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Basic {{auth_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/orders?desk=equity",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "orders"
+              ],
+              "query": [
+                {
+                  "key": "desk",
+                  "value": "equity"
+                }
+              ]
+            },
+            "description": "List order records filtered by desk. Response is an array of order rows."
+          }
+        }
+      ]
+    },
+    {
+      "name": "\ud83d\udcd2 Records",
+      "item": [
+        {
+          "name": "GET /trades?desk=equity",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Basic {{auth_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/trades?desk=equity",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "trades"
+              ],
+              "query": [
+                {
+                  "key": "desk",
+                  "value": "equity"
+                }
+              ]
+            },
+            "description": "List trades for the authenticated user, optionally filtered by desk."
+          }
+        },
+        {
+          "name": "GET /orders?desk=equity",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Basic {{auth_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/orders?desk=equity",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "orders"
+              ],
+              "query": [
+                {
+                  "key": "desk",
+                  "value": "equity"
+                }
+              ]
+            },
+            "description": "List order records for the authenticated user, optionally filtered by desk."
+          }
+        },
+        {
+          "name": "GET /logs?desk=equity",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Basic {{auth_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/logs?desk=equity",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "logs"
+              ],
+              "query": [
+                {
+                  "key": "desk",
+                  "value": "equity"
+                }
+              ]
+            },
+            "description": "List latest logs (max 500), optionally filtered by desk."
+          }
+        }
+      ]
+    },
+    {
+      "name": "\ud83d\udcb0 Prices",
+      "item": [
+        {
+          "name": "GET /prices/ltp/NIFTY",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Basic {{auth_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/prices/ltp/NIFTY",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "prices",
+                "ltp",
+                "NIFTY"
+              ]
+            },
+            "description": "Fetch LTP for NIFTY index. Returns {symbol, ltp/source} or {symbol, data, source} depending on broker connectivity."
+          }
+        },
+        {
+          "name": "GET /prices/ltp/RELIANCE",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Basic {{auth_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/prices/ltp/RELIANCE",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "prices",
+                "ltp",
+                "RELIANCE"
+              ]
+            },
+            "description": "Fetch LTP by path symbol. Router only recognizes configured index keys; unknown symbols return 404."
+          }
+        }
+      ]
+    },
+    {
+      "name": "\ud83d\uddfa\ufe0f Instruments",
+      "item": [
+        {
+          "name": "GET /instruments",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Basic {{auth_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/instruments",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "instruments"
+              ]
+            },
+            "description": "List index instrument mappings. Returns [{symbol, instrument_key}]."
+          }
+        },
+        {
+          "name": "GET /equity/stocks",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Basic {{auth_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/equity/stocks",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "equity",
+                "stocks"
+              ]
+            },
+            "description": "List up to 750 NSE equity symbols from DB. Returns [{symbol, name, sector}]."
+          }
+        },
+        {
+          "name": "GET /upstox/instruments/lookup?symbol=RELIANCE",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Basic {{auth_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/upstox/instruments/lookup?symbol=RELIANCE",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "upstox",
+                "instruments",
+                "lookup"
+              ],
+              "query": [
+                {
+                  "key": "symbol",
+                  "value": "RELIANCE"
+                }
+              ]
+            },
+            "description": "Resolve symbol to ISIN. Returns {symbol, isin, total_symbols}."
+          }
+        },
+        {
+          "name": "POST /upstox/instruments/refresh",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Basic {{auth_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/upstox/instruments/refresh",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "upstox",
+                "instruments",
+                "refresh"
+              ]
+            },
+            "description": "Force-refresh instrument map. Returns {status: 'refreshed', symbols_loaded}."
+          }
+        }
+      ]
+    },
+    {
+      "name": "\ud83d\udcca Historical Candles",
+      "item": [
+        {
+          "name": "GET /upstox/historical-candle",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Basic {{auth_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/upstox/historical-candle?exchange=NSE_EQ&isin=INE002A01018&from_date=2025-01-01&to_date=2025-01-31&interval_type=minutes&interval_value=5",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "upstox",
+                "historical-candle"
+              ],
+              "query": [
+                {
+                  "key": "exchange",
+                  "value": "NSE_EQ"
+                },
+                {
+                  "key": "isin",
+                  "value": "INE002A01018"
+                },
+                {
+                  "key": "from_date",
+                  "value": "2025-01-01"
+                },
+                {
+                  "key": "to_date",
+                  "value": "2025-01-31"
+                },
+                {
+                  "key": "interval_type",
+                  "value": "minutes"
+                },
+                {
+                  "key": "interval_value",
+                  "value": "5"
+                }
+              ]
+            },
+            "description": "Historical candles by exchange + ISIN. Returns {status, candles:[{time, open, high, low, close, volume, oi}]}."
+          }
+        },
+        {
+          "name": "GET /upstox/historical-candle-by-symbol RELIANCE",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Basic {{auth_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/upstox/historical-candle-by-symbol?symbol=RELIANCE&exchange=NSE_EQ&from_date=2025-01-01&to_date=2025-01-31&interval_type=minutes&interval_value=5",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "upstox",
+                "historical-candle-by-symbol"
+              ],
+              "query": [
+                {
+                  "key": "symbol",
+                  "value": "RELIANCE"
+                },
+                {
+                  "key": "exchange",
+                  "value": "NSE_EQ"
+                },
+                {
+                  "key": "from_date",
+                  "value": "2025-01-01"
+                },
+                {
+                  "key": "to_date",
+                  "value": "2025-01-31"
+                },
+                {
+                  "key": "interval_type",
+                  "value": "minutes"
+                },
+                {
+                  "key": "interval_value",
+                  "value": "5"
+                }
+              ]
+            },
+            "description": "Historical candles by symbol, resolving ISIN internally. Returns {status, candles:[...]}."
+          }
+        },
+        {
+          "name": "GET /upstox/historical-candle-by-symbol TCS daily",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Basic {{auth_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/upstox/historical-candle-by-symbol?symbol=TCS&exchange=NSE_EQ&from_date=2024-01-01&to_date=2024-12-31&interval_type=days&interval_value=1",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "upstox",
+                "historical-candle-by-symbol"
+              ],
+              "query": [
+                {
+                  "key": "symbol",
+                  "value": "TCS"
+                },
+                {
+                  "key": "exchange",
+                  "value": "NSE_EQ"
+                },
+                {
+                  "key": "from_date",
+                  "value": "2024-01-01"
+                },
+                {
+                  "key": "to_date",
+                  "value": "2024-12-31"
+                },
+                {
+                  "key": "interval_type",
+                  "value": "days"
+                },
+                {
+                  "key": "interval_value",
+                  "value": "1"
+                }
+              ]
+            },
+            "description": "Daily historical candles for TCS. Returns {status, candles:[...]}."
+          }
+        }
+      ]
+    },
+    {
+      "name": "\u26a1 Intraday Candles",
+      "item": [
+        {
+          "name": "GET /upstox/intraday-candle",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Basic {{auth_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/upstox/intraday-candle?symbol=RELIANCE&exchange=NSE_EQ&interval_type=minutes&interval_value=5",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "upstox",
+                "intraday-candle"
+              ],
+              "query": [
+                {
+                  "key": "symbol",
+                  "value": "RELIANCE"
+                },
+                {
+                  "key": "exchange",
+                  "value": "NSE_EQ"
+                },
+                {
+                  "key": "interval_type",
+                  "value": "minutes"
+                },
+                {
+                  "key": "interval_value",
+                  "value": "5"
+                }
+              ]
+            },
+            "description": "Single-symbol intraday candles. Returns {status, candles:[...]}."
+          }
+        },
+        {
+          "name": "POST /upstox/intraday-candles/multi",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "Authorization",
+                "value": "Basic {{auth_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/upstox/intraday-candles/multi",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "upstox",
+                "intraday-candles",
+                "multi"
+              ]
+            },
+            "description": "Multi-symbol intraday candles. Returns aggregate status plus per-symbol results[].",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"symbols\": [\n    \"RELIANCE\",\n    \"TCS\"\n  ],\n  \"exchange\": \"NSE_EQ\",\n  \"interval_type\": \"minutes\",\n  \"interval_value\": \"5\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "\ud83d\udce5 Data Import",
+      "item": [
+        {
+          "name": "POST /upstox/historical-data-import",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "Authorization",
+                "value": "Basic {{auth_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/upstox/historical-data-import",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "upstox",
+                "historical-data-import"
+              ]
+            },
+            "description": "Bulk import historical candles. Actual API uses stock_codes; symbols is included as a helper alias. Returns import summary with details[].",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"symbols\": [\n    \"RELIANCE\",\n    \"TCS\"\n  ],\n  \"stock_codes\": [\n    \"RELIANCE\",\n    \"TCS\"\n  ],\n  \"exchange\": \"NSE_EQ\",\n  \"from_date\": \"2025-01-01\",\n  \"to_date\": \"2025-03-31\",\n  \"interval_type\": \"minutes\",\n  \"interval_value\": \"5\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "POST /upstox/intraday-data-import",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "Authorization",
+                "value": "Basic {{auth_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/upstox/intraday-data-import",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "upstox",
+                "intraday-data-import"
+              ]
+            },
+            "description": "Bulk import today's intraday candles. Actual API uses stock_codes. Returns import summary with details[].",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"symbols\": [\n    \"RELIANCE\"\n  ],\n  \"stock_codes\": [\n    \"RELIANCE\"\n  ],\n  \"exchange\": \"NSE_EQ\",\n  \"interval_type\": \"minutes\",\n  \"interval_value\": \"5\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "\ud83d\udcc8 Charts",
+      "item": [
+        {
+          "name": "GET /charts/symbols",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Basic {{auth_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/charts/symbols",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "charts",
+                "symbols"
+              ]
+            },
+            "description": "List chart symbols from DB. Returns [{symbol, name, sector}]."
+          }
+        },
+        {
+          "name": "GET /charts/candles",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Basic {{auth_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/charts/candles?symbol=RELIANCE&timeframe=1D&from=2025-01-01&to=2025-03-31&limit=500",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "charts",
+                "candles"
+              ],
+              "query": [
+                {
+                  "key": "symbol",
+                  "value": "RELIANCE"
+                },
+                {
+                  "key": "timeframe",
+                  "value": "1D"
+                },
+                {
+                  "key": "from",
+                  "value": "2025-01-01"
+                },
+                {
+                  "key": "to",
+                  "value": "2025-03-31"
+                },
+                {
+                  "key": "limit",
+                  "value": "500"
+                }
+              ]
+            },
+            "description": "Fetch candles from DB with Upstox fallback. Returns {symbol, timeframe, from, to, count, source, candles}."
+          }
+        },
+        {
+          "name": "GET /charts/summary",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Basic {{auth_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/charts/summary?symbol=RELIANCE",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "charts",
+                "summary"
+              ],
+              "query": [
+                {
+                  "key": "symbol",
+                  "value": "RELIANCE"
+                }
+              ]
+            },
+            "description": "Fetch latest close and 52-week stats. Returns {symbol, latestClose, latestDate, high52w, low52w, avgVolume, source}."
+          }
+        },
+        {
+          "name": "POST /charts/indicator-backtest",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "Authorization",
+                "value": "Basic {{auth_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/charts/indicator-backtest",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "charts",
+                "indicator-backtest"
+              ]
+            },
+            "description": "Indicator backtest. Actual API uses symbols[] + conditions[]; symbol/indicators are included as helper fields. Returns {results, symbolCount}.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"symbol\": \"RELIANCE\",\n  \"symbols\": [\n    \"RELIANCE\"\n  ],\n  \"timeframe\": \"1D\",\n  \"from_date\": \"2025-01-01\",\n  \"to_date\": \"2025-03-31\",\n  \"indicators\": [\n    {\n      \"type\": \"sma_crossover\",\n      \"fast\": 10,\n      \"slow\": 20\n    }\n  ],\n  \"conditions\": [\n    {\n      \"type\": \"sma_crossover\",\n      \"fast\": 10,\n      \"slow\": 20\n    }\n  ],\n  \"action\": \"BUY\",\n  \"sl_pct\": 2.0,\n  \"tp_pct\": 4.0,\n  \"tsl_pct\": 0.0,\n  \"qty\": 100,\n  \"max_hold_days\": 30\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "\ud83d\udd6f\ufe0f ORB Strategy",
+      "item": [
+        {
+          "name": "GET /orb/chart-data",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Basic {{auth_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/orb/chart-data?symbol=RELIANCE&timeframe=5min&from_date=2025-01-01&to_date=2025-03-31&limit=10000",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "orb",
+                "chart-data"
+              ],
+              "query": [
+                {
+                  "key": "symbol",
+                  "value": "RELIANCE"
+                },
+                {
+                  "key": "timeframe",
+                  "value": "5min"
+                },
+                {
+                  "key": "from_date",
+                  "value": "2025-01-01"
+                },
+                {
+                  "key": "to_date",
+                  "value": "2025-03-31"
+                },
+                {
+                  "key": "limit",
+                  "value": "10000"
+                }
+              ]
+            },
+            "description": "Fetch chart candles from stock_data_* tables. Returns {symbol, timeframe, candles}."
+          }
+        },
+        {
+          "name": "GET /orb/signal",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Basic {{auth_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/orb/signal?symbols=RELIANCE,TCS&timeframe=5min",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "orb",
+                "signal"
+              ],
+              "query": [
+                {
+                  "key": "symbols",
+                  "value": "RELIANCE,TCS"
+                },
+                {
+                  "key": "timeframe",
+                  "value": "5min"
+                }
+              ]
+            },
+            "description": "Fetch today's ORB signals for symbols. Returns an array of signal objects."
+          }
+        },
+        {
+          "name": "POST /orb/backtest",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "Authorization",
+                "value": "Basic {{auth_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/orb/backtest",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "orb",
+                "backtest"
+              ]
+            },
+            "description": "ORB backtest. Actual API uses or_candles/timeframe and returns summary with trades[] and signals[].",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"symbol\": \"RELIANCE\",\n  \"from_date\": \"2025-01-01\",\n  \"to_date\": \"2025-03-31\",\n  \"orb_minutes\": 5,\n  \"timeframe\": \"5min\",\n  \"qty\": 1,\n  \"or_candles\": 1,\n  \"breakout_candles\": 0,\n  \"market_open\": \"09:15\",\n  \"volume_multiplier\": 2.0,\n  \"volume_lookback\": 20,\n  \"direction\": \"both\",\n  \"risk_reward\": 1.0,\n  \"trailing_sl\": true,\n  \"trail_factor\": 1.0,\n  \"eod_exit\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "POST /orb/live",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "Authorization",
+                "value": "Basic {{auth_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/orb/live",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "orb",
+                "live"
+              ]
+            },
+            "description": "Scan ORB signals and place paper/live orders. Actual API uses symbols[] and qty. Returns order summary with orders[] and allSignals[].",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"symbol\": \"RELIANCE\",\n  \"symbols\": [\n    \"RELIANCE\"\n  ],\n  \"timeframe\": \"5min\",\n  \"qty\": 1,\n  \"mode\": \"paper\",\n  \"confirm_live\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "GET /orb/stocks",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Basic {{auth_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/orb/stocks?timeframe=5min&q=REL",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "orb",
+                "stocks"
+              ],
+              "query": [
+                {
+                  "key": "timeframe",
+                  "value": "5min"
+                },
+                {
+                  "key": "q",
+                  "value": "REL"
+                }
+              ]
+            },
+            "description": "List distinct symbols available in ORB timeframe table."
+          }
+        },
+        {
+          "name": "GET /orb/nse-symbols",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Basic {{auth_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/orb/nse-symbols?q=REL",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "orb",
+                "nse-symbols"
+              ],
+              "query": [
+                {
+                  "key": "q",
+                  "value": "REL"
+                }
+              ]
+            },
+            "description": "Search NSE EQ symbol master. Returns [{symbol, company_name, industry}]."
+          }
+        }
+      ]
+    }
+  ]
+}

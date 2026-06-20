@@ -84,7 +84,23 @@ pip install -r requirements.txt
 
 > **Python 3.14t (free-threaded)** is required. Download from [python.org](https://www.python.org/downloads/) or use `pyenv`.
 
-### 3. Configure env
+### 3. Git identity
+
+The repo is configured for a single committer. `npm run api` sets this automatically on every start:
+
+```bash
+git config user.email "edharmarao@gmail.com"
+git config user.name  "edharmarao"
+```
+
+To set it once manually:
+
+```bash
+git config user.email "edharmarao@gmail.com"
+git config user.name  "edharmarao"
+```
+
+### 4. Configure env
 
 The project uses two env files at the repo root:
 
@@ -101,7 +117,7 @@ The correct file is **picked automatically** — no manual step needed:
 | Running on any other machine | `.env` |
 | `APP_ENV=prod` is set explicitly | `.env.prod` |
 
-### 4. Run the dev servers
+### 5. Run the dev servers
 
 ```bash
 # Terminal 1 — API  (auto-detects env)
