@@ -194,8 +194,9 @@ fi
 # ── Step 5: Build only when relevant code changed ────────────────────────────
 if $IS_REMOTE; then
   WEB_CODE_CHANGED=$(git diff HEAD@{1} HEAD --name-only 2>/dev/null | grep -c "^apps/web/" || true)
-  if [ "$WEB_CODE_CHANGED" -gt 0 ] || $NEED_BOOTSTRAP; then
-    log "Web code changed ($WEB_CODE_CHANGED files) — building Next.js app …"
+  ENV_CHANGED=$(git diff HEAD@{1} HEAD --name-only 2>/dev/null | grep -c "\.env" || true)
+  if [ "$WEB_CODE_CHANGED" -gt 0 ] || [ "$ENV_CHANGED" -gt 0 ] || $NEED_BOOTSTRAP; then
+    log "Rebuilding Next.js app (web changes: $WEB_CODE_CHANGED, env changes: $ENV_CHANGED) …"
     cd "$WEB_DIR" && "$NPM_CMD" run build 2>&1 | tail -5 && cd "$REPO_DIR"
     log "Web build complete."
   else
