@@ -18,6 +18,39 @@ PID_FILE="$REPO_DIR/.pids"
 
 cd "$REPO_DIR"
 
+# ── Resolve Node/npm (nvm, fnm, system, common paths) ─────────────────────────
+# Load nvm if present
+export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+[ -s "$NVM_DIR/nvm.sh" ] && source "$NVM_DIR/nvm.sh" --no-use 2>/dev/null || true
+
+# Load fnm if present
+command -v fnm >/dev/null 2>&1 && eval "$(fnm env)" 2>/dev/null || true
+
+# Add common Node install paths to PATH
+for NODE_PATH_HINT in \
+  /usr/local/bin \
+  /usr/bin \
+  "$HOME/.nvm/versions/node/$(ls "$HOME/.nvm/versions/node/" 2>/dev/null | sort -V | tail -1)/bin" \
+  "$HOME/.local/bin" \
+  /opt/homebrew/bin \
+  /snap/bin; do
+  [ -d "$NODE_PATH_HINT" ] && export PATH="$NODE_PATH_HINT:$PATH"
+done
+
+# Find npm / node
+NPM_CMD=$(command -v npm 2>/dev/null || true)
+NODE_CMD=$(command -v node 2>/dev/null || true)
+
+if [ -z "$NPM_CMD" ]; then
+  echo "[startup] ERROR: npm not found. Please install Node.js:"
+  echo "  curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -"
+  echo "  sudo apt-get install -y nodejs"
+  exit 1
+fi
+
+echo "[startup] Using Node: $NODE_CMD ($(node --version 2>/dev/null || echo '?'))"
+echo "[startup] Using npm:  $NPM_CMD ($(npm --version 2>/dev/null || echo '?'))"
+
 # ── Load .env.prod ─────────────────────────────────────────────────────────────
 if [ -f "$REPO_DIR/.env.prod" ]; then
   set -o allexport
@@ -106,13 +139,13 @@ cd "$WEB_DIR"
 
 # Use npm ci for reproducible installs, fall back to npm install
 if [ -f "package-lock.json" ]; then
-  npm ci --silent 2>&1 | tail -3
+  "$NPM_CMD" ci --silent 2>&1 | tail -3
 else
-  npm install --silent 2>&1 | tail -3
+  "$NPM_CMD" install --silent 2>&1 | tail -3
 fi
 
 log "Building Next.js app …"
-npm run build 2>&1 | tail -5
+"$NPM_CMD" run build 2>&1 | tail -5
 log "Web build complete."
 
 cd "$REPO_DIR"
@@ -132,7 +165,7 @@ log "API started (PID $API_PID)"
 # ── Step 7: Start Web ─────────────────────────────────────────────────────────
 log "Starting Web on port $WEB_PORT …"
 cd "$WEB_DIR"
-nohup npm run start 2>&1 >> "$WEB_LOG" &
+nohup "$NPM_CMD" run start 2>&1 >> "$WEB_LOG" &
 WEB_PID=$!
 echo "$WEB_PID" >> "$PID_FILE"
 cd "$REPO_DIR"
