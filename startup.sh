@@ -170,11 +170,16 @@ else
   log "Deps already installed — skipping install (local mode)."
 fi
 
-# ── Step 5: Build web (remote only — code may have changed after pull) ────────
+# ── Step 5: Build only when relevant code changed ────────────────────────────
 if $IS_REMOTE; then
-  log "Building Next.js app …"
-  cd "$WEB_DIR" && "$NPM_CMD" run build 2>&1 | tail -5 && cd "$REPO_DIR"
-  log "Web build complete."
+  WEB_CODE_CHANGED=$(git diff HEAD@{1} HEAD --name-only 2>/dev/null | grep -c "^apps/web/" || true)
+  if [ "$WEB_CODE_CHANGED" -gt 0 ] || $NEED_BOOTSTRAP; then
+    log "Web code changed ($WEB_CODE_CHANGED files) — building Next.js app …"
+    cd "$WEB_DIR" && "$NPM_CMD" run build 2>&1 | tail -5 && cd "$REPO_DIR"
+    log "Web build complete."
+  else
+    log "Web code unchanged — skipping Next.js build."
+  fi
 else
   log "Skipping web build (local mode)."
 fi
