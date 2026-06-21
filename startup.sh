@@ -1,10 +1,20 @@
 #!/usr/bin/env bash
 # =============================================================================
-# startup.sh — SignalAI remote host startup script
+# startup.sh — SignalAI startup script (works locally and on remote host)
 # =============================================================================
 set -euo pipefail
 
+REMOTE_IP="209.182.232.165"
+
 REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# ── Detect environment ────────────────────────────────────────────────────────
+LOCAL_IP=$(hostname -I 2>/dev/null | awk '{print $1}' || hostname -i 2>/dev/null || echo "")
+if [ "${LOCAL_IP}" = "${REMOTE_IP}" ] || [ "${APP_ENV:-}" = "prod" ]; then
+  IS_REMOTE=true
+else
+  IS_REMOTE=false
+fi
 LOG_DIR="$REPO_DIR/logs"
 API_LOG="$LOG_DIR/api.log"
 WEB_LOG="$LOG_DIR/web.log"
@@ -38,14 +48,27 @@ kill_by_port() {
   fi
 }
 
-# ── Load .env.prod ─────────────────────────────────────────────────────────────
-if [ -f "$REPO_DIR/.env.prod" ]; then
+# ── Load env file ─────────────────────────────────────────────────────────────
+if $IS_REMOTE; then
+  ENV_FILE="$REPO_DIR/.env.prod"
+  log "Running on remote host ($REMOTE_IP) — using .env.prod"
+else
+  # Prefer .env.local, fall back to .env
+  if [ -f "$REPO_DIR/.env.local" ]; then
+    ENV_FILE="$REPO_DIR/.env.local"
+  else
+    ENV_FILE="$REPO_DIR/.env"
+  fi
+  log "Running locally — using $(basename "$ENV_FILE")"
+fi
+
+if [ -f "$ENV_FILE" ]; then
   set -o allexport
   # shellcheck disable=SC1091
-  source "$REPO_DIR/.env.prod"
+  source "$ENV_FILE"
   set +o allexport
 else
-  echo "[startup] ERROR: .env.prod not found at $REPO_DIR/.env.prod"
+  echo "[startup] ERROR: env file not found: $ENV_FILE"
   exit 1
 fi
 
@@ -62,19 +85,28 @@ kill_by_port "$API_PORT"
 kill_by_port "$WEB_PORT"
 sleep 1
 
-# ── Step 2: Pull latest code ───────────────────────────────────────────────────
-log "Pulling latest code from GitHub …"
-if [ -n "$GITHUB_TOKEN" ] && [ "$GITHUB_TOKEN" != "your_personal_access_token_here" ]; then
-  REMOTE_URL="https://${GITHUB_USER}:${GITHUB_TOKEN}@github.com/${GITHUB_USER}/SignalAI.git"
-  git remote set-url origin "$REMOTE_URL" 2>/dev/null || true
+# ── Clear old logs ─────────────────────────────────────────────────────────────
+mkdir -p "$LOG_DIR"
+log "Clearing old logs …"
+rm -f "$API_LOG" "$WEB_LOG" "$LOG_DIR/signal_ai.log" "$LOG_DIR/trades.log" "$LOG_DIR/error.log"
+
+# ── Step 2: Pull latest code (remote only) ────────────────────────────────────
+if $IS_REMOTE; then
+  log "Pulling latest code from GitHub …"
+  if [ -n "$GITHUB_TOKEN" ] && [ "$GITHUB_TOKEN" != "your_personal_access_token_here" ]; then
+    REMOTE_URL="https://${GITHUB_USER}:${GITHUB_TOKEN}@github.com/${GITHUB_USER}/SignalAI.git"
+    git remote set-url origin "$REMOTE_URL" 2>/dev/null || true
+  fi
+
+  git fetch origin main
+  git reset --hard origin/main
+  log "Code updated to: $(git log --oneline -1)"
+
+  # Remove token from remote URL after pull (security)
+  git remote set-url origin "https://github.com/${GITHUB_USER}/SignalAI.git" 2>/dev/null || true
+else
+  log "Skipping git pull (local mode) — using current working tree"
 fi
-
-git fetch origin main
-git reset --hard origin/main
-log "Code updated to: $(git log --oneline -1)"
-
-# Remove token from remote URL after pull (security)
-git remote set-url origin "https://github.com/${GITHUB_USER}/SignalAI.git" 2>/dev/null || true
 
 # ── Resolve Node/npm (nvm, fnm, system, common paths) ─────────────────────────
 export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
@@ -99,63 +131,75 @@ if [ -z "$NPM_CMD" ]; then
 fi
 log "Node: $NODE_CMD ($($NODE_CMD --version 2>/dev/null || echo '?'))  npm: $NPM_CMD ($($NPM_CMD --version 2>/dev/null || echo '?'))"
 
-# ── Step 3: Create log directory ───────────────────────────────────────────────
-mkdir -p "$LOG_DIR"
-
-# ── Step 4: Install / update API dependencies ─────────────────────────────────
-log "Installing API dependencies …"
-API_DIR="$REPO_DIR/apps/api"
+# ── Step 3: Resolve deps / bootstrap ─────────────────────────────────────────
 VENV_DIR="$API_DIR/.venv"
-
-if [ ! -d "$VENV_DIR" ]; then
-  log "Creating Python venv at $VENV_DIR"
-  python3 -m venv "$VENV_DIR"
-fi
-
-"$VENV_DIR/bin/pip" install -q --upgrade pip
-"$VENV_DIR/bin/pip" install -q -r "$API_DIR/requirements.txt"
-log "API dependencies installed."
-
-# ── Step 5: Install / build Web dependencies ─────────────────────────────────
-log "Installing Web dependencies …"
 WEB_DIR="$REPO_DIR/apps/web"
-cd "$WEB_DIR"
 
-# Use npm ci for reproducible installs, fall back to npm install
-if [ -f "package-lock.json" ]; then
-  "$NPM_CMD" ci --silent 2>&1 | tail -3
+# ── Step 4: Bootstrap deps if missing; reinstall only when lock files change ──
+NEED_BOOTSTRAP=false
+[ ! -d "$VENV_DIR" ]                      && NEED_BOOTSTRAP=true
+[ ! -d "$REPO_DIR/node_modules" ]         && NEED_BOOTSTRAP=true
+
+if $NEED_BOOTSTRAP; then
+  log "Dependencies missing — running bootstrap.sh …"
+  bash "$REPO_DIR/scripts/bootstrap.sh"
+  log "Bootstrap complete."
+elif $IS_REMOTE; then
+  # After a git pull: reinstall only when the lock files actually changed
+  API_REQ_CHANGED=$(git diff HEAD@{1} HEAD --name-only 2>/dev/null | grep -c "apps/api/requirements.txt" || true)
+  WEB_LOCK_CHANGED=$(git diff HEAD@{1} HEAD --name-only 2>/dev/null | grep -c "package-lock.json" || true)
+
+  if [ "$API_REQ_CHANGED" -gt 0 ]; then
+    log "requirements.txt changed — updating Python deps …"
+    "$VENV_DIR/bin/pip" install -q --upgrade pip
+    "$VENV_DIR/bin/pip" install -q -r "$API_DIR/requirements.txt"
+    log "Python deps updated."
+  else
+    log "Python deps unchanged — skipping pip install."
+  fi
+
+  if [ "$WEB_LOCK_CHANGED" -gt 0 ]; then
+    log "package-lock.json changed — running npm ci …"
+    cd "$WEB_DIR" && "$NPM_CMD" ci --silent 2>&1 | tail -3 && cd "$REPO_DIR"
+    log "npm deps updated."
+  else
+    log "npm deps unchanged — skipping npm install."
+  fi
 else
-  "$NPM_CMD" install --silent 2>&1 | tail -3
+  log "Deps already installed — skipping install (local mode)."
 fi
 
-log "Building Next.js app …"
-"$NPM_CMD" run build 2>&1 | tail -5
-log "Web build complete."
+# ── Step 5: Build web (remote only — code may have changed after pull) ────────
+if $IS_REMOTE; then
+  log "Building Next.js app …"
+  cd "$WEB_DIR" && "$NPM_CMD" run build 2>&1 | tail -5 && cd "$REPO_DIR"
+  log "Web build complete."
+else
+  log "Skipping web build (local mode)."
+fi
 
-cd "$REPO_DIR"
-
-# ── Step 6: Start API ─────────────────────────────────────────────────────────
+# ── Step 6: Start API via npm run api:prod / api ──────────────────────────────
 log "Starting API on port $API_PORT …"
-# Must run from apps/api/ so Python can resolve the 'app' package
-cd "$API_DIR"
-nohup "$VENV_DIR/bin/uvicorn" app.main:app \
-  --host 0.0.0.0 \
-  --port "$API_PORT" \
-  --workers 2 \
-  --log-level info \
-  2>&1 >> "$API_LOG" &
+cd "$REPO_DIR"
+if $IS_REMOTE; then
+  nohup "$NPM_CMD" run api:prod >> "$API_LOG" 2>&1 &
+else
+  nohup "$NPM_CMD" run api >> "$API_LOG" 2>&1 &
+fi
 API_PID=$!
 echo "$API_PID" > "$PID_FILE"
-cd "$REPO_DIR"
 log "API started (PID $API_PID)"
 
-# ── Step 7: Start Web ─────────────────────────────────────────────────────────
+# ── Step 7: Start Web via npm run start / dev ─────────────────────────────────
 log "Starting Web on port $WEB_PORT …"
-cd "$WEB_DIR"
-nohup "$NPM_CMD" run start 2>&1 >> "$WEB_LOG" &
+cd "$REPO_DIR"
+if $IS_REMOTE; then
+  nohup "$NPM_CMD" run start >> "$WEB_LOG" 2>&1 &
+else
+  nohup "$NPM_CMD" run dev >> "$WEB_LOG" 2>&1 &
+fi
 WEB_PID=$!
 echo "$WEB_PID" >> "$PID_FILE"
-cd "$REPO_DIR"
 log "Web started (PID $WEB_PID)"
 
 # ── Step 8: Health check ───────────────────────────────────────────────────────
@@ -184,6 +228,9 @@ done
 echo ""
 echo "╔══════════════════════════════════════════════════════════╗"
 echo "║              SignalAI — Startup Summary                  ║"
+echo "╠══════════════════════════════════════════════════════════╣"
+printf "║  Mode: %-50s║\n" "$( $IS_REMOTE && echo "remote ($REMOTE_IP)" || echo "local" )"
+printf "║  Env:  %-50s║\n" "$(basename "$ENV_FILE")"
 echo "╠══════════════════════════════════════════════════════════╣"
 printf "║  API  (PID %-6s)  port %-5s  %s\n" \
   "$API_PID" "$API_PORT" "$( $API_OK && echo '✅ UP' || echo '⚠ check log' )  ║"

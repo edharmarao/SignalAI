@@ -17,3 +17,7 @@ coverage
 # Log files — keep the folder, ignore log content
 logs/*.log
 logs/*.log.*
+
+# Runtime process ID file
+.pids
+.banner_shown

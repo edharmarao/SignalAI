@@ -29,13 +29,18 @@ from .routers.auth import router as auth_router
 logger = logging.getLogger("signal_ai")
 _START_TIME = time.time()
 
-# ANSI colours for terminal output
-_GREEN  = "\033[92m"
-_RED    = "\033[91m"
-_YELLOW = "\033[93m"
-_CYAN   = "\033[96m"
-_BOLD   = "\033[1m"
-_RESET  = "\033[0m"
+import sys
+
+# ANSI colours — only when stdout is a real terminal (not a log file)
+def _ansi(code: str) -> str:
+    return code if sys.stdout.isatty() else ""
+
+_GREEN  = _ansi("\033[92m")
+_RED    = _ansi("\033[91m")
+_YELLOW = _ansi("\033[93m")
+_CYAN   = _ansi("\033[96m")
+_BOLD   = _ansi("\033[1m")
+_RESET  = _ansi("\033[0m")
 
 
 def _print_connection_status() -> None:
@@ -96,7 +101,16 @@ async def lifespan(app: FastAPI):
     if settings.allow_live_trading:
         logger.warning("LIVE TRADING IS ENABLED — real orders will be placed!")
 
-    _print_connection_status()
+    # Only print banner from the first worker to avoid duplicate output in logs.
+    # UVICORN_WORKER_ID is set via the startup script; fall back to checking
+    # whether a lock file is absent (first process to create it wins).
+    _banner_lock = os.path.join(os.path.dirname(__file__), ".banner_shown")
+    try:
+        fd = os.open(_banner_lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        os.close(fd)
+        _print_connection_status()
+    except FileExistsError:
+        pass  # another worker already printed the banner
 
     # Pre-warm NSE instrument map in background (downloads Upstox CSV)
     import threading
@@ -121,6 +135,11 @@ async def lifespan(app: FastAPI):
 
     yield
     logger.info("Signal AI API shutting down")
+    # Clean up banner lock so next startup prints again
+    try:
+        os.remove(_banner_lock)
+    except OSError:
+        pass
 
 
 settings = get_settings()

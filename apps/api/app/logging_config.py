@@ -36,7 +36,7 @@ def configure_logging() -> None:
             "version": 1,
             "disable_existing_loggers": False,
             "formatters": {
-                "console": {"format": console_fmt, "datefmt": "%H:%M:%S"},
+                "console": {"format": console_fmt, "datefmt": "%m-%d %H:%M:%S"},
                 "file":    {"format": file_fmt,    "datefmt": "%Y-%m-%d %H:%M:%S"},
             },
             "handlers": {
