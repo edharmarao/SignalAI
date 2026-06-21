@@ -1,8 +1,14 @@
 import { auth } from "./auth";
 import { mockApi } from "./mock";
 
+// Use relative path so the browser always calls the same host it loaded from.
+// Next.js rewrites proxy /api/v1/* → FastAPI internally.
+// NEXT_PUBLIC_API_URL is kept as a fallback for direct API access (e.g. dev without Next.js).
 const BASE =
-  (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8003") + "/api/v1";
+  (typeof window !== "undefined"
+    ? ""  // browser: relative path, handled by Next.js rewrite
+    : (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8003")  // SSR: direct internal call
+  ) + "/api/v1";
 
 const USE_MOCK =
   (process.env.NEXT_PUBLIC_USE_MOCK ?? "false").toLowerCase() === "true";

@@ -14,6 +14,7 @@ function requireEnv(name: string, fallback?: string): string {
 }
 
 export const env = {
-  apiUrl: process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8003",
+  // Relative URL in browser (proxied by Next.js rewrites); direct URL for SSR
+  apiUrl: typeof window !== "undefined" ? "" : (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8003"),
   useMock: (process.env.NEXT_PUBLIC_USE_MOCK ?? "false").toLowerCase() === "true",
 } as const;
