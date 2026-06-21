@@ -132,6 +132,7 @@ fi
 log "Node: $NODE_CMD ($($NODE_CMD --version 2>/dev/null || echo '?'))  npm: $NPM_CMD ($($NPM_CMD --version 2>/dev/null || echo '?'))"
 
 # ── Step 3: Resolve deps / bootstrap ─────────────────────────────────────────
+API_DIR="$REPO_DIR/apps/api"
 VENV_DIR="$API_DIR/.venv"
 WEB_DIR="$REPO_DIR/apps/web"
 
