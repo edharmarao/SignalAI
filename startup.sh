@@ -1,12 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
 # startup.sh — SignalAI remote host startup script
-# Usage: ./startup.sh
-#   - Pulls latest code from GitHub
-#   - Kills any running API / Web instances
-#   - Installs dependencies
-#   - Starts API (uvicorn) and Web (next start) as background processes
-#   - Logs written to logs/api.log and logs/web.log
 # =============================================================================
 set -euo pipefail
 
@@ -17,55 +11,6 @@ WEB_LOG="$LOG_DIR/web.log"
 PID_FILE="$REPO_DIR/.pids"
 
 cd "$REPO_DIR"
-
-# ── Resolve Node/npm (nvm, fnm, system, common paths) ─────────────────────────
-# Load nvm if present
-export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
-[ -s "$NVM_DIR/nvm.sh" ] && source "$NVM_DIR/nvm.sh" --no-use 2>/dev/null || true
-
-# Load fnm if present
-command -v fnm >/dev/null 2>&1 && eval "$(fnm env)" 2>/dev/null || true
-
-# Add common Node install paths to PATH
-for NODE_PATH_HINT in \
-  /usr/local/bin \
-  /usr/bin \
-  "$HOME/.nvm/versions/node/$(ls "$HOME/.nvm/versions/node/" 2>/dev/null | sort -V | tail -1)/bin" \
-  "$HOME/.local/bin" \
-  /opt/homebrew/bin \
-  /snap/bin; do
-  [ -d "$NODE_PATH_HINT" ] && export PATH="$NODE_PATH_HINT:$PATH"
-done
-
-# Find npm / node
-NPM_CMD=$(command -v npm 2>/dev/null || true)
-NODE_CMD=$(command -v node 2>/dev/null || true)
-
-if [ -z "$NPM_CMD" ]; then
-  echo "[startup] ERROR: npm not found. Please install Node.js:"
-  echo "  curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -"
-  echo "  sudo apt-get install -y nodejs"
-  exit 1
-fi
-
-echo "[startup] Using Node: $NODE_CMD ($(node --version 2>/dev/null || echo '?'))"
-echo "[startup] Using npm:  $NPM_CMD ($(npm --version 2>/dev/null || echo '?'))"
-
-# ── Load .env.prod ─────────────────────────────────────────────────────────────
-if [ -f "$REPO_DIR/.env.prod" ]; then
-  set -o allexport
-  # shellcheck disable=SC1091
-  source "$REPO_DIR/.env.prod"
-  set +o allexport
-else
-  echo "[startup] ERROR: .env.prod not found at $REPO_DIR/.env.prod"
-  exit 1
-fi
-
-GITHUB_TOKEN="${GITHUB_TOKEN:-}"
-GITHUB_USER="${GITHUB_USER:-edharmarao}"
-API_PORT="${API_PORT:-8003}"
-WEB_PORT="${PORT:-3003}"
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"; }
@@ -93,6 +38,22 @@ kill_by_port() {
   fi
 }
 
+# ── Load .env.prod ─────────────────────────────────────────────────────────────
+if [ -f "$REPO_DIR/.env.prod" ]; then
+  set -o allexport
+  # shellcheck disable=SC1091
+  source "$REPO_DIR/.env.prod"
+  set +o allexport
+else
+  echo "[startup] ERROR: .env.prod not found at $REPO_DIR/.env.prod"
+  exit 1
+fi
+
+GITHUB_TOKEN="${GITHUB_TOKEN:-}"
+GITHUB_USER="${GITHUB_USER:-edharmarao}"
+API_PORT="${API_PORT:-8003}"
+WEB_PORT="${PORT:-3003}"
+
 # ── Step 1: Stop any running instances ────────────────────────────────────────
 log "=== SignalAI Startup ==="
 log "Stopping any running instances …"
@@ -114,6 +75,29 @@ log "Code updated to: $(git log --oneline -1)"
 
 # Remove token from remote URL after pull (security)
 git remote set-url origin "https://github.com/${GITHUB_USER}/SignalAI.git" 2>/dev/null || true
+
+# ── Resolve Node/npm (nvm, fnm, system, common paths) ─────────────────────────
+export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+[ -s "$NVM_DIR/nvm.sh" ] && source "$NVM_DIR/nvm.sh" --no-use 2>/dev/null || true
+command -v fnm >/dev/null 2>&1 && eval "$(fnm env)" 2>/dev/null || true
+
+for NODE_PATH_HINT in \
+  /usr/local/bin /usr/bin \
+  "$HOME/.nvm/versions/node/$(ls "$HOME/.nvm/versions/node/" 2>/dev/null | sort -V | tail -1)/bin" \
+  "$HOME/.local/bin" /opt/homebrew/bin /snap/bin; do
+  [ -d "$NODE_PATH_HINT" ] && export PATH="$NODE_PATH_HINT:$PATH"
+done
+
+NPM_CMD=$(command -v npm 2>/dev/null || true)
+NODE_CMD=$(command -v node 2>/dev/null || true)
+
+if [ -z "$NPM_CMD" ]; then
+  log "ERROR: npm not found. Install Node.js first:"
+  log "  curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -"
+  log "  sudo apt-get install -y nodejs"
+  exit 1
+fi
+log "Node: $NODE_CMD ($($NODE_CMD --version 2>/dev/null || echo '?'))  npm: $NPM_CMD ($($NPM_CMD --version 2>/dev/null || echo '?'))"
 
 # ── Step 3: Create log directory ───────────────────────────────────────────────
 mkdir -p "$LOG_DIR"
