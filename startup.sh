@@ -37,23 +37,30 @@ kill_pid_file() {
   fi
 }
 
+get_pids_on_port() {
+  local port="$1"
+  local pids=""
+  if command -v lsof >/dev/null 2>&1; then
+    pids=$(lsof -ti tcp:"$port" 2>/dev/null || true)
+  fi
+  if [ -z "$pids" ] && command -v ss >/dev/null 2>&1; then
+    pids=$(ss -tlnp 2>/dev/null | grep ":${port} " | grep -oP 'pid=\K[0-9]+' || true)
+  fi
+  if [ -z "$pids" ] && command -v fuser >/dev/null 2>&1; then
+    pids=$(fuser "${port}/tcp" 2>/dev/null || true)
+  fi
+  echo "$pids"
+}
+
 kill_by_port() {
   local port="$1"
   local pid
-  # Try lsof first (macOS + Linux), fall back to ss (Linux), then fuser
-  pid=$(lsof -ti tcp:"$port" 2>/dev/null || true)
-  if [ -z "$pid" ]; then
-    pid=$(ss -tlnp 2>/dev/null | grep ":${port} " | grep -oP 'pid=\K[0-9]+' || true)
-  fi
-  if [ -z "$pid" ]; then
-    pid=$(fuser "${port}/tcp" 2>/dev/null || true)
-  fi
+  pid=$(get_pids_on_port "$port")
   if [ -n "$pid" ]; then
     log "Killing existing process on port $port (PID $pid)"
     echo "$pid" | xargs kill 2>/dev/null || true
     sleep 2
-    # SIGKILL any survivors
-    pid=$(lsof -ti tcp:"$port" 2>/dev/null || ss -tlnp 2>/dev/null | grep ":${port} " | grep -oP 'pid=\K[0-9]+' || true)
+    pid=$(get_pids_on_port "$port")
     if [ -n "$pid" ]; then
       log "Force-killing port $port (PID $pid)"
       echo "$pid" | xargs kill -9 2>/dev/null || true

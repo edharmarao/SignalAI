@@ -23,21 +23,30 @@ WEB_PORT="${PORT:-3003}"
 
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"; }
 
+get_pids_on_port() {
+  local port="$1"
+  local pids=""
+  if command -v lsof >/dev/null 2>&1; then
+    pids=$(lsof -ti tcp:"$port" 2>/dev/null || true)
+  fi
+  if [ -z "$pids" ] && command -v ss >/dev/null 2>&1; then
+    pids=$(ss -tlnp 2>/dev/null | grep ":${port} " | grep -oP 'pid=\K[0-9]+' || true)
+  fi
+  if [ -z "$pids" ] && command -v fuser >/dev/null 2>&1; then
+    pids=$(fuser "${port}/tcp" 2>/dev/null || true)
+  fi
+  echo "$pids"
+}
+
 kill_port() {
   local port="$1"
   local pids
-  pids=$(lsof -ti tcp:"$port" 2>/dev/null || true)
-  if [ -z "$pids" ]; then
-    pids=$(ss -tlnp 2>/dev/null | grep ":${port} " | grep -oP 'pid=\K[0-9]+' || true)
-  fi
-  if [ -z "$pids" ]; then
-    pids=$(fuser "${port}/tcp" 2>/dev/null || true)
-  fi
+  pids=$(get_pids_on_port "$port")
   if [ -n "$pids" ]; then
     log "Killing processes on port $port: $pids"
     echo "$pids" | xargs kill 2>/dev/null || true
     sleep 2
-    pids=$(lsof -ti tcp:"$port" 2>/dev/null || ss -tlnp 2>/dev/null | grep ":${port} " | grep -oP 'pid=\K[0-9]+' || true)
+    pids=$(get_pids_on_port "$port")
     if [ -n "$pids" ]; then
       log "Force-killing survivors on port $port: $pids"
       echo "$pids" | xargs kill -9 2>/dev/null || true
