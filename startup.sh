@@ -136,6 +136,8 @@ cd "$REPO_DIR"
 
 # ── Step 6: Start API ─────────────────────────────────────────────────────────
 log "Starting API on port $API_PORT …"
+# Must run from apps/api/ so Python can resolve the 'app' package
+cd "$API_DIR"
 nohup "$VENV_DIR/bin/uvicorn" app.main:app \
   --host 0.0.0.0 \
   --port "$API_PORT" \
@@ -144,6 +146,7 @@ nohup "$VENV_DIR/bin/uvicorn" app.main:app \
   2>&1 >> "$API_LOG" &
 API_PID=$!
 echo "$API_PID" > "$PID_FILE"
+cd "$REPO_DIR"
 log "API started (PID $API_PID)"
 
 # ── Step 7: Start Web ─────────────────────────────────────────────────────────
