@@ -27,12 +27,17 @@ kill_port() {
   local port="$1"
   local pids
   pids=$(lsof -ti tcp:"$port" 2>/dev/null || true)
+  if [ -z "$pids" ]; then
+    pids=$(ss -tlnp 2>/dev/null | grep ":${port} " | grep -oP 'pid=\K[0-9]+' || true)
+  fi
+  if [ -z "$pids" ]; then
+    pids=$(fuser "${port}/tcp" 2>/dev/null || true)
+  fi
   if [ -n "$pids" ]; then
     log "Killing processes on port $port: $pids"
     echo "$pids" | xargs kill 2>/dev/null || true
     sleep 2
-    # SIGKILL any survivors
-    pids=$(lsof -ti tcp:"$port" 2>/dev/null || true)
+    pids=$(lsof -ti tcp:"$port" 2>/dev/null || ss -tlnp 2>/dev/null | grep ":${port} " | grep -oP 'pid=\K[0-9]+' || true)
     if [ -n "$pids" ]; then
       log "Force-killing survivors on port $port: $pids"
       echo "$pids" | xargs kill -9 2>/dev/null || true

@@ -40,11 +40,25 @@ kill_pid_file() {
 kill_by_port() {
   local port="$1"
   local pid
+  # Try lsof first (macOS + Linux), fall back to ss (Linux), then fuser
   pid=$(lsof -ti tcp:"$port" 2>/dev/null || true)
+  if [ -z "$pid" ]; then
+    pid=$(ss -tlnp 2>/dev/null | grep ":${port} " | grep -oP 'pid=\K[0-9]+' || true)
+  fi
+  if [ -z "$pid" ]; then
+    pid=$(fuser "${port}/tcp" 2>/dev/null || true)
+  fi
   if [ -n "$pid" ]; then
     log "Killing existing process on port $port (PID $pid)"
-    kill "$pid" 2>/dev/null || true
-    sleep 1
+    echo "$pid" | xargs kill 2>/dev/null || true
+    sleep 2
+    # SIGKILL any survivors
+    pid=$(lsof -ti tcp:"$port" 2>/dev/null || ss -tlnp 2>/dev/null | grep ":${port} " | grep -oP 'pid=\K[0-9]+' || true)
+    if [ -n "$pid" ]; then
+      log "Force-killing port $port (PID $pid)"
+      echo "$pid" | xargs kill -9 2>/dev/null || true
+      sleep 1
+    fi
   fi
 }
 
