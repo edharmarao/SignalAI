@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+# =============================================================================
+# stop.sh — SignalAI remote host stop script
+# Usage: ./stop.sh
+#   - Kills API and Web processes recorded in .pids
+#   - Also kills anything on the configured ports as fallback
+# =============================================================================
+set -euo pipefail
+
+REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
+PID_FILE="$REPO_DIR/.pids"
+
+# ── Load .env.prod for port numbers ───────────────────────────────────────────
+if [ -f "$REPO_DIR/.env.prod" ]; then
+  set -o allexport
+  # shellcheck disable=SC1091
+  source "$REPO_DIR/.env.prod"
+  set +o allexport
+fi
+
+API_PORT="${API_PORT:-8003}"
+WEB_PORT="${PORT:-3003}"
+
+log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"; }
+
+log "=== SignalAI Stop ==="
+
+# ── Kill by PID file ──────────────────────────────────────────────────────────
+if [ -f "$PID_FILE" ]; then
+  log "Reading PIDs from $PID_FILE …"
+  while IFS= read -r pid; do
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+      log "Stopping PID $pid …"
+      kill "$pid" 2>/dev/null && log "  → Sent SIGTERM to $pid" || log "  → Already gone"
+    else
+      log "PID $pid — not running (skipping)"
+    fi
+  done < "$PID_FILE"
+  rm -f "$PID_FILE"
+  log "PID file removed."
+else
+  log "No .pids file found — falling back to port scan."
+fi
+
+# ── Kill by port (fallback / belt-and-suspenders) ─────────────────────────────
+for port in "$API_PORT" "$WEB_PORT"; do
+  pid=$(lsof -ti tcp:"$port" 2>/dev/null || true)
+  if [ -n "$pid" ]; then
+    log "Killing residual process on port $port (PID $pid) …"
+    kill "$pid" 2>/dev/null || true
+  fi
+done
+
+sleep 1
+
+# ── Confirm ───────────────────────────────────────────────────────────────────
+API_RUNNING=$(lsof -ti tcp:"$API_PORT" 2>/dev/null || true)
+WEB_RUNNING=$(lsof -ti tcp:"$WEB_PORT" 2>/dev/null || true)
+
+echo ""
+echo "╔══════════════════════════════════════════╗"
+echo "║        SignalAI — Stop Summary           ║"
+echo "╠══════════════════════════════════════════╣"
+if [ -z "$API_RUNNING" ]; then
+  printf "║  API  port %-5s  ✅ Stopped             ║\n" "$API_PORT"
+else
+  printf "║  API  port %-5s  ⚠ Still running (%-5s)║\n" "$API_PORT" "$API_RUNNING"
+fi
+if [ -z "$WEB_RUNNING" ]; then
+  printf "║  Web  port %-5s  ✅ Stopped             ║\n" "$WEB_PORT"
+else
+  printf "║  Web  port %-5s  ⚠ Still running (%-5s)║\n" "$WEB_PORT" "$WEB_RUNNING"
+fi
+echo "╚══════════════════════════════════════════╝"
