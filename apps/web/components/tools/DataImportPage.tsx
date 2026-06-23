@@ -132,6 +132,7 @@ export default function DataImportPage() {
       if (mode === "intraday") {
         data = await api<ImportResponse>("/upstox/intraday-data-import", {
           method: "POST",
+          timeoutMs: 600_000,
           body: JSON.stringify({
             stock_codes: symbols,
             exchange,
@@ -142,6 +143,7 @@ export default function DataImportPage() {
       } else {
         data = await api<ImportResponse>("/upstox/historical-data-import", {
           method: "POST",
+          timeoutMs: 600_000,
           body: JSON.stringify({
             stock_codes: symbols,
             exchange,

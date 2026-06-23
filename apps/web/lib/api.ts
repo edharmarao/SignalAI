@@ -14,6 +14,7 @@ const USE_MOCK =
   (process.env.NEXT_PUBLIC_USE_MOCK ?? "false").toLowerCase() === "true";
 
 const REQUEST_TIMEOUT_MS = 30_000;
+const LONG_REQUEST_TIMEOUT_MS = 600_000; // 10 min for bulk import
 const MAX_RETRIES = 2;
 const RETRY_BASE_MS = 500;
 
@@ -53,11 +54,12 @@ function handleUnauthorized(pathname: string): void {
 
 export async function api<T = unknown>(
   path: string,
-  init: RequestInit = {},
+  init: RequestInit & { timeoutMs?: number } = {},
 ): Promise<T> {
   if (USE_MOCK) return mockApi<T>(path, init);
 
   const method = (init.method ?? "GET").toUpperCase();
+  const timeoutMs = init.timeoutMs ?? REQUEST_TIMEOUT_MS;
   const externalSignal = init.signal;   // caller's AbortController (e.g. component unmount)
   let lastError: Error = new Error("Request failed");
 
@@ -72,7 +74,7 @@ export async function api<T = unknown>(
 
     // Combine timeout controller with caller's external signal
     const timeoutCtrl = new AbortController();
-    const timeoutId   = setTimeout(() => timeoutCtrl.abort(), REQUEST_TIMEOUT_MS);
+    const timeoutId   = setTimeout(() => timeoutCtrl.abort(), timeoutMs);
 
     // Use AbortSignal.any() when available (Node 20+, modern browsers),
     // otherwise fall back to listening on the external signal manually.

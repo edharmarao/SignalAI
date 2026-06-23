@@ -90,6 +90,10 @@ def configure_logging() -> None:
                 "uvicorn":          {"level": logging.INFO,  "propagate": True},
                 "uvicorn.access":   {"level": logging.INFO,  "propagate": True},
                 "uvicorn.error":    {"level": logging.ERROR, "propagate": True},
+                # Suppress noisy DEBUG output from HTTP client internals
+                "httpcore":         {"level": logging.WARNING, "propagate": True},
+                "httpx":            {"level": logging.WARNING, "propagate": True},
+                "hpack":            {"level": logging.WARNING, "propagate": True},
             },
         }
     )

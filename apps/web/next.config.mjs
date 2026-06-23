@@ -57,6 +57,9 @@ const nextConfig = {
   transpilePackages: ["@signalai/types", "@signalai/ui", "@signalai/utils"],
   allowedDevOrigins: ["*.local", "*.localhost", "192.168.*.*"],
   env: publicEnv,
+  experimental: {
+    proxyTimeout: 600_000, // 10 min — needed for bulk symbol imports
+  },
   async rewrites() {
     // Proxy /api/v1/* → FastAPI backend (server-side, never exposes the internal URL to the browser)
     const apiBase = rootEnv.API_INTERNAL_URL || `http://localhost:${rootEnv.API_PORT || 8003}`;
