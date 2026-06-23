@@ -18,16 +18,12 @@ since market OHLCV data is shared. The candle_data table must exist in Supabase
 """
 from __future__ import annotations
 
-import asyncio
-import json as _json
 import logging
 import time
 from datetime import datetime, timedelta
 
-import httpx
 from dateutil.relativedelta import relativedelta
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
-from fastapi.responses import StreamingResponse
 
 from ..deps import get_current_user
 from ..models import (
@@ -49,7 +45,6 @@ router = APIRouter(prefix="/upstox", tags=["upstox"])
 logger = logging.getLogger("signal_ai")
 
 _INTRADAY_INTERVAL_TYPES = frozenset({"minutes", "hours", "days"})
-_MAX_CONCURRENT = 10  # parallel Upstox HTTP fetches per import job
 
 
 # ── Auth helpers ──────────────────────────────────────────────────────────────
@@ -234,121 +229,114 @@ def get_historical_candle_by_symbol(
 
 
 @router.post("/historical-data-import")
-async def historical_data_import(
+def historical_data_import(
     request: BulkHistoricalImportRequest = Body(...),
     user: dict = Depends(get_current_user),
-) -> StreamingResponse:
-    """Bulk-import historical OHLCV data — streams SSE progress per symbol.
+) -> dict:
+    """Bulk-import historical OHLCV data for multiple symbols.
 
-    Phase 1 — Up to _MAX_CONCURRENT symbols fetched in parallel (asyncio + httpx).
-    Phase 2 — ONE DB connection, ONE batch insert, commit, close.
-    Emits: {type:"progress", symbol, status, records, error, completed, total}
-    Final: {type:"complete", ...summary}
+    Phase 1 — Fetch all candles from Upstox (no DB, pure HTTP).
+    Phase 2 — Open ONE DB connection, execute ONE batch insert with all rows, commit, close.
+
+    Date ranges are automatically split to respect Upstox per-request limits:
+    - minutes (1-15): 1-month chunks
+    - minutes (>15) / hours: 3-month chunks
+    - days / weeks / months: no splitting
     """
     if not UpstoxClient.validate_interval(request.interval_type, request.interval_value):
         raise HTTPException(400, f"Invalid interval {request.interval_type}/{request.interval_value}")
 
     token = _get_upstox_token(user["id"])
-    upstox = UpstoxClient(token)
-    total = len(request.stock_codes)
+    client = UpstoxClient(token)
+
     start_ts = time.time()
     start_dt = datetime.now()
     logger.info(
         "[IMPORT:historical] START %s | symbols=%d | interval=%s/%s | range=%s→%s",
-        start_dt.strftime("%Y-%m-%d %H:%M:%S"), total,
+        start_dt.strftime("%Y-%m-%d %H:%M:%S"),
+        len(request.stock_codes),
         request.interval_type, request.interval_value,
         request.from_date, request.to_date,
     )
 
-    async def stream():
-        all_params: list[tuple] = []
-        results: list[dict] = []
-        sem = asyncio.Semaphore(_MAX_CONCURRENT)
-        limits = httpx.Limits(max_connections=_MAX_CONCURRENT + 5, max_keepalive_connections=_MAX_CONCURRENT)
+    # ── Phase 1: Fetch all candles (no DB) ───────────────────────────────────
+    results: list[dict] = []
+    all_params: list[tuple] = []
 
-        async def fetch_symbol(code: str) -> tuple[str, list[tuple], str | None]:
-            sym = code.upper()
-            isin = NIFTY500_ISIN.get(sym)
-            if not isin:
-                return sym, [], "ISIN not found in instrument map"
-            async with sem:
-                try:
-                    chunks = _split_date_range(
-                        request.from_date, request.to_date,
-                        request.interval_type, request.interval_value,
-                    )
-                    sym_rows: list[tuple] = []
-                    for chunk_from, chunk_to in chunks:
-                        candles = await upstox.historical_candles_v3_async(
-                            request.exchange, isin,
-                            request.interval_type, request.interval_value,
-                            chunk_from, chunk_to, http_client,
-                        )
-                        sym_rows.extend(_build_candle_params(
-                            candles, sym, request.exchange, isin,
-                            request.interval_type, request.interval_value, request.table_name,
-                        ))
-                    return sym, sym_rows, None
-                except Exception as e:
-                    return sym, [], str(e)
+    fetch_start = time.time()
+    for code in request.stock_codes:
+        sym = code.upper()
+        isin = NIFTY500_ISIN.get(sym)
+        if not isin:
+            results.append({"symbol": sym, "status": "failed", "error": "ISIN not found in instrument map", "records": 0})
+            continue
+        try:
+            chunks = _split_date_range(request.from_date, request.to_date, request.interval_type, request.interval_value)
+            sym_rows: list[tuple] = []
+            for chunk_from, chunk_to in chunks:
+                candles = client.historical_candles_v3(
+                    request.exchange, isin, request.interval_type, request.interval_value, chunk_from, chunk_to
+                )
+                sym_rows.extend(_build_candle_params(candles, sym, request.exchange, isin,
+                                                     request.interval_type, request.interval_value, request.table_name))
+            all_params.extend(sym_rows)
+            results.append({"symbol": sym, "status": "success", "records": len(sym_rows)})
+            logger.info("  [fetch] %s — %d rows", sym, len(sym_rows))
+        except Exception as e:
+            logger.error("  [fetch] %s FAILED: %s", sym, e)
+            results.append({"symbol": sym, "status": "failed", "error": str(e), "records": 0})
 
-        fetch_start = time.time()
-        async with httpx.AsyncClient(timeout=30, limits=limits) as http_client:
-            tasks = [asyncio.create_task(fetch_symbol(code)) for code in request.stock_codes]
-            completed = 0
-            for fut in asyncio.as_completed(tasks):
-                sym, sym_rows, error = await fut
-                completed += 1
-                if error:
-                    results.append({"symbol": sym, "status": "failed", "error": error, "records": 0})
-                    logger.warning("  [fetch] %s FAILED: %s", sym, error)
-                else:
-                    all_params.extend(sym_rows)
-                    results.append({"symbol": sym, "status": "success", "records": len(sym_rows)})
-                    logger.info("  [fetch] %s — %d rows", sym, len(sym_rows))
-                yield f"data: {_json.dumps({'type': 'progress', 'symbol': sym, 'status': 'failed' if error else 'success', 'records': len(sym_rows) if not error else 0, 'error': error, 'completed': completed, 'total': total})}\n\n"
+    fetch_secs = time.time() - fetch_start
+    logger.info("[IMPORT:historical] Phase 1 complete — %d rows fetched in %.1fs", len(all_params), fetch_secs)
 
-        fetch_secs = time.time() - fetch_start
-        logger.info("[IMPORT:historical] Phase 1 complete — %d rows fetched in %.1fs", len(all_params), fetch_secs)
+    # ── Phase 2: ONE connection, ONE batch insert, ONE commit, close ──────────
+    total_records = 0
+    db_secs = 0.0
+    if all_params:
+        sql = _candle_upsert_sql(request.table_name)
+        db_start = time.time()
+        with DatabaseUtil(autocommit=False) as db:
+            total_records = db.execute_many(sql, all_params)
+            db.commit()
+        db_secs = time.time() - db_start
+        logger.info("[IMPORT:historical] Phase 2 complete — %d rows committed in %.1fs", total_records, db_secs)
 
-        # Phase 2: single DB connection, one batch write, one commit
-        total_records = 0
-        db_secs = 0.0
-        if all_params:
-            sql = _candle_upsert_sql(request.table_name)
-            db_start = time.time()
-            def _db_write() -> int:
-                with DatabaseUtil(autocommit=False) as db:
-                    n = db.execute_many(sql, all_params)
-                    db.commit()
-                    return n
-            total_records = await asyncio.to_thread(_db_write)
-            db_secs = time.time() - db_start
-            logger.info("[IMPORT:historical] Phase 2 complete — %d rows committed in %.1fs", total_records, db_secs)
+    total_secs = time.time() - start_ts
+    end_dt = datetime.now()
+    successful = sum(1 for r in results if r["status"] == "success")
+    logger.info(
+        "[IMPORT:historical] END %s | symbols=%d/%d | rows=%d | fetch=%.1fs | db=%.1fs | total=%.1fs",
+        end_dt.strftime("%Y-%m-%d %H:%M:%S"),
+        successful, len(request.stock_codes),
+        total_records, fetch_secs, db_secs, total_secs,
+    )
 
-        total_secs = time.time() - start_ts
-        end_dt = datetime.now()
-        successful = sum(1 for r in results if r["status"] == "success")
-        logger.info(
-            "[IMPORT:historical] END %s | symbols=%d/%d | rows=%d | fetch=%.1fs | db=%.1fs | total=%.1fs",
-            end_dt.strftime("%Y-%m-%d %H:%M:%S"), successful, total,
-            total_records, fetch_secs, db_secs, total_secs,
-        )
-        yield f"data: {_json.dumps({'type': 'complete', 'status': 'success', 'total_symbols': total, 'successful_imports': successful, 'failed_imports': total - successful, 'total_records_imported': total_records, 'started_at': start_dt.strftime('%Y-%m-%d %H:%M:%S'), 'ended_at': end_dt.strftime('%Y-%m-%d %H:%M:%S'), 'duration_seconds': round(total_secs, 2), 'fetch_seconds': round(fetch_secs, 2), 'db_seconds': round(db_secs, 2), 'details': results})}\n\n"
-
-    return StreamingResponse(stream(), media_type="text/event-stream",
-                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+    return {
+        "status": "success",
+        "total_symbols": len(request.stock_codes),
+        "successful_imports": successful,
+        "failed_imports": len(request.stock_codes) - successful,
+        "total_records_imported": total_records,
+        "started_at": start_dt.strftime("%Y-%m-%d %H:%M:%S"),
+        "ended_at": end_dt.strftime("%Y-%m-%d %H:%M:%S"),
+        "duration_seconds": round(total_secs, 2),
+        "fetch_seconds": round(fetch_secs, 2),
+        "db_seconds": round(db_secs, 2),
+        "details": results,
+    }
 
 
 @router.post("/intraday-data-import")
-async def intraday_data_import(
+def intraday_data_import(
     request: IntradayImportRequest = Body(...),
     user: dict = Depends(get_current_user),
-) -> StreamingResponse:
-    """Import today's intraday OHLCV data — streams SSE progress per symbol.
+) -> dict:
+    """Import today's intraday OHLCV data for multiple symbols.
 
-    Phase 1 — Up to _MAX_CONCURRENT symbols fetched in parallel.
-    Phase 2 — ONE DB connection, ONE batch insert, commit, close.
+    Phase 1 — Fetch all candles from Upstox (no DB, pure HTTP).
+    Phase 2 — Open ONE DB connection, execute ONE batch insert with all rows, commit, close.
+
+    Supports minutes, hours, and days intervals ('days'/'1' fetches today's EOD candle).
     """
     if request.interval_type not in _INTRADAY_INTERVAL_TYPES:
         raise HTTPException(
@@ -360,86 +348,77 @@ async def intraday_data_import(
         raise HTTPException(400, f"Invalid interval {request.interval_type}/{request.interval_value}")
 
     token = _get_upstox_token(user["id"])
-    upstox = UpstoxClient(token)
-    total = len(request.stock_codes)
+    client = UpstoxClient(token)
+
     start_ts = time.time()
     start_dt = datetime.now()
     logger.info(
         "[IMPORT:intraday] START %s | symbols=%d | interval=%s/%s",
-        start_dt.strftime("%Y-%m-%d %H:%M:%S"), total,
+        start_dt.strftime("%Y-%m-%d %H:%M:%S"),
+        len(request.stock_codes),
         request.interval_type, request.interval_value,
     )
 
-    async def stream():
-        all_params: list[tuple] = []
-        results: list[dict] = []
-        sem = asyncio.Semaphore(_MAX_CONCURRENT)
-        limits = httpx.Limits(max_connections=_MAX_CONCURRENT + 5, max_keepalive_connections=_MAX_CONCURRENT)
+    # ── Phase 1: Fetch all candles (no DB) ───────────────────────────────────
+    results: list[dict] = []
+    all_params: list[tuple] = []
 
-        async def fetch_symbol(code: str) -> tuple[str, list[tuple], str | None]:
-            sym = code.upper()
-            isin = NIFTY500_ISIN.get(sym)
-            if not isin:
-                return sym, [], "ISIN not found in instrument map"
-            async with sem:
-                try:
-                    candles = await upstox.intraday_candles_v3_async(
-                        request.exchange, isin,
-                        request.interval_type, request.interval_value, http_client,
-                    )
-                    sym_rows = _build_candle_params(
-                        candles, sym, request.exchange, isin,
-                        request.interval_type, request.interval_value, request.table_name,
-                    )
-                    return sym, sym_rows, None
-                except Exception as e:
-                    return sym, [], str(e)
+    fetch_start = time.time()
+    for code in request.stock_codes:
+        sym = code.upper()
+        isin = NIFTY500_ISIN.get(sym)
+        if not isin:
+            results.append({"symbol": sym, "status": "failed", "error": "ISIN not found in instrument map", "records": 0})
+            continue
+        try:
+            candles = client.intraday_candles_v3(request.exchange, isin, request.interval_type, request.interval_value)
+            sym_rows = _build_candle_params(candles, sym, request.exchange, isin,
+                                            request.interval_type, request.interval_value, request.table_name)
+            all_params.extend(sym_rows)
+            results.append({"symbol": sym, "status": "success", "records": len(sym_rows)})
+            logger.info("  [fetch] %s — %d rows", sym, len(sym_rows))
+        except Exception as e:
+            logger.error("  [fetch] %s FAILED: %s", sym, e)
+            results.append({"symbol": sym, "status": "failed", "error": str(e), "records": 0})
 
-        fetch_start = time.time()
-        async with httpx.AsyncClient(timeout=20, limits=limits) as http_client:
-            tasks = [asyncio.create_task(fetch_symbol(code)) for code in request.stock_codes]
-            completed = 0
-            for fut in asyncio.as_completed(tasks):
-                sym, sym_rows, error = await fut
-                completed += 1
-                if error:
-                    results.append({"symbol": sym, "status": "failed", "error": error, "records": 0})
-                    logger.warning("  [fetch] %s FAILED: %s", sym, error)
-                else:
-                    all_params.extend(sym_rows)
-                    results.append({"symbol": sym, "status": "success", "records": len(sym_rows)})
-                    logger.info("  [fetch] %s — %d rows", sym, len(sym_rows))
-                yield f"data: {_json.dumps({'type': 'progress', 'symbol': sym, 'status': 'failed' if error else 'success', 'records': len(sym_rows) if not error else 0, 'error': error, 'completed': completed, 'total': total})}\n\n"
+    fetch_secs = time.time() - fetch_start
+    logger.info("[IMPORT:intraday] Phase 1 complete — %d rows fetched in %.1fs", len(all_params), fetch_secs)
 
-        fetch_secs = time.time() - fetch_start
-        logger.info("[IMPORT:intraday] Phase 1 complete — %d rows fetched in %.1fs", len(all_params), fetch_secs)
+    # ── Phase 2: ONE connection, ONE batch insert, ONE commit, close ──────────
+    total_records = 0
+    db_secs = 0.0
+    if all_params:
+        sql = _candle_upsert_sql(request.table_name)
+        db_start = time.time()
+        with DatabaseUtil(autocommit=False) as db:
+            total_records = db.execute_many(sql, all_params)
+            db.commit()
+        db_secs = time.time() - db_start
+        logger.info("[IMPORT:intraday] Phase 2 complete — %d rows committed in %.1fs", total_records, db_secs)
 
-        total_records = 0
-        db_secs = 0.0
-        if all_params:
-            sql = _candle_upsert_sql(request.table_name)
-            db_start = time.time()
-            def _db_write() -> int:
-                with DatabaseUtil(autocommit=False) as db:
-                    n = db.execute_many(sql, all_params)
-                    db.commit()
-                    return n
-            total_records = await asyncio.to_thread(_db_write)
-            db_secs = time.time() - db_start
-            logger.info("[IMPORT:intraday] Phase 2 complete — %d rows committed in %.1fs", total_records, db_secs)
+    total_secs = time.time() - start_ts
+    end_dt = datetime.now()
+    successful = sum(1 for r in results if r["status"] == "success")
+    logger.info(
+        "[IMPORT:intraday] END %s | symbols=%d/%d | rows=%d | fetch=%.1fs | db=%.1fs | total=%.1fs",
+        end_dt.strftime("%Y-%m-%d %H:%M:%S"),
+        successful, len(request.stock_codes),
+        total_records, fetch_secs, db_secs, total_secs,
+    )
 
-        total_secs = time.time() - start_ts
-        end_dt = datetime.now()
-        successful = sum(1 for r in results if r["status"] == "success")
-        logger.info(
-            "[IMPORT:intraday] END %s | symbols=%d/%d | rows=%d | fetch=%.1fs | db=%.1fs | total=%.1fs",
-            end_dt.strftime("%Y-%m-%d %H:%M:%S"), successful, total,
-            total_records, fetch_secs, db_secs, total_secs,
-        )
-        yield f"data: {_json.dumps({'type': 'complete', 'status': 'success', 'total_symbols': total, 'successful_imports': successful, 'failed_imports': total - successful, 'total_records_imported': total_records, 'started_at': start_dt.strftime('%Y-%m-%d %H:%M:%S'), 'ended_at': end_dt.strftime('%Y-%m-%d %H:%M:%S'), 'duration_seconds': round(total_secs, 2), 'fetch_seconds': round(fetch_secs, 2), 'db_seconds': round(db_secs, 2), 'details': results})}\n\n"
-
-    return StreamingResponse(stream(), media_type="text/event-stream",
-                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+    return {
+        "status": "success",
+        "total_symbols": len(request.stock_codes),
+        "successful_imports": successful,
+        "failed_imports": len(request.stock_codes) - successful,
+        "total_records_imported": total_records,
+        "started_at": start_dt.strftime("%Y-%m-%d %H:%M:%S"),
+        "ended_at": end_dt.strftime("%Y-%m-%d %H:%M:%S"),
+        "duration_seconds": round(total_secs, 2),
+        "fetch_seconds": round(fetch_secs, 2),
+        "db_seconds": round(db_secs, 2),
+        "details": results,
+    }
 
 
 # ── Intraday candle fetch (no DB write) ───────────────────────────────────────
