@@ -12,7 +12,7 @@
     "build":    "npm run build --workspace apps/web",
     "lint":     "npm run lint --workspaces --if-present",
     "api":      "set -a && source .env && set +a; lsof -ti:${API_PORT:-8003} | xargs kill -9 2>/dev/null || true; cd apps/api && .venv/bin/uvicorn app.main:app --reload --host 0.0.0.0 --port ${API_PORT:-8003}",
-    "api:prod": "set -a && source .env.prod && set +a; lsof -ti:${API_PORT:-8003} | xargs kill -9 2>/dev/null || true; cd apps/api && APP_ENV=prod .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port ${API_PORT:-8003}"
+    "api:prod": "set -a && source .env.prod && set +a; lsof -ti:${API_PORT:-8003} | xargs kill -9 2>/dev/null || true; cd apps/api && APP_ENV=prod .venv/bin/gunicorn app.main:app -k uvicorn.workers.UvicornWorker --workers $(python3 -c 'import os; print(os.cpu_count())') --bind 0.0.0.0:${API_PORT:-8003} --timeout 600 --graceful-timeout 30 --keep-alive 5 --access-logfile - --error-logfile -"
   },
   "engines": {
     "node": ">=22.17.1"
