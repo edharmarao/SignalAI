@@ -159,8 +159,8 @@ WEB_DIR="$REPO_DIR/apps/web"
 
 # ── Step 4: Bootstrap deps if missing; reinstall only when lock files change ──
 NEED_BOOTSTRAP=false
-[ ! -d "$VENV_DIR" ]                      && NEED_BOOTSTRAP=true
-[ ! -d "$REPO_DIR/node_modules" ]         && NEED_BOOTSTRAP=true
+[ ! -d "$VENV_DIR" ]              && NEED_BOOTSTRAP=true
+[ ! -d "$REPO_DIR/node_modules" ] && NEED_BOOTSTRAP=true
 
 API_REQ_MARKER="$REPO_DIR/.last_api_req_hash"
 NPM_LOCK_MARKER="$REPO_DIR/.last_npm_lock_hash"
@@ -175,33 +175,12 @@ if $NEED_BOOTSTRAP; then
   hash_file "$API_DIR/requirements.txt" > "$API_REQ_MARKER"
   hash_file "$REPO_DIR/package-lock.json" > "$NPM_LOCK_MARKER"
   log "Bootstrap complete."
-elif $IS_REMOTE; then
-  # After a git pull: reinstall only when the lock files actually changed
-  API_REQ_CHANGED=$(git diff HEAD@{1} HEAD --name-only 2>/dev/null | grep -c "apps/api/requirements.txt" || true)
-  WEB_LOCK_CHANGED=$(git diff HEAD@{1} HEAD --name-only 2>/dev/null | grep -c "package-lock.json" || true)
-
-  if [ "$API_REQ_CHANGED" -gt 0 ]; then
-    log "requirements.txt changed — updating Python deps …"
-    "$VENV_DIR/bin/pip" install -q --upgrade pip
-    "$VENV_DIR/bin/pip" install -q -r "$API_DIR/requirements.txt"
-    log "Python deps updated."
-  else
-    log "Python deps unchanged — skipping pip install."
-  fi
-
-  if [ "$WEB_LOCK_CHANGED" -gt 0 ]; then
-    log "package-lock.json changed — running npm ci …"
-    cd "$WEB_DIR" && "$NPM_CMD" ci --silent 2>&1 | tail -3 && cd "$REPO_DIR"
-    log "npm deps updated."
-  else
-    log "npm deps unchanged — skipping npm install."
-  fi
 else
-  # Local mode: reinstall deps only when lock files actually change
+  # FastAPI Python deps: reinstall only when requirements.txt hash changes
   CURRENT_API_HASH=$(hash_file "$API_DIR/requirements.txt")
   STORED_API_HASH=$(cat "$API_REQ_MARKER" 2>/dev/null || echo "")
   if [ "$CURRENT_API_HASH" != "$STORED_API_HASH" ]; then
-    log "requirements.txt changed — updating Python deps (local mode) …"
+    log "requirements.txt changed — updating Python deps …"
     "$VENV_DIR/bin/pip" install -q --upgrade pip
     "$VENV_DIR/bin/pip" install -q -r "$API_DIR/requirements.txt"
     echo "$CURRENT_API_HASH" > "$API_REQ_MARKER"
@@ -210,10 +189,11 @@ else
     log "Python deps unchanged — skipping pip install."
   fi
 
+  # npm deps: reinstall only when package-lock.json hash changes
   CURRENT_NPM_HASH=$(hash_file "$REPO_DIR/package-lock.json")
   STORED_NPM_HASH=$(cat "$NPM_LOCK_MARKER" 2>/dev/null || echo "")
   if [ "$CURRENT_NPM_HASH" != "$STORED_NPM_HASH" ]; then
-    log "package-lock.json changed — running npm ci (local mode) …"
+    log "package-lock.json changed — running npm ci …"
     cd "$WEB_DIR" && "$NPM_CMD" ci --silent 2>&1 | tail -3 && cd "$REPO_DIR"
     echo "$CURRENT_NPM_HASH" > "$NPM_LOCK_MARKER"
     log "npm deps updated."
