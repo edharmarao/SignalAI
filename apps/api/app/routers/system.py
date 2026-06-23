@@ -53,22 +53,44 @@ def _net_speed_mbps() -> dict:
     return {"tx_mbps": max(tx, 0), "rx_mbps": max(rx, 0)}
 
 
-def _top_processes(n: int = 15) -> list[dict]:
-    procs = []
+def _top_processes(n: int = 25) -> list[dict]:
+    # First pass — seeds the cpu_percent cache per process
+    procs_raw = []
     for p in psutil.process_iter(["pid", "name", "cpu_percent", "memory_info", "status", "username"]):
         try:
             mi = p.info["memory_info"]
-            procs.append({
+            procs_raw.append({
+                "proc":   p,
                 "pid":    p.info["pid"],
                 "name":   p.info["name"],
-                "cpu":    round(p.info["cpu_percent"] or 0, 1),
+                "cpu":    p.info["cpu_percent"] or 0,
                 "mem_mb": _bytes_to_mb(mi.rss) if mi else 0,
                 "status": p.info["status"],
                 "user":   p.info["username"] or "",
             })
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             pass
-    return sorted(procs, key=lambda x: x["cpu"], reverse=True)[:n]
+
+    # Short sleep so the second cpu_percent call returns a real interval value
+    time.sleep(0.3)
+
+    procs = []
+    for item in procs_raw:
+        try:
+            cpu = item["proc"].cpu_percent(interval=None) or item["cpu"]
+            procs.append({
+                "pid":    item["pid"],
+                "name":   item["name"],
+                "cpu":    round(cpu, 1),
+                "mem_mb": item["mem_mb"],
+                "status": item["status"],
+                "user":   item["user"],
+            })
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            procs.append({k: v for k, v in item.items() if k != "proc"})
+
+    # Sort by CPU desc; break ties by memory
+    return sorted(procs, key=lambda x: (x["cpu"], x["mem_mb"]), reverse=True)[:n]
 
 
 def _snapshot() -> dict:

@@ -262,7 +262,7 @@ export default function SystemMonitorPage() {
       {/* ── Process table ── */}
       <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
         <div className="flex items-center justify-between mb-4">
-          <span className="text-sm font-medium text-slate-200">Top Processes</span>
+          <span className="text-sm font-medium text-slate-200">Top Processes <span className="text-slate-500 font-normal text-xs">({sortedProcs.length})</span></span>
           <div className="flex gap-1">
             {(["cpu", "mem"] as const).map((k) => (
               <button key={k} onClick={() => setSortBy(k)}
