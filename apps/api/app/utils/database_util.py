@@ -18,13 +18,14 @@ logger = logging.getLogger("signal_ai")
 
 
 class DatabaseUtil:
-    def __init__(self):
+    def __init__(self, autocommit: bool = True):
         s = get_settings()
         self.host = s.mysql_host
         self.port = s.mysql_port
         self.user = s.mysql_user
         self.password = s.mysql_password
         self.database = s.mysql_database
+        self.autocommit = autocommit
         self.connection = None
         self.cursor = None
 
@@ -37,7 +38,7 @@ class DatabaseUtil:
                 user=self.user,
                 password=self.password,
                 database=self.database,
-                autocommit=True,
+                autocommit=self.autocommit,
             )
             self.cursor = self.connection.cursor()
             logger.debug("Database connection established")
@@ -131,9 +132,32 @@ class DatabaseUtil:
     def get_last_insert_id(self) -> int:
         return self.cursor.lastrowid if self.cursor else 0
 
+    def commit(self) -> bool:
+        """Commit the current transaction (only meaningful when autocommit=False)."""
+        try:
+            if self.connection and self.connection.is_connected():
+                self.connection.commit()
+                return True
+        except Error as e:
+            logger.error("Error committing transaction: %s", e)
+        return False
+
+    def rollback(self) -> bool:
+        """Rollback the current transaction (only meaningful when autocommit=False)."""
+        try:
+            if self.connection and self.connection.is_connected():
+                self.connection.rollback()
+                return True
+        except Error as e:
+            logger.error("Error rolling back transaction: %s", e)
+        return False
+
     def __enter__(self):
         self.connect()
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
+        if exc_type and not self.autocommit:
+            logger.warning("Exception in DB context — rolling back: %s", exc_val)
+            self.rollback()
         self.disconnect()

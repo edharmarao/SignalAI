@@ -96,6 +96,49 @@ def _split_date_range(
 
 # ── DB helpers ────────────────────────────────────────────────────────────────
 
+def _build_candle_params(
+    candles: list[dict],
+    symbol: str,
+    exchange: str,
+    isin: str,
+    interval_type: str,
+    interval_value: str,
+    table_name: str,
+) -> list[tuple]:
+    """Build SQL parameter tuples for a candle list — no DB access."""
+    if table_name == "candle_data":
+        return [
+            (
+                symbol, exchange, isin, interval_type, interval_value,
+                f"{c['time']}+05:30",
+                c["open"], c["high"], c["low"], c["close"],
+                c["volume"], c.get("oi", 0),
+            )
+            for c in candles
+        ]
+    return [
+        (symbol, c["time"], c["open"], c["high"], c["low"], c["close"], c["volume"])
+        for c in candles
+    ]
+
+
+def _candle_upsert_sql(table_name: str) -> str:
+    """Return the INSERT SQL for the given table."""
+    if table_name == "candle_data":
+        return """
+            INSERT INTO candle_data
+                (symbol, exchange, isin, interval_type, interval_value, time, open, high, low, close, volume, oi)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON DUPLICATE KEY UPDATE
+                open=VALUES(open), high=VALUES(high), low=VALUES(low),
+                close=VALUES(close), volume=VALUES(volume), oi=VALUES(oi)
+        """
+    return """
+        INSERT IGNORE INTO `{table}` (stock_code, candle_time, open, high, low, close, volume)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
+    """.format(table=table_name)
+
+
 def _upsert_candles(
     candles: list[dict],
     symbol: str,
@@ -104,46 +147,20 @@ def _upsert_candles(
     interval_type: str,
     interval_value: str,
     table_name: str = "stock_data_5min",
+    db: DatabaseUtil | None = None,
 ) -> int:
-    """Bulk-insert candles into the specified table using DatabaseUtil.
+    """Write candles for a single symbol (used by non-import single-symbol routes).
 
-    stock_data_* schema: (stock_code, candle_time, open, high, low, close, volume)
-    candle_data schema:  (symbol, exchange, isin, interval_type, interval_value, time, open, high, low, close, volume, oi)
+    Always opens its own connection unless an external `db` is passed.
     """
     if not candles:
         return 0
-
-    with DatabaseUtil() as db:
-        if table_name == "candle_data":
-            sql = """
-                INSERT INTO candle_data
-                    (symbol, exchange, isin, interval_type, interval_value, time, open, high, low, close, volume, oi)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON DUPLICATE KEY UPDATE
-                    open=VALUES(open), high=VALUES(high), low=VALUES(low),
-                    close=VALUES(close), volume=VALUES(volume), oi=VALUES(oi)
-            """
-            params = [
-                (
-                    symbol, exchange, isin, interval_type, interval_value,
-                    f"{c['time']}+05:30",
-                    c["open"], c["high"], c["low"], c["close"],
-                    c["volume"], c.get("oi", 0),
-                )
-                for c in candles
-            ]
-        else:
-            # stock_data_5min / stock_data_15min / stock_data_daily etc.
-            sql = """
-                INSERT IGNORE INTO `{table}` (stock_code, candle_time, open, high, low, close, volume)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
-            """.format(table=table_name)
-            params = [
-                (symbol, c["time"], c["open"], c["high"], c["low"], c["close"], c["volume"])
-                for c in candles
-            ]
-
+    sql = _candle_upsert_sql(table_name)
+    params = _build_candle_params(candles, symbol, exchange, isin, interval_type, interval_value, table_name)
+    if db is not None:
         return db.execute_many(sql, params)
+    with DatabaseUtil() as _db:
+        return _db.execute_many(sql, params)
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
@@ -215,24 +232,25 @@ def historical_data_import(
     request: BulkHistoricalImportRequest = Body(...),
     user: dict = Depends(get_current_user),
 ) -> dict:
-    """Bulk-import historical OHLCV data for multiple symbols into the candle_data table.
+    """Bulk-import historical OHLCV data for multiple symbols.
+
+    Phase 1 — Fetch all candles from Upstox (no DB, pure HTTP).
+    Phase 2 — Open ONE DB connection, execute ONE batch insert with all rows, commit, close.
 
     Date ranges are automatically split to respect Upstox per-request limits:
     - minutes (1-15): 1-month chunks
     - minutes (>15) / hours: 3-month chunks
     - days / weeks / months: no splitting
-
-    Requires candle_data table in Supabase (see supabase/schema.sql).
     """
     if not UpstoxClient.validate_interval(request.interval_type, request.interval_value):
-        raise HTTPException(
-            400, f"Invalid interval {request.interval_type}/{request.interval_value}"
-        )
+        raise HTTPException(400, f"Invalid interval {request.interval_type}/{request.interval_value}")
 
     token = _get_upstox_token(user["id"])
     client = UpstoxClient(token)
+
+    # ── Phase 1: Fetch all candles (no DB) ───────────────────────────────────
     results: list[dict] = []
-    total_records = 0
+    all_params: list[tuple] = []
 
     for code in request.stock_codes:
         sym = code.upper()
@@ -241,27 +259,29 @@ def historical_data_import(
             results.append({"symbol": sym, "status": "failed", "error": "ISIN not found in instrument map", "records": 0})
             continue
         try:
-            chunks = _split_date_range(
-                request.from_date, request.to_date, request.interval_type, request.interval_value
-            )
-            symbol_records = 0
+            chunks = _split_date_range(request.from_date, request.to_date, request.interval_type, request.interval_value)
+            sym_rows: list[tuple] = []
             for chunk_from, chunk_to in chunks:
                 candles = client.historical_candles_v3(
-                    request.exchange, isin,
-                    request.interval_type, request.interval_value,
-                    chunk_from, chunk_to,
+                    request.exchange, isin, request.interval_type, request.interval_value, chunk_from, chunk_to
                 )
-                symbol_records += _upsert_candles(
-                    candles, sym, request.exchange, isin,
-                    request.interval_type, request.interval_value,
-                    table_name=request.table_name,
-                )
-            total_records += symbol_records
-            results.append({"symbol": sym, "status": "success", "records": symbol_records})
-            logger.info("Imported %d candles for %s", symbol_records, sym)
+                sym_rows.extend(_build_candle_params(candles, sym, request.exchange, isin,
+                                                     request.interval_type, request.interval_value, request.table_name))
+            all_params.extend(sym_rows)
+            results.append({"symbol": sym, "status": "success", "records": len(sym_rows)})
+            logger.info("Fetched %d candles for %s", len(sym_rows), sym)
         except Exception as e:
-            logger.error("Import failed for %s: %s", sym, e)
+            logger.error("Fetch failed for %s: %s", sym, e)
             results.append({"symbol": sym, "status": "failed", "error": str(e), "records": 0})
+
+    # ── Phase 2: ONE connection, ONE batch insert, ONE commit, close ──────────
+    total_records = 0
+    if all_params:
+        sql = _candle_upsert_sql(request.table_name)
+        with DatabaseUtil(autocommit=False) as db:
+            total_records = db.execute_many(sql, all_params)
+            db.commit()
+        logger.info("Batch committed — %d rows for %d symbols", total_records, len(request.stock_codes))
 
     successful = sum(1 for r in results if r["status"] == "success")
     return {
@@ -279,10 +299,12 @@ def intraday_data_import(
     request: IntradayImportRequest = Body(...),
     user: dict = Depends(get_current_user),
 ) -> dict:
-    """Import today's intraday OHLCV data for multiple symbols into the candle_data table.
+    """Import today's intraday OHLCV data for multiple symbols.
+
+    Phase 1 — Fetch all candles from Upstox (no DB, pure HTTP).
+    Phase 2 — Open ONE DB connection, execute ONE batch insert with all rows, commit, close.
 
     Supports minutes, hours, and days intervals ('days'/'1' fetches today's EOD candle).
-    Requires candle_data table in Supabase (see supabase/schema.sql).
     """
     if request.interval_type not in _INTRADAY_INTERVAL_TYPES:
         raise HTTPException(
@@ -291,14 +313,14 @@ def intraday_data_import(
             "Use 'days'/'1' to fetch today's EOD candle.",
         )
     if not UpstoxClient.validate_interval(request.interval_type, request.interval_value):
-        raise HTTPException(
-            400, f"Invalid interval {request.interval_type}/{request.interval_value}"
-        )
+        raise HTTPException(400, f"Invalid interval {request.interval_type}/{request.interval_value}")
 
     token = _get_upstox_token(user["id"])
     client = UpstoxClient(token)
+
+    # ── Phase 1: Fetch all candles (no DB) ───────────────────────────────────
     results: list[dict] = []
-    total_records = 0
+    all_params: list[tuple] = []
 
     for code in request.stock_codes:
         sym = code.upper()
@@ -307,20 +329,24 @@ def intraday_data_import(
             results.append({"symbol": sym, "status": "failed", "error": "ISIN not found in instrument map", "records": 0})
             continue
         try:
-            candles = client.intraday_candles_v3(
-                request.exchange, isin, request.interval_type, request.interval_value
-            )
-            n = _upsert_candles(
-                candles, sym, request.exchange, isin,
-                request.interval_type, request.interval_value,
-                table_name=request.table_name,
-            )
-            total_records += n
-            results.append({"symbol": sym, "status": "success", "records": n})
-            logger.info("Intraday import: %d candles for %s", n, sym)
+            candles = client.intraday_candles_v3(request.exchange, isin, request.interval_type, request.interval_value)
+            sym_rows = _build_candle_params(candles, sym, request.exchange, isin,
+                                            request.interval_type, request.interval_value, request.table_name)
+            all_params.extend(sym_rows)
+            results.append({"symbol": sym, "status": "success", "records": len(sym_rows)})
+            logger.info("Fetched %d intraday candles for %s", len(sym_rows), sym)
         except Exception as e:
-            logger.error("Intraday import failed for %s: %s", sym, e)
+            logger.error("Intraday fetch failed for %s: %s", sym, e)
             results.append({"symbol": sym, "status": "failed", "error": str(e), "records": 0})
+
+    # ── Phase 2: ONE connection, ONE batch insert, ONE commit, close ──────────
+    total_records = 0
+    if all_params:
+        sql = _candle_upsert_sql(request.table_name)
+        with DatabaseUtil(autocommit=False) as db:
+            total_records = db.execute_many(sql, all_params)
+            db.commit()
+        logger.info("Batch committed — %d intraday rows for %d symbols", total_records, len(request.stock_codes))
 
     successful = sum(1 for r in results if r["status"] == "success")
     return {
