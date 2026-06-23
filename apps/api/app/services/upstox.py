@@ -163,6 +163,24 @@ class UpstoxClient:
                 raise Exception(f"Upstox API returned status {r.status_code}: {r.text}")
             return self._format_candle_response(r.json())
 
+    async def historical_candles_v3_async(
+        self,
+        exchange: str,
+        isin: str,
+        interval_type: str,
+        interval_value: str,
+        from_date: str,
+        to_date: str,
+        client: "httpx.AsyncClient",
+    ) -> list[dict[str, Any]]:
+        """Async version — reuses a shared httpx.AsyncClient for connection pooling."""
+        encoded = self._encode_instrument(exchange, isin)
+        url = f"{_V3_BASE}/v3/historical-candle/{encoded}/{interval_type}/{interval_value}/{to_date}/{from_date}"
+        r = await client.get(url, headers=self._headers())
+        if r.status_code != 200:
+            raise Exception(f"Upstox API returned status {r.status_code}: {r.text}")
+        return self._format_candle_response(r.json())
+
     def intraday_candles_v3(
         self,
         exchange: str,
@@ -191,6 +209,22 @@ class UpstoxClient:
                 logger.error("Upstox Intraday API error: %s", r.text)
                 raise Exception(f"Upstox Intraday API returned status {r.status_code}: {r.text}")
             return self._format_candle_response(r.json())
+
+    async def intraday_candles_v3_async(
+        self,
+        exchange: str,
+        isin: str,
+        interval_type: str,
+        interval_value: str,
+        client: "httpx.AsyncClient",
+    ) -> list[dict[str, Any]]:
+        """Async version — reuses a shared httpx.AsyncClient for connection pooling."""
+        encoded = self._encode_instrument(exchange, isin)
+        url = f"{_V3_BASE}/v3/historical-candle/intraday/{encoded}/{interval_type}/{interval_value}"
+        r = await client.get(url, headers=self._headers())
+        if r.status_code != 200:
+            raise Exception(f"Upstox Intraday API returned status {r.status_code}: {r.text}")
+        return self._format_candle_response(r.json())
 
     @staticmethod
     def validate_symbol(exchange: str, isin: str) -> bool:

@@ -1,6 +1,7 @@
 "use client";
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useRef } from "react";
 import { api } from "@/lib/api";
+import { auth } from "@/lib/auth";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -75,6 +76,12 @@ export default function DataImportPage() {
 
   const [importing, setImporting] = useState(false);
   const [summary, setSummary]     = useState<ImportSummary | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+
+  function stopImport() {
+    abortRef.current?.abort();
+    setImporting(false);
+  }
 
   // Load symbols
   useEffect(() => {
@@ -125,55 +132,86 @@ export default function DataImportPage() {
     if (selected.size === 0) return;
     setImporting(true);
     const symbols = Array.from(selected);
+    // Show all as pending immediately
     setSummary({ details: symbols.map((s) => ({ symbol: s, status: "pending", records: 0 })) });
 
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
+
+    const endpoint = mode === "intraday" ? "/upstox/intraday-data-import" : "/upstox/historical-data-import";
+    const bodyObj = mode === "intraday"
+      ? { stock_codes: symbols, exchange, interval_type: interval.type, interval_value: interval.value }
+      : { stock_codes: symbols, exchange, from_date: fromDate, to_date: toDate, interval_type: interval.type, interval_value: interval.value };
+    const authHdr = auth.getHeader() ? `Basic ${auth.getHeader()}` : "";
+
     try {
-      let data: ImportResponse;
-      if (mode === "intraday") {
-        data = await api<ImportResponse>("/upstox/intraday-data-import", {
-          method: "POST",
-          timeoutMs: 600_000,
-          body: JSON.stringify({
-            stock_codes: symbols,
-            exchange,
-            interval_type: interval.type,
-            interval_value: interval.value,
-          }),
-        });
-      } else {
-        data = await api<ImportResponse>("/upstox/historical-data-import", {
-          method: "POST",
-          timeoutMs: 600_000,
-          body: JSON.stringify({
-            stock_codes: symbols,
-            exchange,
-            from_date: fromDate,
-            to_date: toDate,
-            interval_type: interval.type,
-            interval_value: interval.value,
-          }),
-        });
-      }
-      setSummary({
-        details: data.details ?? [],
-        started_at: data.started_at,
-        ended_at: data.ended_at,
-        duration_seconds: data.duration_seconds,
-        fetch_seconds: data.fetch_seconds,
-        db_seconds: data.db_seconds,
-        total_records_imported: data.total_records_imported,
+      const res = await fetch(`/api/v1${endpoint}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: authHdr },
+        body: JSON.stringify(bodyObj),
+        signal: ctrl.signal,
       });
+      if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          try {
+            const ev = JSON.parse(line.slice(6));
+            if (ev.type === "progress") {
+              setSummary((prev) => {
+                if (!prev) return prev;
+                return {
+                  ...prev,
+                  details: prev.details.map((d) =>
+                    d.symbol === ev.symbol
+                      ? { symbol: ev.symbol, status: ev.status, records: ev.records ?? 0, error: ev.error ?? undefined }
+                      : d
+                  ),
+                };
+              });
+            } else if (ev.type === "complete") {
+              setSummary({
+                details: ev.details ?? [],
+                started_at: ev.started_at,
+                ended_at: ev.ended_at,
+                duration_seconds: ev.duration_seconds,
+                fetch_seconds: ev.fetch_seconds,
+                db_seconds: ev.db_seconds,
+                total_records_imported: ev.total_records_imported,
+              });
+            }
+          } catch { /* ignore parse errors */ }
+        }
+      }
     } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      setSummary({ details: symbols.map((s) => ({ symbol: s, status: "failed", records: 0, error: msg })) });
+      if ((e as Error).name !== "AbortError") {
+        const msg = e instanceof Error ? e.message : String(e);
+        setSummary((prev) => ({
+          details: prev?.details.map((d) =>
+            d.status === "pending" ? { ...d, status: "failed" as const, error: msg } : d
+          ) ?? symbols.map((s) => ({ symbol: s, status: "failed" as const, records: 0, error: msg })),
+        }));
+      }
     } finally {
       setImporting(false);
+      abortRef.current = null;
     }
   }
 
   const results   = summary?.details ?? [];
   const successCount = results.filter((r) => r.status === "success").length;
   const failCount    = results.filter((r) => r.status === "failed").length;
+  const pendingCount = results.filter((r) => r.status === "pending").length;
   const totalRecords = summary?.total_records_imported ?? results.reduce((s, r) => s + (r.records ?? 0), 0);
 
   return (
@@ -338,17 +376,23 @@ export default function DataImportPage() {
             </div>
           )}
 
-          {/* Import button */}
-          <button
-            onClick={runImport}
-            disabled={selected.size === 0 || importing}
-            className="w-full py-3 rounded-xl text-sm font-semibold transition disabled:opacity-40 disabled:cursor-not-allowed bg-emerald-500 hover:bg-emerald-400 text-slate-950">
-            {importing
-              ? "Importing…"
-              : selected.size === 0
-              ? "Select symbols to import"
-              : `Import ${selected.size} symbol${selected.size !== 1 ? "s" : ""}`}
-          </button>
+          {/* Import / Stop button */}
+          {importing ? (
+            <button
+              onClick={stopImport}
+              className="w-full py-3 rounded-xl text-sm font-semibold transition bg-red-500/15 hover:bg-red-500/25 text-red-400 border border-red-500/30">
+              ⏹ Stop Import
+            </button>
+          ) : (
+            <button
+              onClick={runImport}
+              disabled={selected.size === 0}
+              className="w-full py-3 rounded-xl text-sm font-semibold transition disabled:opacity-40 disabled:cursor-not-allowed bg-emerald-500 hover:bg-emerald-400 text-slate-950">
+              {selected.size === 0
+                ? "Select symbols to import"
+                : `Import ${selected.size} symbol${selected.size !== 1 ? "s" : ""}`}
+            </button>
+          )}
         </div>
       </div>
 
@@ -382,8 +426,29 @@ export default function DataImportPage() {
                 ✗ {failCount} failed
               </span>
             )}
+            {pendingCount > 0 && (
+              <span className="text-xs px-2 py-0.5 rounded-full bg-slate-700 text-slate-400 border border-slate-600 animate-pulse">
+                ⏳ {pendingCount} pending
+              </span>
+            )}
             <span className="text-xs text-slate-500 ml-auto">{totalRecords.toLocaleString()} records imported</span>
           </div>
+
+          {/* Live progress bar */}
+          {importing && results.length > 0 && (
+            <div className="mb-4">
+              <div className="flex justify-between text-xs text-slate-500 mb-1">
+                <span>{successCount + failCount} / {results.length} symbols</span>
+                <span>{Math.round(((successCount + failCount) / results.length) * 100)}%</span>
+              </div>
+              <div className="h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-emerald-500 rounded-full transition-all duration-300"
+                  style={{ width: `${((successCount + failCount) / results.length) * 100}%` }}
+                />
+              </div>
+            </div>
+          )}
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
