@@ -170,10 +170,15 @@ export default function ApiTesterPage() {
       .catch(() => setLoadError("Failed to load collection"));
   }, []);
 
-  // Build variables from collection defaults
+  // Build variables from collection defaults — use relative base so requests go
+  // through the Next.js rewrite proxy (/api/v1/* → FastAPI), works in any env.
+  const apiBase = typeof window !== "undefined"
+    ? `${window.location.origin}/api/v1`
+    : "http://localhost:8003/api/v1";
+
   const vars: Record<string, string> = {
-    base_url:     "http://localhost:8003/api/v1",
-    api_root:     "http://localhost:8003",
+    base_url:     apiBase,
+    api_root:     typeof window !== "undefined" ? window.location.origin : "http://localhost:8003",
     exchange:     "NSE_EQ",
     symbol:       "RELIANCE",
     isin:         "INE002A01018",
