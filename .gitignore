@@ -21,3 +21,8 @@ logs/*.log.*
 # Runtime process ID file
 .pids
 .banner_shown
+
+# Web build change-detection marker
+.last_web_build_sha
+.last_api_req_hash
+.last_npm_lock_hash

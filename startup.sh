@@ -162,9 +162,18 @@ NEED_BOOTSTRAP=false
 [ ! -d "$VENV_DIR" ]                      && NEED_BOOTSTRAP=true
 [ ! -d "$REPO_DIR/node_modules" ]         && NEED_BOOTSTRAP=true
 
+API_REQ_MARKER="$REPO_DIR/.last_api_req_hash"
+NPM_LOCK_MARKER="$REPO_DIR/.last_npm_lock_hash"
+
+hash_file() {
+  md5sum "$1" 2>/dev/null | awk '{print $1}' || md5 -q "$1" 2>/dev/null || echo ""
+}
+
 if $NEED_BOOTSTRAP; then
   log "Dependencies missing — running bootstrap.sh …"
   bash "$REPO_DIR/scripts/bootstrap.sh"
+  hash_file "$API_DIR/requirements.txt" > "$API_REQ_MARKER"
+  hash_file "$REPO_DIR/package-lock.json" > "$NPM_LOCK_MARKER"
   log "Bootstrap complete."
 elif $IS_REMOTE; then
   # After a git pull: reinstall only when the lock files actually changed
@@ -188,10 +197,34 @@ elif $IS_REMOTE; then
     log "npm deps unchanged — skipping npm install."
   fi
 else
-  log "Deps already installed — skipping install (local mode)."
+  # Local mode: reinstall deps only when lock files actually change
+  CURRENT_API_HASH=$(hash_file "$API_DIR/requirements.txt")
+  STORED_API_HASH=$(cat "$API_REQ_MARKER" 2>/dev/null || echo "")
+  if [ "$CURRENT_API_HASH" != "$STORED_API_HASH" ]; then
+    log "requirements.txt changed — updating Python deps (local mode) …"
+    "$VENV_DIR/bin/pip" install -q --upgrade pip
+    "$VENV_DIR/bin/pip" install -q -r "$API_DIR/requirements.txt"
+    echo "$CURRENT_API_HASH" > "$API_REQ_MARKER"
+    log "Python deps updated."
+  else
+    log "Python deps unchanged — skipping pip install."
+  fi
+
+  CURRENT_NPM_HASH=$(hash_file "$REPO_DIR/package-lock.json")
+  STORED_NPM_HASH=$(cat "$NPM_LOCK_MARKER" 2>/dev/null || echo "")
+  if [ "$CURRENT_NPM_HASH" != "$STORED_NPM_HASH" ]; then
+    log "package-lock.json changed — running npm ci (local mode) …"
+    cd "$WEB_DIR" && "$NPM_CMD" ci --silent 2>&1 | tail -3 && cd "$REPO_DIR"
+    echo "$CURRENT_NPM_HASH" > "$NPM_LOCK_MARKER"
+    log "npm deps updated."
+  else
+    log "npm deps unchanged — skipping npm install."
+  fi
 fi
 
 # ── Step 5: Build only when relevant code changed ────────────────────────────
+BUILD_MARKER="$REPO_DIR/.last_web_build_sha"
+
 if $IS_REMOTE; then
   WEB_CODE_CHANGED=$(git diff HEAD@{1} HEAD --name-only 2>/dev/null | grep -c "^apps/web/" || true)
   ENV_CHANGED=$(git diff HEAD@{1} HEAD --name-only 2>/dev/null | grep -c "\.env" || true)
@@ -203,7 +236,19 @@ if $IS_REMOTE; then
     log "Web code unchanged — skipping Next.js build."
   fi
 else
-  log "Skipping web build (local mode)."
+  LAST_BUILD_SHA=$(cat "$BUILD_MARKER" 2>/dev/null || echo "")
+  CURRENT_SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
+  WEB_DIRTY=$(git status --porcelain apps/web/ 2>/dev/null | wc -l | tr -d ' ')
+  ENV_DIRTY=$(git status --porcelain .env .env.local 2>/dev/null | wc -l | tr -d ' ')
+
+  if [ "$CURRENT_SHA" != "$LAST_BUILD_SHA" ] || [ "$WEB_DIRTY" -gt 0 ] || [ "$ENV_DIRTY" -gt 0 ] || $NEED_BOOTSTRAP; then
+    log "Web source changes detected — rebuilding Next.js app …"
+    cd "$WEB_DIR" && "$NPM_CMD" run build 2>&1 | tail -5 && cd "$REPO_DIR"
+    echo "$CURRENT_SHA" > "$BUILD_MARKER"
+    log "Web build complete."
+  else
+    log "Web source unchanged — skipping Next.js build (local mode)."
+  fi
 fi
 
 # ── Step 6: Start API via npm run api:prod / api ──────────────────────────────
