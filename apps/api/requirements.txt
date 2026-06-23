@@ -13,3 +13,4 @@ python-dateutil>=2.9.0
 python-dotenv>=1.0.0
 mysql-connector-python
 
+psutil>=6.0.0

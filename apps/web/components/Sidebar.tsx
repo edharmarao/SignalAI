@@ -70,6 +70,13 @@ const I = {
       <polyline points="16 18 22 12 16 6" /><polyline points="8 6 2 12 8 18" />
     </svg>
   ),
+  monitor: (p: IconProps) => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className={p.className}>
+      <rect x="2" y="3" width="20" height="14" rx="2" />
+      <path d="M8 21h8M12 17v4" />
+      <polyline points="6 8 9 11 12 8 15 11 18 8" />
+    </svg>
+  ),
   live: (p: IconProps) => (
     <svg viewBox="0 0 24 24" fill="currentColor" className={p.className}>
       <circle cx="12" cy="12" r="5" />
@@ -229,6 +236,13 @@ export default function Sidebar() {
           }`}>
           <I.api className={`w-4 h-4 shrink-0 ${path.startsWith("/api-tester") ? "text-violet-400" : "text-slate-400"}`} />
           {!collapsed && <span>API Tester</span>}
+        </Link>
+        <Link href="/system-monitor" onClick={onLinkClick} title={collapsed ? "System Monitor" : undefined}
+          className={`flex items-center gap-3 rounded-md text-sm transition ${collapsed ? "justify-center p-2" : "px-3 py-2"} ${
+            path.startsWith("/system-monitor") ? "bg-rose-500/10 text-rose-300" : "text-slate-400 hover:bg-slate-800/60 hover:text-slate-100"
+          }`}>
+          <I.monitor className={`w-4 h-4 shrink-0 ${path.startsWith("/system-monitor") ? "text-rose-400" : "text-slate-400"}`} />
+          {!collapsed && <span>System Monitor</span>}
         </Link>
         <Link href="/settings" onClick={onLinkClick} title={collapsed ? "Settings" : undefined}
           className={`flex items-center gap-3 rounded-md text-sm transition ${collapsed ? "justify-center p-2" : "px-3 py-2"} ${
