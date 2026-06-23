@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import { auth } from "@/lib/auth";
+import { api } from "@/lib/api";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -92,56 +92,47 @@ function Bar({ pct, color }: { pct: number; color: string }) {
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function SystemMonitorPage() {
-  const [snap, setSnap]       = useState<Snapshot | null>(null);
-  const [error, setError]     = useState("");
+  const [snap, setSnap]             = useState<Snapshot | null>(null);
+  const [error, setError]           = useState("");
+  const [loading, setLoading]       = useState(false);
   const [cpuHistory, setCpuHistory] = useState<number[]>([]);
   const [memHistory, setMemHistory] = useState<number[]>([]);
-  const [sortBy, setSortBy]   = useState<"cpu" | "mem">("cpu");
-  const esRef = useRef<EventSource | null>(null);
+  const [sortBy, setSortBy]         = useState<"cpu" | "mem">("cpu");
+  const [countdown, setCountdown]   = useState(60);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const countRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  async function fetchStats() {
+    setLoading(true);
+    setError("");
+    try {
+      const s = await api<Snapshot>("/system/stats");
+      setSnap(s);
+      setCpuHistory((h) => [...h.slice(-(HISTORY_LEN - 1)), s.cpu.overall_pct]);
+      setMemHistory((h) => [...h.slice(-(HISTORY_LEN - 1)), s.memory.used_pct]);
+      setCountdown(60);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
+  }
 
   useEffect(() => {
-    const authHdr = auth.getHeader() ? `Basic ${auth.getHeader()}` : "";
-
-    // Use fetch-based SSE so we can send auth header
-    const ctrl = new AbortController();
-    (async () => {
-      try {
-        const res = await fetch("/api/v1/system/stats/stream", {
-          headers: { Authorization: authHdr },
-          signal: ctrl.signal,
-        });
-        if (!res.ok || !res.body) { setError(`HTTP ${res.status}`); return; }
-        const reader = res.body.getReader();
-        const dec = new TextDecoder();
-        let buf = "";
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buf += dec.decode(value, { stream: true });
-          const lines = buf.split("\n");
-          buf = lines.pop() ?? "";
-          for (const line of lines) {
-            if (!line.startsWith("data: ")) continue;
-            try {
-              const s: Snapshot = JSON.parse(line.slice(6));
-              setSnap(s);
-              setCpuHistory((h) => [...h.slice(-(HISTORY_LEN - 1)), s.cpu.overall_pct]);
-              setMemHistory((h) => [...h.slice(-(HISTORY_LEN - 1)), s.memory.used_pct]);
-            } catch { /* skip */ }
-          }
-        }
-      } catch (e) {
-        if ((e as Error).name !== "AbortError") setError(String(e));
-      }
-    })();
-    return () => ctrl.abort();
+    fetchStats();
+    timerRef.current = setInterval(fetchStats, 60_000);
+    countRef.current = setInterval(() => setCountdown((c) => Math.max(0, c - 1)), 1_000);
+    return () => {
+      clearInterval(timerRef.current!);
+      clearInterval(countRef.current!);
+    };
   }, []);
 
   if (error) return <div className="flex items-center justify-center h-64 text-red-400 text-sm">{error}</div>;
   if (!snap) return (
     <div className="flex items-center justify-center h-64 gap-3 text-slate-500 text-sm">
       <span className="animate-spin w-4 h-4 border-2 border-slate-600 border-t-emerald-500 rounded-full inline-block" />
-      Connecting to system monitor…
+      Loading system stats…
     </div>
   );
 
@@ -154,12 +145,19 @@ export default function SystemMonitorPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-semibold text-slate-100">System Monitor</h1>
-          <p className="text-xs text-slate-500 mt-1">Updated {snap.timestamp} · live stream</p>
+          <p className="text-xs text-slate-500 mt-1">Last updated: {snap.timestamp}</p>
         </div>
-        <span className="flex items-center gap-1.5 text-xs text-emerald-400">
-          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-          Live
-        </span>
+        <div className="flex items-center gap-3">
+          <span className="text-xs text-slate-500">Refreshes in {countdown}s</span>
+          <button onClick={fetchStats} disabled={loading}
+            className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-slate-700 text-slate-300 hover:text-slate-100 hover:border-slate-500 disabled:opacity-40 transition">
+            {loading
+              ? <span className="animate-spin w-3 h-3 border border-slate-500 border-t-slate-200 rounded-full" />
+              : <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-3.5 h-3.5"><path d="M1 4v6h6"/><path d="M23 20v-6h-6"/><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4-4.64 4.36A9 9 0 0 1 3.51 15"/></svg>
+            }
+            Refresh
+          </button>
+        </div>
       </div>
 
       {/* ── Gauges row ── */}
