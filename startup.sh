@@ -224,27 +224,33 @@ fi
 
 # ── Step 5: Build only when relevant code changed ────────────────────────────
 BUILD_MARKER="$REPO_DIR/.last_web_build_sha"
+ENV_HASH_MARKER="$REPO_DIR/.last_env_build_hash"
+
+CURRENT_ENV_HASH=$(hash_file "$ENV_FILE")
+STORED_ENV_HASH=$(cat "$ENV_HASH_MARKER" 2>/dev/null || echo "")
+ENV_FILE_CHANGED=false
+[ "$CURRENT_ENV_HASH" != "$STORED_ENV_HASH" ] && ENV_FILE_CHANGED=true
 
 if $IS_REMOTE; then
   WEB_CODE_CHANGED=$(git diff HEAD@{1} HEAD --name-only 2>/dev/null | grep -c "^apps/web/" || true)
-  ENV_CHANGED=$(git diff HEAD@{1} HEAD --name-only 2>/dev/null | grep -c "\.env" || true)
-  if [ "$WEB_CODE_CHANGED" -gt 0 ] || [ "$ENV_CHANGED" -gt 0 ] || $NEED_BOOTSTRAP; then
-    log "Rebuilding Next.js app (web changes: $WEB_CODE_CHANGED, env changes: $ENV_CHANGED) …"
+  if [ "$WEB_CODE_CHANGED" -gt 0 ] || $ENV_FILE_CHANGED || $NEED_BOOTSTRAP; then
+    log "Rebuilding Next.js app (web changes: $WEB_CODE_CHANGED, env changed: $ENV_FILE_CHANGED) …"
     cd "$WEB_DIR" && "$NPM_CMD" run build 2>&1 | tail -5 && cd "$REPO_DIR"
+    echo "$CURRENT_ENV_HASH" > "$ENV_HASH_MARKER"
     log "Web build complete."
   else
-    log "Web code unchanged — skipping Next.js build."
+    log "Web code and env unchanged — skipping Next.js build."
   fi
 else
   LAST_BUILD_SHA=$(cat "$BUILD_MARKER" 2>/dev/null || echo "")
   CURRENT_SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
   WEB_DIRTY=$(git status --porcelain apps/web/ 2>/dev/null | wc -l | tr -d ' ')
-  ENV_DIRTY=$(git status --porcelain .env .env.local 2>/dev/null | wc -l | tr -d ' ')
 
-  if [ "$CURRENT_SHA" != "$LAST_BUILD_SHA" ] || [ "$WEB_DIRTY" -gt 0 ] || [ "$ENV_DIRTY" -gt 0 ] || $NEED_BOOTSTRAP; then
+  if [ "$CURRENT_SHA" != "$LAST_BUILD_SHA" ] || [ "$WEB_DIRTY" -gt 0 ] || $ENV_FILE_CHANGED || $NEED_BOOTSTRAP; then
     log "Web source changes detected — rebuilding Next.js app …"
     cd "$WEB_DIR" && "$NPM_CMD" run build 2>&1 | tail -5 && cd "$REPO_DIR"
     echo "$CURRENT_SHA" > "$BUILD_MARKER"
+    echo "$CURRENT_ENV_HASH" > "$ENV_HASH_MARKER"
     log "Web build complete."
   else
     log "Web source unchanged — skipping Next.js build (local mode)."
