@@ -18,6 +18,7 @@ since market OHLCV data is shared. The candle_data table must exist in Supabase
 """
 from __future__ import annotations
 
+import logging
 import time
 from datetime import datetime, timedelta
 
