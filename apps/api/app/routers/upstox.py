@@ -18,7 +18,7 @@ since market OHLCV data is shared. The candle_data table must exist in Supabase
 """
 from __future__ import annotations
 
-import logging
+import time
 from datetime import datetime, timedelta
 
 from dateutil.relativedelta import relativedelta
@@ -248,10 +248,21 @@ def historical_data_import(
     token = _get_upstox_token(user["id"])
     client = UpstoxClient(token)
 
+    start_ts = time.time()
+    start_dt = datetime.now()
+    logger.info(
+        "[IMPORT:historical] START %s | symbols=%d | interval=%s/%s | range=%s→%s",
+        start_dt.strftime("%Y-%m-%d %H:%M:%S"),
+        len(request.stock_codes),
+        request.interval_type, request.interval_value,
+        request.from_date, request.to_date,
+    )
+
     # ── Phase 1: Fetch all candles (no DB) ───────────────────────────────────
     results: list[dict] = []
     all_params: list[tuple] = []
 
+    fetch_start = time.time()
     for code in request.stock_codes:
         sym = code.upper()
         isin = NIFTY500_ISIN.get(sym)
@@ -269,27 +280,47 @@ def historical_data_import(
                                                      request.interval_type, request.interval_value, request.table_name))
             all_params.extend(sym_rows)
             results.append({"symbol": sym, "status": "success", "records": len(sym_rows)})
-            logger.info("Fetched %d candles for %s", len(sym_rows), sym)
+            logger.info("  [fetch] %s — %d rows", sym, len(sym_rows))
         except Exception as e:
-            logger.error("Fetch failed for %s: %s", sym, e)
+            logger.error("  [fetch] %s FAILED: %s", sym, e)
             results.append({"symbol": sym, "status": "failed", "error": str(e), "records": 0})
+
+    fetch_secs = time.time() - fetch_start
+    logger.info("[IMPORT:historical] Phase 1 complete — %d rows fetched in %.1fs", len(all_params), fetch_secs)
 
     # ── Phase 2: ONE connection, ONE batch insert, ONE commit, close ──────────
     total_records = 0
+    db_secs = 0.0
     if all_params:
         sql = _candle_upsert_sql(request.table_name)
+        db_start = time.time()
         with DatabaseUtil(autocommit=False) as db:
             total_records = db.execute_many(sql, all_params)
             db.commit()
-        logger.info("Batch committed — %d rows for %d symbols", total_records, len(request.stock_codes))
+        db_secs = time.time() - db_start
+        logger.info("[IMPORT:historical] Phase 2 complete — %d rows committed in %.1fs", total_records, db_secs)
 
+    total_secs = time.time() - start_ts
+    end_dt = datetime.now()
     successful = sum(1 for r in results if r["status"] == "success")
+    logger.info(
+        "[IMPORT:historical] END %s | symbols=%d/%d | rows=%d | fetch=%.1fs | db=%.1fs | total=%.1fs",
+        end_dt.strftime("%Y-%m-%d %H:%M:%S"),
+        successful, len(request.stock_codes),
+        total_records, fetch_secs, db_secs, total_secs,
+    )
+
     return {
         "status": "success",
         "total_symbols": len(request.stock_codes),
         "successful_imports": successful,
         "failed_imports": len(request.stock_codes) - successful,
         "total_records_imported": total_records,
+        "started_at": start_dt.strftime("%Y-%m-%d %H:%M:%S"),
+        "ended_at": end_dt.strftime("%Y-%m-%d %H:%M:%S"),
+        "duration_seconds": round(total_secs, 2),
+        "fetch_seconds": round(fetch_secs, 2),
+        "db_seconds": round(db_secs, 2),
         "details": results,
     }
 
@@ -318,10 +349,20 @@ def intraday_data_import(
     token = _get_upstox_token(user["id"])
     client = UpstoxClient(token)
 
+    start_ts = time.time()
+    start_dt = datetime.now()
+    logger.info(
+        "[IMPORT:intraday] START %s | symbols=%d | interval=%s/%s",
+        start_dt.strftime("%Y-%m-%d %H:%M:%S"),
+        len(request.stock_codes),
+        request.interval_type, request.interval_value,
+    )
+
     # ── Phase 1: Fetch all candles (no DB) ───────────────────────────────────
     results: list[dict] = []
     all_params: list[tuple] = []
 
+    fetch_start = time.time()
     for code in request.stock_codes:
         sym = code.upper()
         isin = NIFTY500_ISIN.get(sym)
@@ -334,27 +375,47 @@ def intraday_data_import(
                                             request.interval_type, request.interval_value, request.table_name)
             all_params.extend(sym_rows)
             results.append({"symbol": sym, "status": "success", "records": len(sym_rows)})
-            logger.info("Fetched %d intraday candles for %s", len(sym_rows), sym)
+            logger.info("  [fetch] %s — %d rows", sym, len(sym_rows))
         except Exception as e:
-            logger.error("Intraday fetch failed for %s: %s", sym, e)
+            logger.error("  [fetch] %s FAILED: %s", sym, e)
             results.append({"symbol": sym, "status": "failed", "error": str(e), "records": 0})
+
+    fetch_secs = time.time() - fetch_start
+    logger.info("[IMPORT:intraday] Phase 1 complete — %d rows fetched in %.1fs", len(all_params), fetch_secs)
 
     # ── Phase 2: ONE connection, ONE batch insert, ONE commit, close ──────────
     total_records = 0
+    db_secs = 0.0
     if all_params:
         sql = _candle_upsert_sql(request.table_name)
+        db_start = time.time()
         with DatabaseUtil(autocommit=False) as db:
             total_records = db.execute_many(sql, all_params)
             db.commit()
-        logger.info("Batch committed — %d intraday rows for %d symbols", total_records, len(request.stock_codes))
+        db_secs = time.time() - db_start
+        logger.info("[IMPORT:intraday] Phase 2 complete — %d rows committed in %.1fs", total_records, db_secs)
 
+    total_secs = time.time() - start_ts
+    end_dt = datetime.now()
     successful = sum(1 for r in results if r["status"] == "success")
+    logger.info(
+        "[IMPORT:intraday] END %s | symbols=%d/%d | rows=%d | fetch=%.1fs | db=%.1fs | total=%.1fs",
+        end_dt.strftime("%Y-%m-%d %H:%M:%S"),
+        successful, len(request.stock_codes),
+        total_records, fetch_secs, db_secs, total_secs,
+    )
+
     return {
         "status": "success",
         "total_symbols": len(request.stock_codes),
         "successful_imports": successful,
         "failed_imports": len(request.stock_codes) - successful,
         "total_records_imported": total_records,
+        "started_at": start_dt.strftime("%Y-%m-%d %H:%M:%S"),
+        "ended_at": end_dt.strftime("%Y-%m-%d %H:%M:%S"),
+        "duration_seconds": round(total_secs, 2),
+        "fetch_seconds": round(fetch_secs, 2),
+        "db_seconds": round(db_secs, 2),
         "details": results,
     }
 

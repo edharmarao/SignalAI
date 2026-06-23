@@ -6,11 +6,35 @@ import { api } from "@/lib/api";
 
 interface StockInfo { symbol: string; name: string; sector: string }
 
-interface ImportResult {
+interface SymbolResult {
   symbol: string;
-  status: "success" | "failed" | "pending" | "running";
+  status: "success" | "failed" | "pending";
   records: number;
   error?: string;
+}
+
+interface ImportResponse {
+  status: string;
+  total_symbols: number;
+  successful_imports: number;
+  failed_imports: number;
+  total_records_imported: number;
+  started_at: string;
+  ended_at: string;
+  duration_seconds: number;
+  fetch_seconds: number;
+  db_seconds: number;
+  details: SymbolResult[];
+}
+
+interface ImportSummary {
+  details: SymbolResult[];
+  started_at?: string;
+  ended_at?: string;
+  duration_seconds?: number;
+  fetch_seconds?: number;
+  db_seconds?: number;
+  total_records_imported?: number;
 }
 
 const INTERVALS = [
@@ -50,7 +74,7 @@ export default function DataImportPage() {
   const [toDate, setToDate]       = useState(today());
 
   const [importing, setImporting] = useState(false);
-  const [results, setResults]     = useState<ImportResult[]>([]);
+  const [summary, setSummary]     = useState<ImportSummary | null>(null);
 
   // Load symbols
   useEffect(() => {
@@ -101,14 +125,12 @@ export default function DataImportPage() {
     if (selected.size === 0) return;
     setImporting(true);
     const symbols = Array.from(selected);
-
-    // Init results as pending
-    setResults(symbols.map((s) => ({ symbol: s, status: "pending", records: 0 })));
+    setSummary({ details: symbols.map((s) => ({ symbol: s, status: "pending", records: 0 })) });
 
     try {
-      let data: { details?: ImportResult[]; successful_imports?: number };
+      let data: ImportResponse;
       if (mode === "intraday") {
-        data = await api<typeof data>("/upstox/intraday-data-import", {
+        data = await api<ImportResponse>("/upstox/intraday-data-import", {
           method: "POST",
           body: JSON.stringify({
             stock_codes: symbols,
@@ -118,7 +140,7 @@ export default function DataImportPage() {
           }),
         });
       } else {
-        data = await api<typeof data>("/upstox/historical-data-import", {
+        data = await api<ImportResponse>("/upstox/historical-data-import", {
           method: "POST",
           body: JSON.stringify({
             stock_codes: symbols,
@@ -130,18 +152,27 @@ export default function DataImportPage() {
           }),
         });
       }
-      setResults(data.details ?? []);
+      setSummary({
+        details: data.details ?? [],
+        started_at: data.started_at,
+        ended_at: data.ended_at,
+        duration_seconds: data.duration_seconds,
+        fetch_seconds: data.fetch_seconds,
+        db_seconds: data.db_seconds,
+        total_records_imported: data.total_records_imported,
+      });
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
-      setResults(symbols.map((s) => ({ symbol: s, status: "failed", records: 0, error: msg })));
+      setSummary({ details: symbols.map((s) => ({ symbol: s, status: "failed", records: 0, error: msg })) });
     } finally {
       setImporting(false);
     }
   }
 
+  const results   = summary?.details ?? [];
   const successCount = results.filter((r) => r.status === "success").length;
   const failCount    = results.filter((r) => r.status === "failed").length;
-  const totalRecords = results.reduce((s, r) => s + (r.records ?? 0), 0);
+  const totalRecords = summary?.total_records_imported ?? results.reduce((s, r) => s + (r.records ?? 0), 0);
 
   return (
     <div className="flex flex-col gap-6">
@@ -322,6 +353,23 @@ export default function DataImportPage() {
       {/* ── Results ──────────────────────────────────────────────────── */}
       {results.length > 0 && (
         <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
+
+          {/* Timing banner */}
+          {summary?.duration_seconds !== undefined && (
+            <div className="flex flex-wrap items-center gap-3 mb-4 p-3 bg-slate-800/60 border border-slate-700 rounded-lg text-xs">
+              <span className="text-slate-400">🕐 Started</span>
+              <span className="font-mono text-slate-200">{summary.started_at}</span>
+              <span className="text-slate-600">→</span>
+              <span className="text-slate-400">Ended</span>
+              <span className="font-mono text-slate-200">{summary.ended_at}</span>
+              <span className="ml-auto flex items-center gap-4">
+                <span className="text-slate-400">Fetch <span className="text-amber-400 font-semibold">{summary.fetch_seconds}s</span></span>
+                <span className="text-slate-400">DB write <span className="text-sky-400 font-semibold">{summary.db_seconds}s</span></span>
+                <span className="text-emerald-400 font-bold text-sm">Total {summary.duration_seconds}s</span>
+              </span>
+            </div>
+          )}
+
           <div className="flex items-center gap-4 mb-4">
             <h2 className="text-sm font-semibold text-slate-200">Import Results</h2>
             <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
@@ -352,7 +400,6 @@ export default function DataImportPage() {
                       <span className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full ${
                         r.status === "success" ? "bg-emerald-500/15 text-emerald-400" :
                         r.status === "failed"  ? "bg-red-500/15 text-red-400" :
-                        r.status === "running" ? "bg-amber-500/15 text-amber-400" :
                         "bg-slate-700 text-slate-400"
                       }`}>
                         {r.status === "success" ? "✓" : r.status === "failed" ? "✗" : "…"}
