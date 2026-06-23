@@ -7,8 +7,10 @@ POST /upstox/intraday-data-import        — today's intraday import → candle_
 GET  /upstox/intraday-candle             — today's intraday candles for a single symbol (no DB write)
 POST /upstox/intraday-candles/multi      — today's intraday candles for multiple symbols (no DB write)
 
-All endpoints require an active Upstox broker connection (POST /api/v1/broker/upstox/connect).
-Missing broker → HTTP 403. Upstox API error → HTTP 502.
+Upstox v3 historical/intraday endpoints are public — no real access token required.
+If a token is stored in Redis (via POST /api/v1/broker/upstox/connect) it will be used;
+otherwise requests fall back to a placeholder Bearer token which Upstox still accepts.
+Upstox API error → HTTP 502.
 
 Symbols must be in NIFTY500_ISIN (charts.py). Candle data is stored globally (not user-scoped)
 since market OHLCV data is shared. The candle_data table must exist in Supabase
@@ -46,19 +48,16 @@ _INTRADAY_INTERVAL_TYPES = frozenset({"minutes", "hours", "days"})
 
 # ── Auth helpers ──────────────────────────────────────────────────────────────
 
-def _active_upstox_token(user_id: str) -> str | None:
-    """Return the active Upstox token from Redis (HGET upstox access_token)."""
-    return get_upstox_token()
+_UPSTOX_TOKEN_PLACEHOLDER = "{your_access_token}"
 
 
-def _require_token(user: dict) -> str:
-    token = _active_upstox_token(user["id"])
-    if not token:
-        raise HTTPException(
-            403,
-            "No active Upstox connection. Connect via POST /api/v1/broker/upstox/connect",
-        )
-    return token
+def _get_upstox_token(user_id: str) -> str:
+    """Return the active Upstox token from Redis, or a placeholder.
+
+    Upstox v3 historical/intraday endpoints are public and accept any Bearer value,
+    so we never block the request when no real token is stored.
+    """
+    return get_upstox_token() or _UPSTOX_TOKEN_PLACEHOLDER
 
 
 # ── Date-range splitting ──────────────────────────────────────────────────────
@@ -164,7 +163,7 @@ def get_historical_candle(
         raise HTTPException(400, f"Invalid exchange '{exchange}' or ISIN '{isin}'")
     if not UpstoxClient.validate_interval(interval_type, interval_value):
         raise HTTPException(400, f"Invalid interval {interval_type}/{interval_value}")
-    token = _require_token(user)
+    token = _get_upstox_token(user["id"])
     try:
         candles = UpstoxClient(token).historical_candles_v3(
             exchange, isin, interval_type, interval_value, from_date, to_date
@@ -198,7 +197,7 @@ def get_historical_candle_by_symbol(
         )
     if not UpstoxClient.validate_interval(interval_type, interval_value):
         raise HTTPException(400, f"Invalid interval {interval_type}/{interval_value}")
-    token = _require_token(user)
+    token = _get_upstox_token(user["id"])
     try:
         candles = UpstoxClient(token).historical_candles_v3(
             exchange, isin, interval_type, interval_value, from_date, to_date
@@ -230,7 +229,7 @@ def historical_data_import(
             400, f"Invalid interval {request.interval_type}/{request.interval_value}"
         )
 
-    token = _require_token(user)
+    token = _get_upstox_token(user["id"])
     client = UpstoxClient(token)
     results: list[dict] = []
     total_records = 0
@@ -296,7 +295,7 @@ def intraday_data_import(
             400, f"Invalid interval {request.interval_type}/{request.interval_value}"
         )
 
-    token = _require_token(user)
+    token = _get_upstox_token(user["id"])
     client = UpstoxClient(token)
     results: list[dict] = []
     total_records = 0
@@ -372,7 +371,7 @@ def get_intraday_candle(
     if not UpstoxClient.validate_interval(interval_type, interval_value):
         raise HTTPException(400, f"Invalid interval {interval_type}/{interval_value}")
 
-    token = _require_token(user)
+    token = _get_upstox_token(user["id"])
     try:
         candles = UpstoxClient(token).intraday_candles_v3(
             exchange, isin, interval_type, interval_value
@@ -422,7 +421,7 @@ def get_intraday_candles_multi(
             400, f"Invalid interval {request.interval_type}/{request.interval_value}"
         )
 
-    token = _require_token(user)
+    token = _get_upstox_token(user["id"])
     client = UpstoxClient(token)
 
     # Merge static NIFTY500 map with live instrument map for broadest coverage

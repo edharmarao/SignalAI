@@ -60,6 +60,16 @@ const I = {
       <path d="M21 21H3" />
     </svg>
   ),
+  import: (p: IconProps) => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className={p.className}>
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="17 8 12 3 7 8" /><line x1="12" y1="3" x2="12" y2="15" />
+    </svg>
+  ),
+  api: (p: IconProps) => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className={p.className}>
+      <polyline points="16 18 22 12 16 6" /><polyline points="8 6 2 12 8 18" />
+    </svg>
+  ),
   live: (p: IconProps) => (
     <svg viewBox="0 0 24 24" fill="currentColor" className={p.className}>
       <circle cx="12" cy="12" r="5" />
@@ -222,7 +232,7 @@ export default function Sidebar() {
         })}
       </nav>
 
-      {/* Charts + Settings */}
+      {/* Charts + Tools + Settings */}
       <div className="mt-4 border-t border-slate-800 pt-4 flex flex-col gap-1">
         <Link href="/charts" title={collapsed ? "Charts" : undefined}
           className={`flex items-center gap-3 rounded-md text-sm transition ${collapsed ? "justify-center p-2" : "px-3 py-2"} ${
@@ -230,6 +240,20 @@ export default function Sidebar() {
           }`}>
           <I.charts className={`w-4 h-4 shrink-0 ${path.startsWith("/charts") ? "text-amber-400" : "text-slate-400"}`} />
           {!collapsed && <span>Charts</span>}
+        </Link>
+        <Link href="/data-import" title={collapsed ? "Data Import" : undefined}
+          className={`flex items-center gap-3 rounded-md text-sm transition ${collapsed ? "justify-center p-2" : "px-3 py-2"} ${
+            path.startsWith("/data-import") ? "bg-teal-500/10 text-teal-300" : "text-slate-400 hover:bg-slate-800/60 hover:text-slate-100"
+          }`}>
+          <I.import className={`w-4 h-4 shrink-0 ${path.startsWith("/data-import") ? "text-teal-400" : "text-slate-400"}`} />
+          {!collapsed && <span>Data Import</span>}
+        </Link>
+        <Link href="/api-tester" title={collapsed ? "API Tester" : undefined}
+          className={`flex items-center gap-3 rounded-md text-sm transition ${collapsed ? "justify-center p-2" : "px-3 py-2"} ${
+            path.startsWith("/api-tester") ? "bg-violet-500/10 text-violet-300" : "text-slate-400 hover:bg-slate-800/60 hover:text-slate-100"
+          }`}>
+          <I.api className={`w-4 h-4 shrink-0 ${path.startsWith("/api-tester") ? "text-violet-400" : "text-slate-400"}`} />
+          {!collapsed && <span>API Tester</span>}
         </Link>
         <Link href="/settings" title={collapsed ? "Settings" : undefined}
           className={`flex items-center gap-3 rounded-md text-sm transition ${collapsed ? "justify-center p-2" : "px-3 py-2"} ${
