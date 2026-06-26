@@ -28,9 +28,16 @@ log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"; }
 kill_pid_file() {
   if [ -f "$PID_FILE" ]; then
     while IFS= read -r pid; do
-      if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-        log "Stopping PID $pid …"
-        kill "$pid" 2>/dev/null || true
+      pid=$(echo "$pid" | tr -d '\r')
+      if [ -n "$pid" ]; then
+        if [[ "${OSTYPE:-}" == "msys" || "${OSTYPE:-}" == "cygwin" || "${OSTYPE:-}" == "win32" ]]; then
+          MSYS_NO_PATHCONV=1 taskkill.exe /F /PID "$pid" >/dev/null 2>&1 || kill -9 "$pid" >/dev/null 2>&1 || true
+        else
+          if kill -0 "$pid" 2>/dev/null; then
+            log "Stopping PID $pid …"
+            kill "$pid" 2>/dev/null || true
+          fi
+        fi
       fi
     done < "$PID_FILE"
     rm -f "$PID_FILE"
@@ -40,32 +47,36 @@ kill_pid_file() {
 get_pids_on_port() {
   local port="$1"
   local pids=""
-  if command -v lsof >/dev/null 2>&1; then
-    pids=$(lsof -ti tcp:"$port" 2>/dev/null || true)
-  fi
-  if [ -z "$pids" ] && command -v ss >/dev/null 2>&1; then
-    pids=$(ss -tlnp 2>/dev/null | grep ":${port} " | grep -oP 'pid=\K[0-9]+' || true)
-  fi
-  if [ -z "$pids" ] && command -v fuser >/dev/null 2>&1; then
-    pids=$(fuser "${port}/tcp" 2>/dev/null || true)
+  if [[ "${OSTYPE:-}" == "msys" || "${OSTYPE:-}" == "cygwin" || "${OSTYPE:-}" == "win32" ]]; then
+    # Windows netstat output line ends with the PID
+    pids=$(netstat.exe -ano | grep -E "LISTENING|ESTABLISHED" | grep -E ":${port}\s" | awk '{print $NF}' | tr -d '\r' | sort -u || true)
+  else
+    if command -v lsof >/dev/null 2>&1; then
+      pids=$(lsof -ti tcp:"$port" 2>/dev/null || true)
+    fi
+    if [ -z "$pids" ] && command -v ss >/dev/null 2>&1; then
+      pids=$(ss -tlnp 2>/dev/null | grep ":${port} " | grep -oP 'pid=\K[0-9]+' || true)
+    fi
+    if [ -z "$pids" ] && command -v fuser >/dev/null 2>&1; then
+      pids=$(fuser "${port}/tcp" 2>/dev/null || true)
+    fi
   fi
   echo "$pids"
 }
 
 kill_by_port() {
   local port="$1"
-  local pid
-  pid=$(get_pids_on_port "$port")
-  if [ -n "$pid" ]; then
-    log "Killing existing process on port $port (PID $pid)"
-    echo "$pid" | xargs kill 2>/dev/null || true
-    sleep 2
-    pid=$(get_pids_on_port "$port")
-    if [ -n "$pid" ]; then
-      log "Force-killing port $port (PID $pid)"
-      echo "$pid" | xargs kill -9 2>/dev/null || true
-      sleep 1
-    fi
+  local pids
+  pids=$(get_pids_on_port "$port")
+  if [ -n "$pids" ]; then
+    log "Killing existing process on port $port: $pids"
+    for pid in $pids; do
+      if [[ "${OSTYPE:-}" == "msys" || "${OSTYPE:-}" == "cygwin" || "${OSTYPE:-}" == "win32" ]]; then
+        MSYS_NO_PATHCONV=1 taskkill.exe /F /PID "$pid" >/dev/null 2>&1 || kill -9 "$pid" >/dev/null 2>&1 || true
+      else
+        kill "$pid" 2>/dev/null || kill -9 "$pid" 2>/dev/null || true
+      fi
+    done
   fi
 }
 
@@ -153,14 +164,22 @@ fi
 log "Node: $NODE_CMD ($($NODE_CMD --version 2>/dev/null || echo '?'))  npm: $NPM_CMD ($($NPM_CMD --version 2>/dev/null || echo '?'))"
 
 # ── Step 3: Resolve deps / bootstrap ─────────────────────────────────────────
-API_DIR="$REPO_DIR/apps/api"
+API_DIR="$REPO_DIR/backend"
 VENV_DIR="$API_DIR/.venv"
-WEB_DIR="$REPO_DIR/apps/web"
+WEB_DIR="$REPO_DIR/front-end"
+
+if [ -f "$VENV_DIR/Scripts/pip" ] || [ -f "$VENV_DIR/Scripts/pip.exe" ]; then
+  PIP_CMD="$VENV_DIR/Scripts/pip"
+  PYTHON_CMD="$VENV_DIR/Scripts/python"
+else
+  PIP_CMD="$VENV_DIR/bin/pip"
+  PYTHON_CMD="$VENV_DIR/bin/python"
+fi
 
 # ── Step 4: Bootstrap deps if missing; reinstall only when lock files change ──
 NEED_BOOTSTRAP=false
 [ ! -d "$VENV_DIR" ]              && NEED_BOOTSTRAP=true
-[ ! -d "$REPO_DIR/node_modules" ] && NEED_BOOTSTRAP=true
+[ ! -d "$WEB_DIR/node_modules" ]  && NEED_BOOTSTRAP=true
 
 API_REQ_MARKER="$REPO_DIR/.last_api_req_hash"
 NPM_LOCK_MARKER="$REPO_DIR/.last_npm_lock_hash"
@@ -173,7 +192,7 @@ if $NEED_BOOTSTRAP; then
   log "Dependencies missing — running bootstrap.sh …"
   bash "$REPO_DIR/scripts/bootstrap.sh"
   hash_file "$API_DIR/requirements.txt" > "$API_REQ_MARKER"
-  hash_file "$REPO_DIR/package-lock.json" > "$NPM_LOCK_MARKER"
+  hash_file "$WEB_DIR/package-lock.json" > "$NPM_LOCK_MARKER"
   log "Bootstrap complete."
 else
   # FastAPI Python deps: reinstall only when requirements.txt hash changes
@@ -181,8 +200,8 @@ else
   STORED_API_HASH=$(cat "$API_REQ_MARKER" 2>/dev/null || echo "")
   if [ "$CURRENT_API_HASH" != "$STORED_API_HASH" ]; then
     log "requirements.txt changed — updating Python deps …"
-    "$VENV_DIR/bin/pip" install -q --upgrade pip
-    "$VENV_DIR/bin/pip" install -q -r "$API_DIR/requirements.txt"
+    "$PYTHON_CMD" -m pip install -q --upgrade pip
+    "$PIP_CMD" install -q -r "$API_DIR/requirements.txt"
     echo "$CURRENT_API_HASH" > "$API_REQ_MARKER"
     log "Python deps updated."
   else
@@ -190,11 +209,11 @@ else
   fi
 
   # npm deps: reinstall only when package-lock.json hash changes
-  CURRENT_NPM_HASH=$(hash_file "$REPO_DIR/package-lock.json")
+  CURRENT_NPM_HASH=$(hash_file "$WEB_DIR/package-lock.json")
   STORED_NPM_HASH=$(cat "$NPM_LOCK_MARKER" 2>/dev/null || echo "")
   if [ "$CURRENT_NPM_HASH" != "$STORED_NPM_HASH" ]; then
-    log "package-lock.json changed — running npm ci …"
-    cd "$WEB_DIR" && "$NPM_CMD" ci --silent 2>&1 | tail -3 && cd "$REPO_DIR"
+    log "package-lock.json changed — running npm install inside front-end …"
+    cd "$WEB_DIR" && "$NPM_CMD" install --silent 2>&1 | tail -3 && cd "$REPO_DIR"
     echo "$CURRENT_NPM_HASH" > "$NPM_LOCK_MARKER"
     log "npm deps updated."
   else
@@ -212,7 +231,7 @@ ENV_FILE_CHANGED=false
 [ "$CURRENT_ENV_HASH" != "$STORED_ENV_HASH" ] && ENV_FILE_CHANGED=true
 
 if $IS_REMOTE; then
-  WEB_CODE_CHANGED=$(git diff HEAD@{1} HEAD --name-only 2>/dev/null | grep -c "^apps/web/" || true)
+  WEB_CODE_CHANGED=$(git diff HEAD@{1} HEAD --name-only 2>/dev/null | grep -c "^front-end/" || true)
   if [ "$WEB_CODE_CHANGED" -gt 0 ] || $ENV_FILE_CHANGED || $NEED_BOOTSTRAP; then
     log "Rebuilding Next.js app (web changes: $WEB_CODE_CHANGED, env changed: $ENV_FILE_CHANGED) …"
     cd "$WEB_DIR" && "$NPM_CMD" run build 2>&1 | tail -5 && cd "$REPO_DIR"
@@ -224,7 +243,7 @@ if $IS_REMOTE; then
 else
   LAST_BUILD_SHA=$(cat "$BUILD_MARKER" 2>/dev/null || echo "")
   CURRENT_SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
-  WEB_DIRTY=$(git status --porcelain apps/web/ 2>/dev/null | wc -l | tr -d ' ')
+  WEB_DIRTY=$(git status --porcelain front-end/ 2>/dev/null | wc -l | tr -d ' ')
 
   if [ "$CURRENT_SHA" != "$LAST_BUILD_SHA" ] || [ "$WEB_DIRTY" -gt 0 ] || $ENV_FILE_CHANGED || $NEED_BOOTSTRAP; then
     log "Web source changes detected — rebuilding Next.js app …"

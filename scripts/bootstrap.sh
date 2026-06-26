@@ -74,13 +74,14 @@ else
 fi
 
 # ── 4. Node / npm deps ────────────────────────────────────────────────────────
-log "Installing JS dependencies (npm install)..."
+log "Installing JS dependencies (npm install in front-end)..."
+cd "$ROOT/front-end"
 npm install --silent
-ok "npm workspaces installed (web + packages)"
+ok "front-end node_modules installed"
 
 # ── 5. Python venv ────────────────────────────────────────────────────────────
-log "Setting up Python virtual environment for apps/api..."
-cd "$ROOT/apps/api"
+log "Setting up Python virtual environment for backend..."
+cd "$ROOT/backend"
 
 PYTHON_BIN=""
 for bin in python3.14t python3.14 python3 python; do
@@ -101,14 +102,22 @@ ok "Python → $PYTHON_VERSION ($PYTHON_BIN)"
 if [ ! -d ".venv" ]; then
   log "Creating venv..."
   "$PYTHON_BIN" -m venv .venv
-  ok "venv created at apps/api/.venv"
+  ok "venv created at backend/.venv"
 else
-  ok "venv already exists at apps/api/.venv"
+  ok "venv already exists at backend/.venv"
+fi
+
+if [ -f ".venv/Scripts/pip" ] || [ -f ".venv/Scripts/pip.exe" ]; then
+  PIP_CMD=".venv/Scripts/pip"
+  PYTHON_CMD=".venv/Scripts/python"
+else
+  PIP_CMD=".venv/bin/pip"
+  PYTHON_CMD=".venv/bin/python"
 fi
 
 log "Installing Python dependencies (pip install -r requirements.txt)..."
-.venv/bin/pip install -q --upgrade pip
-.venv/bin/pip install -q -r requirements.txt
+"$PYTHON_CMD" -m pip install -q --upgrade pip
+"$PIP_CMD" install -q -r requirements.txt
 ok "Python dependencies installed"
 
 cd "$ROOT"

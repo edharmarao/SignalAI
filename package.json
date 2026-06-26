@@ -2,17 +2,13 @@
   "name": "signal-ai",
   "private": true,
   "version": "0.1.0",
-  "workspaces": [
-    "apps/*",
-    "packages/*"
-  ],
   "scripts": {
-    "dev":      "set -a && source .env && set +a; lsof -ti:${PORT:-3003} | xargs kill -9 2>/dev/null || true; npm run dev --workspace apps/web",
-    "start":    "set -a && source .env.prod && set +a; lsof -ti:${PORT:-3003} | xargs kill -9 2>/dev/null || true; APP_ENV=prod npm run start --workspace apps/web",
-    "build":    "npm run build --workspace apps/web",
-    "lint":     "npm run lint --workspaces --if-present",
-    "api":      "set -a && source .env && set +a; lsof -ti:${API_PORT:-8003} | xargs kill -9 2>/dev/null || true; cd apps/api && .venv/bin/uvicorn app.main:app --reload --host 0.0.0.0 --port ${API_PORT:-8003}",
-    "api:prod": "set -a && source .env.prod && set +a; lsof -ti:${API_PORT:-8003} | xargs kill -9 2>/dev/null || true; cd apps/api && APP_ENV=prod .venv/bin/gunicorn app.main:app -k uvicorn.workers.UvicornWorker --workers $(python3 -c 'import os; print(os.cpu_count())') --bind 0.0.0.0:${API_PORT:-8003} --timeout 600 --graceful-timeout 30 --keep-alive 5 --access-logfile - --error-logfile -"
+    "dev":      "node scripts/run.js dev",
+    "start":    "node scripts/run.js start",
+    "build":    "node scripts/run.js build",
+    "lint":     "node scripts/run.js lint",
+    "api":      "node scripts/run.js api",
+    "api:prod": "node scripts/run.js api:prod"
   },
   "engines": {
     "node": ">=22.17.1"

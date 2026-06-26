@@ -5,6 +5,6 @@
   "types": "src/index.ts",
   "private": true,
   "dependencies": {
-    "@signalai/types": "*"
+    "@signalai/types": "file:../types"
   }
 }

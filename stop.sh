@@ -26,14 +26,19 @@ log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"; }
 get_pids_on_port() {
   local port="$1"
   local pids=""
-  if command -v lsof >/dev/null 2>&1; then
-    pids=$(lsof -ti tcp:"$port" 2>/dev/null || true)
-  fi
-  if [ -z "$pids" ] && command -v ss >/dev/null 2>&1; then
-    pids=$(ss -tlnp 2>/dev/null | grep ":${port} " | grep -oP 'pid=\K[0-9]+' || true)
-  fi
-  if [ -z "$pids" ] && command -v fuser >/dev/null 2>&1; then
-    pids=$(fuser "${port}/tcp" 2>/dev/null || true)
+  if [[ "${OSTYPE:-}" == "msys" || "${OSTYPE:-}" == "cygwin" || "${OSTYPE:-}" == "win32" ]]; then
+    # Windows netstat output line ends with the PID
+    pids=$(netstat.exe -ano | grep -E "LISTENING|ESTABLISHED" | grep -E ":${port}\s" | awk '{print $NF}' | tr -d '\r' | sort -u || true)
+  else
+    if command -v lsof >/dev/null 2>&1; then
+      pids=$(lsof -ti tcp:"$port" 2>/dev/null || true)
+    fi
+    if [ -z "$pids" ] && command -v ss >/dev/null 2>&1; then
+      pids=$(ss -tlnp 2>/dev/null | grep ":${port} " | grep -oP 'pid=\K[0-9]+' || true)
+    fi
+    if [ -z "$pids" ] && command -v fuser >/dev/null 2>&1; then
+      pids=$(fuser "${port}/tcp" 2>/dev/null || true)
+    fi
   fi
   echo "$pids"
 }
@@ -44,13 +49,13 @@ kill_port() {
   pids=$(get_pids_on_port "$port")
   if [ -n "$pids" ]; then
     log "Killing processes on port $port: $pids"
-    echo "$pids" | xargs kill 2>/dev/null || true
-    sleep 2
-    pids=$(get_pids_on_port "$port")
-    if [ -n "$pids" ]; then
-      log "Force-killing survivors on port $port: $pids"
-      echo "$pids" | xargs kill -9 2>/dev/null || true
-    fi
+    for pid in $pids; do
+      if [[ "${OSTYPE:-}" == "msys" || "${OSTYPE:-}" == "cygwin" || "${OSTYPE:-}" == "win32" ]]; then
+        MSYS_NO_PATHCONV=1 taskkill.exe /F /PID "$pid" >/dev/null 2>&1 || kill -9 "$pid" >/dev/null 2>&1 || true
+      else
+        kill "$pid" 2>/dev/null || kill -9 "$pid" 2>/dev/null || true
+      fi
+    done
   fi
 }
 
@@ -60,17 +65,21 @@ log "=== SignalAI Stop ==="
 if [ -f "$PID_FILE" ]; then
   log "Reading PIDs from $PID_FILE …"
   while IFS= read -r pid; do
-    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-      log "Stopping PID $pid (and its process group) …"
-      # Kill the whole process group so child workers die too
-      pgid=$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' ' || true)
-      if [ -n "$pgid" ] && [ "$pgid" != "0" ]; then
-        kill -- -"$pgid" 2>/dev/null || kill "$pid" 2>/dev/null || true
+    pid=$(echo "$pid" | tr -d '\r')
+    if [ -n "$pid" ]; then
+      if [[ "${OSTYPE:-}" == "msys" || "${OSTYPE:-}" == "cygwin" || "${OSTYPE:-}" == "win32" ]]; then
+        MSYS_NO_PATHCONV=1 taskkill.exe /F /PID "$pid" >/dev/null 2>&1 || kill -9 "$pid" >/dev/null 2>&1 || true
       else
-        kill "$pid" 2>/dev/null || true
+        if kill -0 "$pid" 2>/dev/null; then
+          log "Stopping PID $pid (and its process group) …"
+          pgid=$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' ' || true)
+          if [ -n "$pgid" ] && [ "$pgid" != "0" ]; then
+            kill -- -"$pgid" 2>/dev/null || kill "$pid" 2>/dev/null || true
+          else
+            kill "$pid" 2>/dev/null || true
+          fi
+        fi
       fi
-    else
-      log "PID $pid — not running (skipping)"
     fi
   done < "$PID_FILE"
   rm -f "$PID_FILE"
@@ -88,8 +97,8 @@ kill_port "$WEB_PORT"
 sleep 1
 
 # ── Confirm ───────────────────────────────────────────────────────────────────
-API_RUNNING=$(lsof -ti tcp:"$API_PORT" 2>/dev/null || true)
-WEB_RUNNING=$(lsof -ti tcp:"$WEB_PORT" 2>/dev/null || true)
+API_RUNNING=$(get_pids_on_port "$API_PORT")
+WEB_RUNNING=$(get_pids_on_port "$WEB_PORT")
 
 echo ""
 echo "╔══════════════════════════════════════════╗"

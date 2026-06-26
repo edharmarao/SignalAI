@@ -21,7 +21,7 @@ Flow:
 
 Usage:
   cd /path/to/SignalAI
-  apps/api/.venv/bin/python3 jobs/upstox_token_job.py
+  backend/.venv/bin/python3 jobs/upstox_token_job.py
 
 Optional args:
   --env   .env file path (default: .env in project root)
