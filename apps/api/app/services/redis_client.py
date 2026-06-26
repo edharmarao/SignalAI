@@ -73,3 +73,39 @@ def delete_upstox_token() -> None:
         logger.info("Upstox token removed from Redis")
     except Exception as e:
         logger.warning("Redis: could not delete Upstox token: %s", e)
+
+
+# ── Breeze / ICICI Direct-specific helpers ──────────────────────────────────────
+
+_ICICI_HASH_KEY = "icicidirect"
+
+
+def get_breeze_credentials() -> dict[str, str]:
+    """Fetch ICICI credentials from Redis hash (app_key, secret_key, session_id)."""
+    try:
+        # returns all fields as dict
+        return redis_client().hgetall(_ICICI_HASH_KEY)
+    except Exception as e:
+        logger.warning("Redis: could not fetch Breeze credentials: %s", e)
+        return {}
+
+
+def save_breeze_token(session_id: str) -> None:
+    """Persist Breeze session_id to Redis under 'icicidirect' hash."""
+    try:
+        r = redis_client()
+        r.hset(_ICICI_HASH_KEY, "session_id", session_id)
+        logger.info("Breeze session_id saved to Redis hash 'icicidirect'")
+    except Exception as e:
+        logger.error("Redis: could not save Breeze session_id: %s", e)
+        raise
+
+
+def delete_breeze_token() -> None:
+    """Remove Breeze session_id from Redis hash 'icicidirect'."""
+    try:
+        redis_client().hdel(_ICICI_HASH_KEY, "session_id")
+        logger.info("Breeze session_id removed from Redis hash 'icicidirect'")
+    except Exception as e:
+        logger.warning("Redis: could not delete Breeze session_id: %s", e)
+

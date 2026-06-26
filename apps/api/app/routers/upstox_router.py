@@ -35,7 +35,7 @@ from ..models import (
     IntradayImportRequest,
     SymbolIntradayResult,
 )
-from ..services.upstox import UpstoxClient
+from ..services.upstox_service import UpstoxClient
 from ..services.redis_client import get_upstox_token
 from ..services.instrument_map import get_instrument_map, refresh_instrument_map
 from ..utils.database_util import DatabaseUtil

@@ -25,7 +25,7 @@ from pydantic import BaseModel
 
 from ..db import db_execute, db_query, db_upsert
 from ..deps import optional_user, get_current_user
-from ..services.upstox import TIMEFRAME_TO_UPSTOX, UpstoxClient
+from ..services.upstox_service import TIMEFRAME_TO_UPSTOX, UpstoxClient
 
 
 logger = logging.getLogger("signal_ai")
@@ -58,7 +58,7 @@ _TF_TABLE: dict[str, str] = {
 
 # ── NSE symbol → ISIN mapping (dynamic, loaded from Upstox instrument CSV) ───
 # Accessed via get_isin() / get_instrument_map() from instrument_map service.
-# NIFTY500_ISIN kept as a proxy dict for backward-compat imports in upstox.py.
+# NIFTY500_ISIN kept as a proxy dict for backward-compat imports in upstox_router.py.
 from ..services.instrument_map import get_instrument_map as _get_instrument_map
 
 class _DynamicISINMap(dict):

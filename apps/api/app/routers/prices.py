@@ -1,7 +1,7 @@
 from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 from ..deps import get_current_user
-from ..services.upstox import UpstoxClient
+from ..services.upstox_service import UpstoxClient
 from ..services.redis_client import get_upstox_token
 from .instruments import INDEX_INSTRUMENT_KEYS
 

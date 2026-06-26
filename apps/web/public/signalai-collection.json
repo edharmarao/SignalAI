@@ -452,6 +452,120 @@
             },
             "description": "Disconnect broker session. Returns {ok: true}."
           }
+        },
+        {
+          "name": "GET /broker/breeze/login-url",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Basic {{auth_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/broker/breeze/login-url",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "broker",
+                "breeze",
+                "login-url"
+              ]
+            },
+            "description": "Returns {url} for ICICI Direct login."
+          }
+        },
+        {
+          "name": "POST /broker/breeze/connect",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "Authorization",
+                "value": "Basic {{auth_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/broker/breeze/connect",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "broker",
+                "breeze",
+                "connect"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"session_token\": \"<paste_apisession_or_full_redirect_url_here>\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Connects Breeze session by saving session token."
+          }
+        },
+        {
+          "name": "GET /broker/breeze/status",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Basic {{auth_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/broker/breeze/status",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "broker",
+                "breeze",
+                "status"
+              ]
+            },
+            "description": "Checks if Breeze session_id is saved in Redis."
+          }
+        },
+        {
+          "name": "POST /broker/breeze/disconnect",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Basic {{auth_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/broker/breeze/disconnect",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "broker",
+                "breeze",
+                "disconnect"
+              ]
+            },
+            "description": "Disconnects Breeze session (deletes session_id from Redis)."
+          }
         }
       ]
     },
@@ -1071,6 +1185,103 @@
               }
             }
           ]
+        }
+      ]
+    },
+    {
+      "name": "🔑 ICICI Direct / Breeze Options",
+      "item": [
+        {
+          "name": "GET /breeze/historical-options",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Basic {{auth_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/breeze/historical-options?stock_code=NIFTY&expiry_date=2026-06-25&right=CE&strike_price=22000&from_date=2026-06-01&to_date=2026-06-05&interval=1minute",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "breeze",
+                "historical-options"
+              ],
+              "query": [
+                {
+                  "key": "stock_code",
+                  "value": "NIFTY"
+                },
+                {
+                  "key": "expiry_date",
+                  "value": "2026-06-25"
+                },
+                {
+                  "key": "right",
+                  "value": "CE"
+                },
+                {
+                  "key": "strike_price",
+                  "value": "22000"
+                },
+                {
+                  "key": "from_date",
+                  "value": "2026-06-01"
+                },
+                {
+                  "key": "to_date",
+                  "value": "2026-06-05"
+                },
+                {
+                  "key": "interval",
+                  "value": "1minute"
+                }
+              ]
+            },
+            "description": "Fetch options historical data directly from Breeze API."
+          }
+        },
+        {
+          "name": "POST /breeze/historical-options-import",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "Authorization",
+                "value": "Basic {{auth_token}}",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"stock_code\": \"NIFTY\",\n  \"expiry_date\": \"2026-06-25\",\n  \"right\": \"CE\",\n  \"strike_price\": 22000,\n  \"from_date\": \"2026-06-01\",\n  \"to_date\": \"2026-06-05\",\n  \"interval\": \"1minute\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/breeze/historical-options-import",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "breeze",
+                "historical-options-import"
+              ]
+            },
+            "description": "Fetch options data from Breeze and import/save it to MySQL `candle_data` table."
+          }
         }
       ]
     },

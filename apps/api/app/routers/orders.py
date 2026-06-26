@@ -9,7 +9,7 @@ from pydantic import BaseModel
 from ..config import get_settings
 from ..db import db_insert, new_id
 from ..deps import get_current_user
-from ..services.upstox import UpstoxClient
+from ..services.upstox_service import UpstoxClient
 from ..services.redis_client import get_upstox_token
 
 router = APIRouter(prefix="/orders", tags=["orders"])

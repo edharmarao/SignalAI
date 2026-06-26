@@ -82,6 +82,11 @@ class Settings(BaseSettings):
     upstox_redirect_uri: str = "http://localhost:3003/settings/upstox/callback"
     upstox_base_url: str = "https://api.upstox.com/v2"
 
+    # ICICI / Breeze
+    icici_client_id: str = ""
+    icici_secret_key: str = ""
+    icici_api_url: str = "https://breezeapi.icicidirect.com/"
+
     allow_live_trading: bool = False
 
     @property

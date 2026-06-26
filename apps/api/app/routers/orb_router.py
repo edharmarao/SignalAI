@@ -27,7 +27,7 @@ from ..config import get_settings
 from ..db import db_insert, new_id
 from ..deps import get_current_user
 from ..models import ORBBacktestRequest, ORBLiveRequest, ORBSignalResponse
-from ..services.orb import (
+from ..services.orb_service import (
     fetch_orb_data,
     get_live_orb_signals,
     run_orb_backtest,
@@ -35,7 +35,7 @@ from ..services.orb import (
 )
 from ..db import db_query, db_insert, new_id
 from ..services.redis_client import get_upstox_token
-from ..services.upstox import UpstoxClient
+from ..services.upstox_service import UpstoxClient
 
 router = APIRouter(prefix="/orb", tags=["orb"])
 logger = logging.getLogger("signal_ai")

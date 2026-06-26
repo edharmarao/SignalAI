@@ -150,10 +150,10 @@ def run_strategy(df: pd.DataFrame, strategy: dict[str, Any]) -> EngineResult:
     qty_multiplier = 1 if desk == "equity" else 50
     qty = int(strategy.get("quantity", 1)) * qty_multiplier
 
-    sl = next((c["value"] for c in exit_conds if c.get("type") == "stop_loss"), None)
-    tp = next((c["value"] for c in exit_conds if c.get("type") == "target"), None)
-    tsl = next((c["value"] for c in exit_conds if c.get("type") == "trailing_stop_loss"), None)
-    time_exit = next((c["time"] for c in exit_conds if c.get("type") == "time_exit"), None)
+    sl = next((c.get("value") for c in exit_conds if c.get("type") == "stop_loss"), None)
+    tp = next((c.get("value") for c in exit_conds if c.get("type") == "target"), None)
+    tsl = next((c.get("value") for c in exit_conds if c.get("type") == "trailing_stop_loss"), None)
+    time_exit = next((c.get("time") for c in exit_conds if c.get("type") == "time_exit"), None)
     # Indicator/level exits keep their original group structure so AND/OR + nesting are honored.
     indicator_exit_mask = evaluate_group(df, _strip_simple_exits(exit_group))
 

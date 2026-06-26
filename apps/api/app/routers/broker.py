@@ -2,7 +2,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from ..deps import get_current_user
-from ..services.upstox import UpstoxClient
+from ..services.upstox_service import UpstoxClient
 from ..services.redis_client import get_upstox_token, save_upstox_token, delete_upstox_token
 
 router = APIRouter(prefix="/broker", tags=["broker"])

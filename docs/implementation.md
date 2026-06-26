@@ -193,7 +193,7 @@ Both implementations walk the nested groups recursively (`_count_leaves`,
 * `risk.maxLossPerDay > 0`
 * `mode == "live"` ⇒ broker must be connected for the user
 
-### 4.5 Upstox wrapper (`services/upstox.py`)
+### 4.5 Upstox wrapper (`services/upstox_service.py`)
 
 Thin async client over `httpx.AsyncClient`:
 
