@@ -51,9 +51,18 @@ kill_port() {
     log "Killing processes on port $port: $pids"
     for pid in $pids; do
       if [[ "${OSTYPE:-}" == "msys" || "${OSTYPE:-}" == "cygwin" || "${OSTYPE:-}" == "win32" ]]; then
-        MSYS_NO_PATHCONV=1 taskkill.exe /F /PID "$pid" >/dev/null 2>&1 || kill -9 "$pid" >/dev/null 2>&1 || true
+        MSYS_NO_PATHCONV=1 taskkill.exe /F /T /PID "$pid" >/dev/null 2>&1 || kill -9 "$pid" >/dev/null 2>&1 || true
       else
-        kill "$pid" 2>/dev/null || kill -9 "$pid" 2>/dev/null || true
+        # Try to kill process group first, then the process itself with SIGKILL
+        pgid=$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' ' || true)
+        if [ -n "$pgid" ] && [ "$pgid" != "0" ]; then
+          kill -- -"$pgid" 2>/dev/null || true
+          sleep 0.2
+          kill -9 -- -"$pgid" 2>/dev/null || true
+        fi
+        kill "$pid" 2>/dev/null || true
+        sleep 0.2
+        kill -9 "$pid" 2>/dev/null || true
       fi
     done
   fi
@@ -100,18 +109,22 @@ sleep 1
 API_RUNNING=$(get_pids_on_port "$API_PORT")
 WEB_RUNNING=$(get_pids_on_port "$WEB_PORT")
 
+# Format PIDs on single line (works on Windows, Mac, Linux)
+api_pids=$(echo "$API_RUNNING" | tr '\n' ' ' | tr -s ' ' | sed 's/^ *//;s/ *$//')
+web_pids=$(echo "$WEB_RUNNING" | tr '\n' ' ' | tr -s ' ' | sed 's/^ *//;s/ *$//')
+
 echo ""
-echo "╔══════════════════════════════════════════╗"
-echo "║        SignalAI — Stop Summary           ║"
-echo "╠══════════════════════════════════════════╣"
-if [ -z "$API_RUNNING" ]; then
-  printf "║  API  port %-5s  ✅ Stopped             ║\n" "$API_PORT"
+echo "╔════════════════════════════════════════════════╗"
+echo "║         SignalAI — Stop Summary                ║"
+echo "╠════════════════════════════════════════════════╣"
+if [ -z "$api_pids" ]; then
+  printf "║  API  port %-5s  ✅ Stopped                   ║\n" "$API_PORT"
 else
-  printf "║  API  port %-5s  ⚠ Still running (%-5s)║\n" "$API_PORT" "$API_RUNNING"
+  printf "║  API  port %-5s  ⚠  Still running: %-9s ║\n" "$API_PORT" "$api_pids"
 fi
-if [ -z "$WEB_RUNNING" ]; then
-  printf "║  Web  port %-5s  ✅ Stopped             ║\n" "$WEB_PORT"
+if [ -z "$web_pids" ]; then
+  printf "║  Web  port %-5s  ✅ Stopped                   ║\n" "$WEB_PORT"
 else
-  printf "║  Web  port %-5s  ⚠ Still running (%-5s)║\n" "$WEB_PORT" "$WEB_RUNNING"
+  printf "║  Web  port %-5s  ⚠  Still running: %-9s ║\n" "$WEB_PORT" "$web_pids"
 fi
-echo "╚══════════════════════════════════════════╝"
+echo "╚════════════════════════════════════════════════╝"

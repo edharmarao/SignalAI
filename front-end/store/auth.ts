@@ -6,6 +6,7 @@ interface AuthState {
   user: { id: string } | null;
   loading: boolean;
   init: () => void;
+  signIn: (username: string, password: string) => void;
   signOut: () => void;
 }
 
@@ -14,6 +15,10 @@ export const useAuth = create<AuthState>((set) => ({
   loading: true,
   init: () => {
     set({ user: auth.getUser(), loading: false });
+  },
+  signIn: (username: string, password: string) => {
+    auth.setSession(username, password);
+    set({ user: auth.getUser() });
   },
   signOut: () => {
     auth.clearSession();

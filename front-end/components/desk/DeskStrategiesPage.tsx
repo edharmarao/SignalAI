@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Badge, Button, Card } from "@signalai/ui";
+import { Badge, Button, Card, ConfirmDialog } from "@signalai/ui";
 import { api } from "@/lib/api";
 import type { StrategyRow, DeskType } from "@signalai/types";
 import { DESK_META } from "@signalai/utils";
@@ -15,6 +15,8 @@ const DESK_ACCENT: Record<DeskType, string> = {
 export function DeskStrategiesPage({ desk }: { desk: DeskType }) {
   const [rows, setRows] = useState<StrategyRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [deleteModal, setDeleteModal] = useState<{ id: string; name: string } | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const accent = DESK_ACCENT[desk];
   const meta = DESK_META[desk];
 
@@ -33,10 +35,19 @@ export function DeskStrategiesPage({ desk }: { desk: DeskType }) {
     await api(`/strategies/${id}/duplicate`, { method: "POST" });
     load();
   }
-  async function remove(id: string) {
-    if (!confirm("Delete this strategy?")) return;
-    await api(`/strategies/${id}`, { method: "DELETE" });
-    load();
+
+  async function confirmDelete() {
+    if (!deleteModal) return;
+    setDeleting(true);
+    try {
+      await api(`/strategies/${deleteModal.id}`, { method: "DELETE" });
+      await load();
+      setDeleteModal(null);
+    } catch (error) {
+      console.error("Delete failed:", error);
+    } finally {
+      setDeleting(false);
+    }
   }
 
   return (
@@ -82,12 +93,34 @@ export function DeskStrategiesPage({ desk }: { desk: DeskType }) {
               </div>
               <div className="mt-3 flex gap-2">
                 <Button variant="secondary" onClick={() => duplicate(s.id)}>Duplicate</Button>
-                <Button variant="ghost" onClick={() => remove(s.id)}>Delete</Button>
+                <Button variant="ghost" onClick={() => setDeleteModal({ id: s.id, name: s.name })}>Delete</Button>
               </div>
             </Card>
           ))}
         </div>
       )}
+
+      {/* Delete Confirmation */}
+      <ConfirmDialog
+        isOpen={!!deleteModal}
+        onClose={() => setDeleteModal(null)}
+        onConfirm={confirmDelete}
+        title="Delete Strategy"
+        message={
+          <div className="space-y-3">
+            <p>
+              Are you sure you want to delete <span className="font-bold text-amber-400">{deleteModal?.name}</span>?
+            </p>
+            <p className="text-slate-400 text-xs">
+              This action cannot be undone. All associated trades, logs, and backtest data will be permanently removed.
+            </p>
+          </div>
+        }
+        confirmText="Delete Strategy"
+        cancelText="Cancel"
+        variant="danger"
+        loading={deleting}
+      />
     </div>
   );
 }

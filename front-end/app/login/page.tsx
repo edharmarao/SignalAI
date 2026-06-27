@@ -3,6 +3,7 @@ import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Button, Card, Input } from "@signalai/ui";
 import { auth } from "@/lib/auth";
+import { useAuth } from "@/store/auth";
 
 const API = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8003") + "/api/v1";
 
@@ -10,6 +11,7 @@ function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const nextPath = searchParams.get("next") ?? "/";
+  const { signIn } = useAuth();
 
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -34,7 +36,7 @@ function LoginForm() {
         const body = await res.json().catch(() => ({}));
         throw new Error(body.detail ?? body.error ?? "Invalid credentials");
       }
-      auth.setSession(username, password);
+      signIn(username, password);
       router.replace(nextPath);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Login failed");
