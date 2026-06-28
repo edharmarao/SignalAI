@@ -12,6 +12,7 @@ interface SymbolResult {
   updated?: boolean;
   action?: string;
   market_cap?: number;
+  market_cap_usd?: number;
   source?: string;
   error?: string;
   message?: string;
@@ -287,7 +288,14 @@ export default function SymbolsUpdatePage() {
                     </td>
                     <td className="py-2 pr-4 text-xs text-slate-400">{r.action || "—"}</td>
                     <td className="py-2 pr-4 text-right text-slate-300 tabular-nums">
-                      {r.market_cap ? `₹${(r.market_cap / 10000).toFixed(0)}Cr` : "—"}
+                      {r.market_cap ? (
+                        <div>
+                          <div>₹{r.market_cap.toLocaleString('en-IN', { maximumFractionDigits: 0 })} Cr</div>
+                          {r.market_cap_usd && (
+                            <div className="text-xs text-slate-500">${r.market_cap_usd.toLocaleString('en-US', { maximumFractionDigits: 0 })}M</div>
+                          )}
+                        </div>
+                      ) : "—"}
                     </td>
                     <td className="py-2 pl-4 text-xs text-slate-400 max-w-md truncate">{r.error || r.message || "—"}</td>
                   </tr>

@@ -114,9 +114,10 @@ async def _update_symbol_from_sources(symbol: str, exchange: str) -> dict:
     2. Upstox for live prices, trading info (if available)
     """
     try:
-        # Step 1: Get Yahoo Finance data
+        # Step 1: Get Yahoo Finance data (now includes market_cap_usd)
         yahoo_data = db_query("""
-            SELECT symbol, company_name, sector, industry, market_cap,
+            SELECT symbol, company_name, sector, industry,
+                   market_cap, market_cap_usd,
                    trailing_pe, price_to_book, dividend_yield,
                    fifty_two_week_high, fifty_two_week_low
             FROM fundamentals_info
@@ -137,30 +138,33 @@ async def _update_symbol_from_sources(symbol: str, exchange: str) -> dict:
         exists = db_query("SELECT id FROM nse_eq_symbols WHERE symbol = %s", (symbol,))
 
         if not exists:
-            # Insert new symbol
+            # Insert new symbol with both INR and USD market cap
             db_execute("""
                 INSERT INTO nse_eq_symbols (
-                    symbol, company_name, industry, market_cap, series,
+                    symbol, company_name, industry,
+                    market_cap, market_cap_usd, series,
                     fifty_two_weeks_high, fifty_two_weeks_low,
                     created_at, updated_at
-                ) VALUES (%s, %s, %s, %s, 'EQ', %s, %s, NOW(), NOW())
+                ) VALUES (%s, %s, %s, %s, %s, 'EQ', %s, %s, NOW(), NOW())
             """, (
                 symbol,
                 yahoo['company_name'],
                 yahoo['industry'],
                 yahoo['market_cap'],
+                yahoo['market_cap_usd'],
                 yahoo['fifty_two_week_high'],
                 yahoo['fifty_two_week_low']
             ))
             action = "inserted"
         else:
-            # Update existing symbol
+            # Update existing symbol with both INR and USD market cap
             db_execute("""
                 UPDATE nse_eq_symbols
                 SET
                     company_name = COALESCE(NULLIF(company_name, ''), %s, company_name),
                     industry = COALESCE(NULLIF(industry, ''), %s, industry),
                     market_cap = %s,
+                    market_cap_usd = %s,
                     fifty_two_weeks_high = COALESCE(%s, fifty_two_weeks_high),
                     fifty_two_weeks_low = COALESCE(%s, fifty_two_weeks_low),
                     updated_at = NOW()
@@ -169,6 +173,7 @@ async def _update_symbol_from_sources(symbol: str, exchange: str) -> dict:
                 yahoo['company_name'],
                 yahoo['industry'],
                 yahoo['market_cap'],
+                yahoo['market_cap_usd'],
                 yahoo['fifty_two_week_high'],
                 yahoo['fifty_two_week_low'],
                 symbol
@@ -181,6 +186,7 @@ async def _update_symbol_from_sources(symbol: str, exchange: str) -> dict:
             "updated": True,
             "action": action,
             "market_cap": float(yahoo['market_cap']) if yahoo['market_cap'] else None,
+            "market_cap_usd": float(yahoo['market_cap_usd']) if yahoo['market_cap_usd'] else None,
             "source": "yahoo_finance"
         }
 
