@@ -45,6 +45,22 @@ def _safe_int(val: Any, default: int | None = None) -> int | None:
         return default
 
 
+def _to_crores(val: Any) -> float | None:
+    """Convert large numbers to Crores with single decimal precision.
+
+    1 Crore = 10,000,000
+    Example: 2,940,590,000,000 -> 294059.0 Cr
+    """
+    if val is None or val == "":
+        return None
+    try:
+        num = float(val)
+        crores = num / 10000000  # 1 Crore = 10 Million
+        return round(crores, 1)
+    except (ValueError, TypeError):
+        return None
+
+
 async def fetch_and_store_fundamentals(
     symbols: list[str],
     exchange: str = "NSE"
@@ -116,14 +132,17 @@ async def _store_company_info(symbol: str, exchange: str, info: dict) -> bool:
     """Store company info in fundamentals_info table."""
     try:
         # Extract fields with safe defaults
+        # Note: Large financial values are converted to Crores before storing
         data = {
             "symbol": symbol,
             "exchange": exchange,
             "company_name": _safe_get(info, "longName") or _safe_get(info, "shortName"),
             "sector": _safe_get(info, "sector"),
             "industry": _safe_get(info, "industry"),
-            "market_cap": _safe_int(_safe_get(info, "marketCap")),
-            "enterprise_value": _safe_int(_safe_get(info, "enterpriseValue")),
+            # Convert to Crores (÷ 10M)
+            "market_cap": _to_crores(_safe_get(info, "marketCap")),
+            "enterprise_value": _to_crores(_safe_get(info, "enterpriseValue")),
+            # Ratios remain as-is
             "trailing_pe": _safe_float(_safe_get(info, "trailingPE")),
             "forward_pe": _safe_float(_safe_get(info, "forwardPE")),
             "peg_ratio": _safe_float(_safe_get(info, "pegRatio")),
@@ -131,31 +150,38 @@ async def _store_company_info(symbol: str, exchange: str, info: dict) -> bool:
             "price_to_sales": _safe_float(_safe_get(info, "priceToSalesTrailing12Months")),
             "dividend_yield": _safe_float(_safe_get(info, "dividendYield")),
             "beta": _safe_float(_safe_get(info, "beta")),
+            # Prices remain as-is (already in rupees)
             "fifty_two_week_high": _safe_float(_safe_get(info, "fiftyTwoWeekHigh")),
             "fifty_two_week_low": _safe_float(_safe_get(info, "fiftyTwoWeekLow")),
             "fifty_day_average": _safe_float(_safe_get(info, "fiftyDayAverage")),
             "two_hundred_day_average": _safe_float(_safe_get(info, "twoHundredDayAverage")),
-            "shares_outstanding": _safe_int(_safe_get(info, "sharesOutstanding")),
-            "float_shares": _safe_int(_safe_get(info, "floatShares")),
+            # Share counts in Lakhs (÷ 100 from Crores conversion)
+            "shares_outstanding": _to_crores(_safe_get(info, "sharesOutstanding")),
+            "float_shares": _to_crores(_safe_get(info, "floatShares")),
+            # Percentages remain as-is
             "held_percent_insiders": _safe_float(_safe_get(info, "heldPercentInsiders")),
             "held_percent_institutions": _safe_float(_safe_get(info, "heldPercentInstitutions")),
             "short_ratio": _safe_float(_safe_get(info, "shortRatio")),
+            # Book value per share remains as-is
             "book_value": _safe_float(_safe_get(info, "bookValue")),
+            # Margins remain as-is (percentages)
             "profit_margins": _safe_float(_safe_get(info, "profitMargins")),
             "return_on_assets": _safe_float(_safe_get(info, "returnOnAssets")),
             "return_on_equity": _safe_float(_safe_get(info, "returnOnEquity")),
             "revenue_growth": _safe_float(_safe_get(info, "revenueGrowth")),
             "earnings_growth": _safe_float(_safe_get(info, "earningsGrowth")),
+            # Ratios remain as-is
             "current_ratio": _safe_float(_safe_get(info, "currentRatio")),
             "debt_to_equity": _safe_float(_safe_get(info, "debtToEquity")),
             "quick_ratio": _safe_float(_safe_get(info, "quickRatio")),
-            "total_cash": _safe_int(_safe_get(info, "totalCash")),
-            "total_debt": _safe_int(_safe_get(info, "totalDebt")),
-            "total_revenue": _safe_int(_safe_get(info, "totalRevenue")),
-            "gross_profits": _safe_int(_safe_get(info, "grossProfits")),
-            "free_cashflow": _safe_int(_safe_get(info, "freeCashflow")),
-            "operating_cashflow": _safe_int(_safe_get(info, "operatingCashflow")),
-            "ebitda": _safe_int(_safe_get(info, "ebitda")),
+            # Convert to Crores
+            "total_cash": _to_crores(_safe_get(info, "totalCash")),
+            "total_debt": _to_crores(_safe_get(info, "totalDebt")),
+            "total_revenue": _to_crores(_safe_get(info, "totalRevenue")),
+            "gross_profits": _to_crores(_safe_get(info, "grossProfits")),
+            "free_cashflow": _to_crores(_safe_get(info, "freeCashflow")),
+            "operating_cashflow": _to_crores(_safe_get(info, "operatingCashflow")),
+            "ebitda": _to_crores(_safe_get(info, "ebitda")),
             "website": _safe_get(info, "website"),
             "last_updated": datetime.now()
         }
@@ -197,39 +223,39 @@ async def _store_quarterly_financials(symbol: str, ticker: yf.Ticker) -> int:
         for col in quarterly_income.columns:
             quarter_date = col.date() if hasattr(col, 'date') else col
 
-            # Extract financial metrics
+            # Extract financial metrics (convert to Crores before storing)
             data = {
                 "symbol": symbol,
                 "quarter_end_date": quarter_date,
-                "total_revenue": _safe_int(quarterly_income.loc["Total Revenue", col] if "Total Revenue" in quarterly_income.index else None),
-                "gross_profit": _safe_int(quarterly_income.loc["Gross Profit", col] if "Gross Profit" in quarterly_income.index else None),
-                "operating_income": _safe_int(quarterly_income.loc["Operating Income", col] if "Operating Income" in quarterly_income.index else None),
-                "net_income": _safe_int(quarterly_income.loc["Net Income", col] if "Net Income" in quarterly_income.index else None),
-                "ebitda": _safe_int(quarterly_income.loc["EBITDA", col] if "EBITDA" in quarterly_income.index else None),
+                "total_revenue": _to_crores(quarterly_income.loc["Total Revenue", col] if "Total Revenue" in quarterly_income.index else None),
+                "gross_profit": _to_crores(quarterly_income.loc["Gross Profit", col] if "Gross Profit" in quarterly_income.index else None),
+                "operating_income": _to_crores(quarterly_income.loc["Operating Income", col] if "Operating Income" in quarterly_income.index else None),
+                "net_income": _to_crores(quarterly_income.loc["Net Income", col] if "Net Income" in quarterly_income.index else None),
+                "ebitda": _to_crores(quarterly_income.loc["EBITDA", col] if "EBITDA" in quarterly_income.index else None),
                 "eps_basic": _safe_float(quarterly_income.loc["Basic EPS", col] if "Basic EPS" in quarterly_income.index else None),
                 "eps_diluted": _safe_float(quarterly_income.loc["Diluted EPS", col] if "Diluted EPS" in quarterly_income.index else None),
             }
 
-            # Add balance sheet data if available
+            # Add balance sheet data if available (convert to Crores)
             if quarterly_balance is not None and not quarterly_balance.empty and col in quarterly_balance.columns:
                 data.update({
-                    "total_assets": _safe_int(quarterly_balance.loc["Total Assets", col] if "Total Assets" in quarterly_balance.index else None),
-                    "total_liabilities": _safe_int(quarterly_balance.loc["Total Liabilities Net Minority Interest", col] if "Total Liabilities Net Minority Interest" in quarterly_balance.index else None),
-                    "stockholders_equity": _safe_int(quarterly_balance.loc["Stockholders Equity", col] if "Stockholders Equity" in quarterly_balance.index else None),
-                    "total_debt": _safe_int(quarterly_balance.loc["Total Debt", col] if "Total Debt" in quarterly_balance.index else None),
-                    "current_assets": _safe_int(quarterly_balance.loc["Current Assets", col] if "Current Assets" in quarterly_balance.index else None),
-                    "current_liabilities": _safe_int(quarterly_balance.loc["Current Liabilities", col] if "Current Liabilities" in quarterly_balance.index else None),
-                    "cash_and_equivalents": _safe_int(quarterly_balance.loc["Cash And Cash Equivalents", col] if "Cash And Cash Equivalents" in quarterly_balance.index else None),
+                    "total_assets": _to_crores(quarterly_balance.loc["Total Assets", col] if "Total Assets" in quarterly_balance.index else None),
+                    "total_liabilities": _to_crores(quarterly_balance.loc["Total Liabilities Net Minority Interest", col] if "Total Liabilities Net Minority Interest" in quarterly_balance.index else None),
+                    "stockholders_equity": _to_crores(quarterly_balance.loc["Stockholders Equity", col] if "Stockholders Equity" in quarterly_balance.index else None),
+                    "total_debt": _to_crores(quarterly_balance.loc["Total Debt", col] if "Total Debt" in quarterly_balance.index else None),
+                    "current_assets": _to_crores(quarterly_balance.loc["Current Assets", col] if "Current Assets" in quarterly_balance.index else None),
+                    "current_liabilities": _to_crores(quarterly_balance.loc["Current Liabilities", col] if "Current Liabilities" in quarterly_balance.index else None),
+                    "cash_and_equivalents": _to_crores(quarterly_balance.loc["Cash And Cash Equivalents", col] if "Cash And Cash Equivalents" in quarterly_balance.index else None),
                 })
 
-            # Add cashflow data if available
+            # Add cashflow data if available (convert to Crores)
             if quarterly_cashflow is not None and not quarterly_cashflow.empty and col in quarterly_cashflow.columns:
                 data.update({
-                    "operating_cashflow": _safe_int(quarterly_cashflow.loc["Operating Cash Flow", col] if "Operating Cash Flow" in quarterly_cashflow.index else None),
-                    "investing_cashflow": _safe_int(quarterly_cashflow.loc["Investing Cash Flow", col] if "Investing Cash Flow" in quarterly_cashflow.index else None),
-                    "financing_cashflow": _safe_int(quarterly_cashflow.loc["Financing Cash Flow", col] if "Financing Cash Flow" in quarterly_cashflow.index else None),
-                    "free_cashflow": _safe_int(quarterly_cashflow.loc["Free Cash Flow", col] if "Free Cash Flow" in quarterly_cashflow.index else None),
-                    "capital_expenditure": _safe_int(quarterly_cashflow.loc["Capital Expenditure", col] if "Capital Expenditure" in quarterly_cashflow.index else None),
+                    "operating_cashflow": _to_crores(quarterly_cashflow.loc["Operating Cash Flow", col] if "Operating Cash Flow" in quarterly_cashflow.index else None),
+                    "investing_cashflow": _to_crores(quarterly_cashflow.loc["Investing Cash Flow", col] if "Investing Cash Flow" in quarterly_cashflow.index else None),
+                    "financing_cashflow": _to_crores(quarterly_cashflow.loc["Financing Cash Flow", col] if "Financing Cash Flow" in quarterly_cashflow.index else None),
+                    "free_cashflow": _to_crores(quarterly_cashflow.loc["Free Cash Flow", col] if "Free Cash Flow" in quarterly_cashflow.index else None),
+                    "capital_expenditure": _to_crores(quarterly_cashflow.loc["Capital Expenditure", col] if "Capital Expenditure" in quarterly_cashflow.index else None),
                 })
 
             # UPSERT
@@ -271,39 +297,39 @@ async def _store_yearly_financials(symbol: str, ticker: yf.Ticker) -> int:
         for col in yearly_income.columns:
             year_date = col.date() if hasattr(col, 'date') else col
 
-            # Extract financial metrics
+            # Extract financial metrics (convert to Crores before storing)
             data = {
                 "symbol": symbol,
                 "fiscal_year_end": year_date,
-                "total_revenue": _safe_int(yearly_income.loc["Total Revenue", col] if "Total Revenue" in yearly_income.index else None),
-                "gross_profit": _safe_int(yearly_income.loc["Gross Profit", col] if "Gross Profit" in yearly_income.index else None),
-                "operating_income": _safe_int(yearly_income.loc["Operating Income", col] if "Operating Income" in yearly_income.index else None),
-                "net_income": _safe_int(yearly_income.loc["Net Income", col] if "Net Income" in yearly_income.index else None),
-                "ebitda": _safe_int(yearly_income.loc["EBITDA", col] if "EBITDA" in yearly_income.index else None),
+                "total_revenue": _to_crores(yearly_income.loc["Total Revenue", col] if "Total Revenue" in yearly_income.index else None),
+                "gross_profit": _to_crores(yearly_income.loc["Gross Profit", col] if "Gross Profit" in yearly_income.index else None),
+                "operating_income": _to_crores(yearly_income.loc["Operating Income", col] if "Operating Income" in yearly_income.index else None),
+                "net_income": _to_crores(yearly_income.loc["Net Income", col] if "Net Income" in yearly_income.index else None),
+                "ebitda": _to_crores(yearly_income.loc["EBITDA", col] if "EBITDA" in yearly_income.index else None),
                 "eps_basic": _safe_float(yearly_income.loc["Basic EPS", col] if "Basic EPS" in yearly_income.index else None),
                 "eps_diluted": _safe_float(yearly_income.loc["Diluted EPS", col] if "Diluted EPS" in yearly_income.index else None),
             }
 
-            # Add balance sheet data if available
+            # Add balance sheet data if available (convert to Crores)
             if yearly_balance is not None and not yearly_balance.empty and col in yearly_balance.columns:
                 data.update({
-                    "total_assets": _safe_int(yearly_balance.loc["Total Assets", col] if "Total Assets" in yearly_balance.index else None),
-                    "total_liabilities": _safe_int(yearly_balance.loc["Total Liabilities Net Minority Interest", col] if "Total Liabilities Net Minority Interest" in yearly_balance.index else None),
-                    "stockholders_equity": _safe_int(yearly_balance.loc["Stockholders Equity", col] if "Stockholders Equity" in yearly_balance.index else None),
-                    "total_debt": _safe_int(yearly_balance.loc["Total Debt", col] if "Total Debt" in yearly_balance.index else None),
-                    "current_assets": _safe_int(yearly_balance.loc["Current Assets", col] if "Current Assets" in yearly_balance.index else None),
-                    "current_liabilities": _safe_int(yearly_balance.loc["Current Liabilities", col] if "Current Liabilities" in yearly_balance.index else None),
-                    "cash_and_equivalents": _safe_int(yearly_balance.loc["Cash And Cash Equivalents", col] if "Cash And Cash Equivalents" in yearly_balance.index else None),
+                    "total_assets": _to_crores(yearly_balance.loc["Total Assets", col] if "Total Assets" in yearly_balance.index else None),
+                    "total_liabilities": _to_crores(yearly_balance.loc["Total Liabilities Net Minority Interest", col] if "Total Liabilities Net Minority Interest" in yearly_balance.index else None),
+                    "stockholders_equity": _to_crores(yearly_balance.loc["Stockholders Equity", col] if "Stockholders Equity" in yearly_balance.index else None),
+                    "total_debt": _to_crores(yearly_balance.loc["Total Debt", col] if "Total Debt" in yearly_balance.index else None),
+                    "current_assets": _to_crores(yearly_balance.loc["Current Assets", col] if "Current Assets" in yearly_balance.index else None),
+                    "current_liabilities": _to_crores(yearly_balance.loc["Current Liabilities", col] if "Current Liabilities" in yearly_balance.index else None),
+                    "cash_and_equivalents": _to_crores(yearly_balance.loc["Cash And Cash Equivalents", col] if "Cash And Cash Equivalents" in yearly_balance.index else None),
                 })
 
-            # Add cashflow data if available
+            # Add cashflow data if available (convert to Crores)
             if yearly_cashflow is not None and not yearly_cashflow.empty and col in yearly_cashflow.columns:
                 data.update({
-                    "operating_cashflow": _safe_int(yearly_cashflow.loc["Operating Cash Flow", col] if "Operating Cash Flow" in yearly_cashflow.index else None),
-                    "investing_cashflow": _safe_int(yearly_cashflow.loc["Investing Cash Flow", col] if "Investing Cash Flow" in yearly_cashflow.index else None),
-                    "financing_cashflow": _safe_int(yearly_cashflow.loc["Financing Cash Flow", col] if "Financing Cash Flow" in yearly_cashflow.index else None),
-                    "free_cashflow": _safe_int(yearly_cashflow.loc["Free Cash Flow", col] if "Free Cash Flow" in yearly_cashflow.index else None),
-                    "capital_expenditure": _safe_int(yearly_cashflow.loc["Capital Expenditure", col] if "Capital Expenditure" in yearly_cashflow.index else None),
+                    "operating_cashflow": _to_crores(yearly_cashflow.loc["Operating Cash Flow", col] if "Operating Cash Flow" in yearly_cashflow.index else None),
+                    "investing_cashflow": _to_crores(yearly_cashflow.loc["Investing Cash Flow", col] if "Investing Cash Flow" in yearly_cashflow.index else None),
+                    "financing_cashflow": _to_crores(yearly_cashflow.loc["Financing Cash Flow", col] if "Financing Cash Flow" in yearly_cashflow.index else None),
+                    "free_cashflow": _to_crores(yearly_cashflow.loc["Free Cash Flow", col] if "Free Cash Flow" in yearly_cashflow.index else None),
+                    "capital_expenditure": _to_crores(yearly_cashflow.loc["Capital Expenditure", col] if "Capital Expenditure" in yearly_cashflow.index else None),
                 })
 
             # UPSERT

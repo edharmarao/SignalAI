@@ -20,57 +20,8 @@ logger = logging.getLogger("signal_ai")
 router = APIRouter(prefix="/api/v1/fundamentals", tags=["fundamentals"])
 
 
-# ── Helper Functions ──────────────────────────────────────────────────────────
-
-
-def format_to_crores(value: Any) -> float | None:
-    """Convert large numbers to Crores with single decimal precision.
-
-    Examples:
-        17815499177984 -> 1781550.0 (displayed as "1781550.0 Cr" or "17.8 L Cr")
-        1000000000 -> 1000.0 (displayed as "1000.0 Cr")
-        500000000 -> 500.0 (displayed as "500.0 Cr")
-    """
-    if value is None or value == "":
-        return None
-    try:
-        num = float(value)
-        # Convert to Crores (1 Crore = 10 million = 10^7)
-        crores = num / 10000000
-        return round(crores, 1)
-    except (ValueError, TypeError):
-        return None
-
-
-def format_financials(data: dict) -> dict:
-    """Format financial numbers to Crores with single decimal.
-
-    Applies formatting to:
-    - Market cap, enterprise value
-    - Revenue, profit, EBITDA
-    - Cash, debt, assets, liabilities
-    - All other large financial numbers
-    """
-    # Fields to convert to Crores (all BIGINT fields representing money)
-    # Note: Using a set to avoid duplicate conversions
-    crore_fields = {
-        # Company info fields
-        "market_cap", "enterprise_value", "shares_outstanding", "float_shares",
-        "total_cash", "total_debt", "total_revenue", "gross_profits",
-        "free_cashflow", "operating_cashflow", "ebitda",
-        # Quarterly/Yearly fields
-        "gross_profit", "operating_income", "net_income",
-        "total_assets", "total_liabilities", "stockholders_equity",
-        "current_assets", "current_liabilities", "cash_and_equivalents",
-        "investing_cashflow", "financing_cashflow", "capital_expenditure"
-    }
-
-    formatted = data.copy()
-    for field in crore_fields:
-        if field in formatted and formatted[field] is not None:
-            formatted[field] = format_to_crores(formatted[field])
-
-    return formatted
+# Note: Financial values are stored in Crores format directly in the database
+# No formatting needed in the API layer - data is already in Crores with 1 decimal
 
 
 # ── Request/Response Models ──────────────────────────────────────────────────
@@ -197,16 +148,12 @@ async def get_fundamentals(
         quarterly = await get_fundamentals_quarterly(symbol, quarterly_limit)
         yearly = await get_fundamentals_yearly(symbol, yearly_limit)
 
-        # Format all financial values to Crores
-        formatted_info = format_financials(info) if info else None
-        formatted_quarterly = [format_financials(q) for q in quarterly]
-        formatted_yearly = [format_financials(y) for y in yearly]
-
+        # Data is already stored in Crores format in DB, no need to format again
         return FundamentalsInfoResponse(
             symbol=symbol,
-            info=formatted_info,
-            quarterly=formatted_quarterly,
-            yearly=formatted_yearly,
+            info=info,
+            quarterly=quarterly,
+            yearly=yearly,
         )
 
     except HTTPException:
@@ -229,12 +176,10 @@ async def list_symbols():
     try:
         symbols = await list_all_symbols_with_fundamentals()
 
-        # Format market cap to Crores for display
-        formatted_symbols = [format_financials(s) for s in symbols]
-
+        # Data is already stored in Crores format in DB
         return SymbolListResponse(
-            total=len(formatted_symbols),
-            symbols=formatted_symbols,
+            total=len(symbols),
+            symbols=symbols,
         )
 
     except Exception as e:
