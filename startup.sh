@@ -64,19 +64,39 @@ get_pids_on_port() {
   echo "$pids"
 }
 
+kill_process_tree() {
+  local pid="$1"
+  local children
+  # Get all child processes recursively
+  children=$(pgrep -P "$pid" 2>/dev/null || true)
+
+  # Recursively kill children first
+  for child in $children; do
+    kill_process_tree "$child"
+  done
+
+  # Then kill the parent
+  if kill -0 "$pid" 2>/dev/null; then
+    kill -TERM "$pid" 2>/dev/null || true
+    sleep 0.2
+    kill -9 "$pid" 2>/dev/null || true
+  fi
+}
+
 kill_by_port() {
   local port="$1"
   local pids
   pids=$(get_pids_on_port "$port")
   if [ -n "$pids" ]; then
-    log "Killing existing process on port $port: $pids"
+    log "Killing existing process on port $port and its children …"
     for pid in $pids; do
       if [[ "${OSTYPE:-}" == "msys" || "${OSTYPE:-}" == "cygwin" || "${OSTYPE:-}" == "win32" ]]; then
-        MSYS_NO_PATHCONV=1 taskkill.exe /F /PID "$pid" >/dev/null 2>&1 || kill -9 "$pid" >/dev/null 2>&1 || true
+        MSYS_NO_PATHCONV=1 taskkill.exe /F /T /PID "$pid" >/dev/null 2>&1 || kill -9 "$pid" >/dev/null 2>&1 || true
       else
-        kill "$pid" 2>/dev/null || kill -9 "$pid" 2>/dev/null || true
+        kill_process_tree "$pid"
       fi
     done
+    sleep 0.5
   fi
 }
 
@@ -115,7 +135,21 @@ log "Stopping any running instances …"
 kill_pid_file
 kill_by_port "$API_PORT"
 kill_by_port "$WEB_PORT"
+
+# Extra cleanup: kill any lingering uvicorn/node processes
+pkill -f "uvicorn.*main:app" 2>/dev/null || true
+pkill -f "node.*next.*start" 2>/dev/null || true
 sleep 1
+
+# Verify ports are actually free
+REMAINING_API=$(get_pids_on_port "$API_PORT")
+REMAINING_WEB=$(get_pids_on_port "$WEB_PORT")
+if [ -n "$REMAINING_API" ] || [ -n "$REMAINING_WEB" ]; then
+  log "WARNING: Some processes still running. Force killing …"
+  [ -n "$REMAINING_API" ] && kill -9 $REMAINING_API 2>/dev/null || true
+  [ -n "$REMAINING_WEB" ] && kill -9 $REMAINING_WEB 2>/dev/null || true
+  sleep 1
+fi
 
 # ── Clear old logs ─────────────────────────────────────────────────────────────
 mkdir -p "$LOG_DIR"
