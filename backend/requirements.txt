@@ -13,6 +13,7 @@ python-multipart>=0.0.20
 python-dateutil>=2.9.0
 python-dotenv>=1.0.0
 mysql-connector-python
+yfinance>=0.2.40
 
 psutil>=6.0.0
 breeze-connect
