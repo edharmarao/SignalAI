@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 from datetime import datetime
 from typing import Any
 
@@ -26,21 +27,29 @@ def _safe_get(data: dict, key: str, default: Any = None) -> Any:
 
 
 def _safe_float(val: Any, default: float | None = None) -> float | None:
-    """Convert to float, return None if invalid."""
+    """Convert to float, return None if invalid or NaN/Inf."""
     if val is None or val == "":
         return default
     try:
-        return float(val)
+        f = float(val)
+        # MySQL doesn't support NaN or Inf - return None instead
+        if math.isnan(f) or math.isinf(f):
+            return default
+        return f
     except (ValueError, TypeError):
         return default
 
 
 def _safe_int(val: Any, default: int | None = None) -> int | None:
-    """Convert to int, return None if invalid."""
+    """Convert to int, return None if invalid or NaN/Inf."""
     if val is None or val == "":
         return default
     try:
-        return int(val)
+        # First check if it's a float with NaN/Inf
+        f = float(val)
+        if math.isnan(f) or math.isinf(f):
+            return default
+        return int(f)
     except (ValueError, TypeError):
         return default
 
@@ -55,6 +64,9 @@ def _to_crores(val: Any) -> float | None:
         return None
     try:
         num = float(val)
+        # Check for NaN/Inf - MySQL doesn't support these
+        if math.isnan(num) or math.isinf(num):
+            return None
         crores = num / 10000000  # 1 Crore = 10 Million
         return round(crores, 1)
     except (ValueError, TypeError):
@@ -71,6 +83,9 @@ def _to_millions_usd(val: Any) -> float | None:
         return None
     try:
         num = float(val)
+        # Check for NaN/Inf - MySQL doesn't support these
+        if math.isnan(num) or math.isinf(num):
+            return None
         millions = num / 1000000  # 1 Million = 10^6
         return round(millions, 1)
     except (ValueError, TypeError):
@@ -91,6 +106,9 @@ def _convert_usd_to_inr_crores(usd_val: Any, exchange_rate: float = 83.0) -> flo
         return None
     try:
         num = float(usd_val)
+        # Check for NaN/Inf - MySQL doesn't support these
+        if math.isnan(num) or math.isinf(num):
+            return None
         inr = num * exchange_rate
         crores = inr / 10000000
         return round(crores, 1)
@@ -114,6 +132,10 @@ def _process_financial_value(val: Any, is_usd: bool, exchange_rate: float = 83.0
 
     try:
         num = float(val)
+
+        # Check for NaN/Inf - MySQL doesn't support these
+        if math.isnan(num) or math.isinf(num):
+            return (None, None)
 
         if is_usd:
             # Value is in USD - convert to INR Crores and also store as USD Millions
