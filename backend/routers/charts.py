@@ -376,20 +376,17 @@ _INDEX_COL: dict[str, str] = {
 }
 
 # Fallback hardcoded lists (used if nse_symbol_indexes table is not yet seeded)
-from migrations.seed_index_symbols import (
-    NIFTY_50, NIFTY_NEXT_50, NIFTY_MIDCAP_150,
-    NIFTY_SMALLCAP_250, NIFTY_MICROCAP_250, NSE_FO,
-)
+# These are fetched from database; fallback is empty if DB is not seeded
 _FALLBACK: dict[str, list[str]] = {
-    "n50":        NIFTY_50,
-    "next50":     NIFTY_NEXT_50,
-    "n100":       NIFTY_50 + NIFTY_NEXT_50,
-    "midcap150":  NIFTY_MIDCAP_150,
-    "midcap250":  NIFTY_MIDCAP_150 + NIFTY_SMALLCAP_250[:100],
-    "smallcap250":NIFTY_SMALLCAP_250,
-    "n500":       NIFTY_50 + NIFTY_NEXT_50 + NIFTY_MIDCAP_150 + NIFTY_SMALLCAP_250,
-    "microcap250":NIFTY_MICROCAP_250,
-    "fo":         NSE_FO,
+    "n50":        [],
+    "next50":     [],
+    "n100":       [],
+    "midcap150":  [],
+    "midcap250":  [],
+    "smallcap250":[],
+    "n500":       [],
+    "microcap250":[],
+    "fo":         [],
 }
 
 
@@ -464,11 +461,11 @@ def get_all_indexes():
 
 @router.post("/reseed-indexes")
 def reseed_indexes(user=Depends(get_current_user)):
-    """Force re-seed nse_symbol_indexes table (admin use)."""
-    import threading
-    from migrations.seed_index_symbols import run_seed
-    threading.Thread(target=lambda: run_seed(force=True), daemon=True).start()
-    return {"status": "seeding started in background"}
+    """Force re-seed nse_symbol_indexes table (admin use).
+
+    NOTE: This endpoint is disabled. Symbol indexes should be managed via database directly.
+    """
+    raise HTTPException(501, "Symbol reseeding is not available. Manage indexes via database.")
 
 
 @router.post("/update-script-names")

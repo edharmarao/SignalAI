@@ -77,7 +77,7 @@ pip install -r requirements.txt
 ### 4.1 Supabase (required for real auth + persistence)
 
 * Create a project at supabase.com.
-* In the SQL editor, paste and run **`supabase/schema.sql`** —
+* In the SQL editor, paste and run **`supabase/stocks_ddl.sql`** —
   creates `strategies`, `trades`, `orders`, `logs`, `broker_accounts`
   with Row Level Security policies.
 * Copy the project URL and anon key into the env vars below.
@@ -180,7 +180,7 @@ npm run dev
 npm run api
 
 # apply DB schema (Supabase SQL editor)
-#   paste contents of supabase/schema.sql and run
+#   paste contents of supabase/stocks_ddl.sql and run
 ```
 
 You should be able to open http://localhost:3000, see the **DEMO DATA**

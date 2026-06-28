@@ -2,7 +2,7 @@
   "info": {
     "name": "SignalAI API",
     "_postman_id": "signalai-master-v1",
-    "description": "Master SignalAI API collection \u2014 all endpoints including Upstox, Auth, Charts, Strategies, Backtest, Orders.\n\nBase URL: http://localhost:8003/api/v1\nAuth: HTTP Basic (API_USERNAME / API_PASSWORD from .env)",
+    "description": "Master SignalAI API collection \u2014 all endpoints including Upstox, Auth, Charts, Strategies, Backtest, Orders, Fundamentals, Symbols, Data Sync.\n\nBase URL: http://localhost:8003/api/v1\nAuth: HTTP Basic (API_USERNAME / API_PASSWORD from .env)\n\nNew APIs (2026-06-28):\n- \ud83d\udcca Fundamentals: Yahoo Finance data (dual currency: INR Cr + USD M)\n- \ud83c\udfe2 Symbols: nse_eq_symbols with market cap, rankings, index flags\n- \ud83d\udd04 Data Sync: Update fundamentals and symbols separately or together",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "auth": {
@@ -1189,7 +1189,7 @@
       ]
     },
     {
-      "name": "🔑 ICICI Direct / Breeze Options",
+      "name": "\ud83d\udd11 ICICI Direct / Breeze Options",
       "item": [
         {
           "name": "GET /breeze/historical-options",
@@ -3703,6 +3703,398 @@
               ]
             },
             "description": "List latest logs (max 500), optionally filtered by desk."
+          }
+        }
+      ]
+    },
+    {
+      "name": "\ud83d\udcca Fundamentals",
+      "item": [
+        {
+          "name": "List All Symbols",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/fundamentals/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "fundamentals",
+                ""
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Symbol Details",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/fundamentals/RELIANCE?quarterly_limit=4&yearly_limit=3",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "fundamentals",
+                "RELIANCE"
+              ],
+              "query": [
+                {
+                  "key": "quarterly_limit",
+                  "value": "4"
+                },
+                {
+                  "key": "yearly_limit",
+                  "value": "3"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Fetch Fundamentals from Yahoo",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"symbols\": [\n    \"RELIANCE\",\n    \"TCS\",\n    \"INFY\"\n  ],\n  \"exchange\": \"NSE\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/fundamentals/fetch",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "fundamentals",
+                "fetch"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Delete Symbol",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/fundamentals/{{symbol}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "fundamentals",
+                "{{symbol}}"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "\ud83c\udfe2 Symbols",
+      "item": [
+        {
+          "name": "List Symbols (All)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/symbols?limit=50",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "symbols"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "50"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "List NIFTY 50",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/symbols?is_nifty_50=true&limit=50",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "symbols"
+              ],
+              "query": [
+                {
+                  "key": "is_nifty_50",
+                  "value": "true"
+                },
+                {
+                  "key": "limit",
+                  "value": "50"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "List by Cap Type (LARGE)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/symbols?cap_type=LARGE&limit=100",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "symbols"
+              ],
+              "query": [
+                {
+                  "key": "cap_type",
+                  "value": "LARGE"
+                },
+                {
+                  "key": "limit",
+                  "value": "100"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Symbol Detail",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/symbols/{{symbol}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "symbols",
+                "{{symbol}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Cap Distribution Stats",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/symbols/stats/cap-distribution",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "symbols",
+                "stats",
+                "cap-distribution"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Index Coverage Stats",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/symbols/stats/index-coverage",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "symbols",
+                "stats",
+                "index-coverage"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Compare Symbols",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/symbols/compare?symbols=RELIANCE,TCS,INFY",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "symbols",
+                "compare"
+              ],
+              "query": [
+                {
+                  "key": "symbols",
+                  "value": "RELIANCE,TCS,INFY"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "\ud83d\udd04 Data Sync",
+      "item": [
+        {
+          "name": "Update Fundamentals Only",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"symbols\": [\n    \"TATAMOTORS\"\n  ],\n  \"exchange\": \"NSE\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/data-sync/fundamentals",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "data-sync",
+                "fundamentals"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Update Fundamentals (with year filter)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"symbols\": [\n    \"ITC\",\n    \"HINDUNILVR\"\n  ],\n  \"exchange\": \"NSE\",\n  \"single_year\": 2023\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/data-sync/fundamentals",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "data-sync",
+                "fundamentals"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Update NSE Symbols Only",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"symbols\": [\n    \"BRITANNIA\",\n    \"NESTLEIND\"\n  ],\n  \"exchange\": \"NSE\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/data-sync/symbols",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "data-sync",
+                "symbols"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Full Update (Both)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"symbols\": [\n    \"ASIANPAINT\"\n  ],\n  \"exchange\": \"NSE\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/data-sync/full",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "data-sync",
+                "full"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Fundamentals Status",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/data-sync/status/fundamentals",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "data-sync",
+                "status",
+                "fundamentals"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Symbols Status",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/data-sync/status/symbols",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "data-sync",
+                "status",
+                "symbols"
+              ]
+            }
           }
         }
       ]

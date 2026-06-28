@@ -17,7 +17,7 @@ big picture.
 │   ├── types/                Shared domain types (TS)
 │   ├── utils/                Validation + plain-English + templates (TS)
 │   └── ui/                   Tiny shared UI primitives
-├── supabase/schema.sql       Postgres schema + RLS
+├── supabase/stocks_ddl.sql       Postgres schema + RLS
 ├── package.json              npm workspaces (apps/* + packages/*)
 └── tsconfig.base.json        Shared TS config (apps extend this)
 ```
@@ -234,7 +234,7 @@ gives full forensic visibility.
 
 ## 5. Database
 
-`supabase/schema.sql` creates 5 tables (strategies, trades, orders, logs,
+`supabase/stocks_ddl.sql` creates 5 tables (strategies, trades, orders, logs,
 broker_accounts) with `uuid` PKs and `auth.users(id)` foreign keys.
 **Row Level Security** is enabled on all tables with one shared policy:
 
@@ -324,7 +324,7 @@ echo 'NEXT_PUBLIC_USE_MOCK=false' >> apps/web/.env.local
 echo 'NEXT_PUBLIC_API_URL=http://localhost:8000' >> apps/web/.env.local
 
 # 5. (Optional) Apply DB schema
-#   In Supabase SQL editor, paste supabase/schema.sql.
+#   In Supabase SQL editor, paste supabase/stocks_ddl.sql.
 ```
 
 ---

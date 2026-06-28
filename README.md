@@ -7,7 +7,7 @@
 >
 > **For education only. Trading involves risk.**
 
-📚 **Docs:** [architecture](./docs/architecture.md) · [implementation](./docs/implementation.md) · [requirements](./docs/requirements.md)
+📚 **Docs:** [architecture](./docs/architecture.md) · [implementation](./docs/implementation.md) · [requirements](./docs/requirements.md) · [database schema](docs/DATABASE_SCHEMA.md)
 
 ---
 
@@ -60,7 +60,7 @@ packages/
 | **Backend** | FastAPI 0.131+, Python 3.14t (free-threaded / No-GIL), Pydantic v2 |
 | **Data** | pandas 2.3+, numpy 2.2+ (No-GIL builds), websockets 14+ |
 | **Auth** | JWT (PyJWT), single-user Basic Auth |
-| **Database** | MySQL (PyMySQL), MongoDB, QuestDB, Redis |
+| **Database** | MySQL (PyMySQL) · 34 tables · 61M+ OHLCV rows · [schema docs](docs/DATABASE_SCHEMA.md) |
 | **Broker** | Upstox v2 REST + OAuth (optional; falls back to simulator) |
 | **Runtime** | Node ≥ 22.17.1 |
 
@@ -195,23 +195,45 @@ top-level `version` field so the schema can evolve safely.
 ```
 GET    /                         # info + live-trading flag
 GET    /health
+
+# Strategies
 GET    /strategies
 POST   /strategies
 GET    /strategies/{id}
 PATCH  /strategies/{id}
 POST   /strategies/{id}/duplicate
 DELETE /strategies/{id}
+
+# Backtesting
 POST   /backtest                 # synthetic candles or supplied OHLCV
+
+# Trading
 GET    /trades
 GET    /orders
-GET    /logs
+POST   /orders/place             # paper by default; live needs confirm_live
+
+# Market Data
 GET    /instruments
 GET    /prices/ltp/{symbol}
-POST   /orders/place             # paper by default; live needs confirm_live
+GET    /charts/symbols           # NSE EQ symbols
+GET    /charts/candles           # OHLCV data (5min-yearly)
+GET    /charts/summary           # latest price + 52w range
+POST   /charts/indicator-backtest # technical indicator backtesting
+
+# Fundamentals (Yahoo Finance)
+GET    /fundamentals/            # list all symbols
+GET    /fundamentals/{symbol}    # company details (dual currency: INR Cr + USD M)
+POST   /fundamentals/fetch       # fetch from Yahoo Finance
+DELETE /fundamentals/{symbol}    # delete fundamentals data
+
+# Broker
 GET    /broker/upstox/login-url
 POST   /broker/upstox/connect
 GET    /broker/accounts
 POST   /broker/disconnect
+
+# System
+GET    /logs
 WS     /ws                       # live ticks (simulated by default)
 ```
 

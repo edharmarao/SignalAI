@@ -43,7 +43,7 @@ Two apps + three shared packages, glued by **npm workspaces**:
 | `packages/types`      | Shared TypeScript domain types (`StrategyJSON`, etc.)  |
 | `packages/utils`      | Validation, plain-English description, templates       |
 | `packages/ui`         | Tiny shared UI primitives (`Card`, `Button`, `Badge`)  |
-| `supabase/schema.sql` | Postgres tables + RLS for the 5 entities               |
+| `supabase/stocks_ddl.sql` | Postgres tables + RLS for the 5 entities               |
 
 ### UI-first / mock mode
 
@@ -97,7 +97,7 @@ type ConditionGroup<T> = {
 
 ### Database
 
-`supabase/schema.sql` declares 5 tables — all with **Row Level Security**
+`supabase/stocks_ddl.sql` declares 5 tables — all with **Row Level Security**
 gating rows by `auth.uid() = user_id`:
 
 | Table             | Purpose                                                    |
@@ -254,5 +254,5 @@ API as in the browser:
 | Add an indicator                       | `apps/api/app/services/indicators.py`             |
 | Change backtest / paper logic          | `apps/api/app/services/engine.py`                 |
 | Add a REST endpoint                    | `apps/api/app/routers/`                           |
-| Update DB schema                       | `supabase/schema.sql`                             |
+| Update DB schema                       | `supabase/stocks_ddl.sql`                             |
 | Switch to real backend                 | `.env.local → NEXT_PUBLIC_USE_MOCK=false`         |
