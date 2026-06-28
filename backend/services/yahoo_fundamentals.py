@@ -61,6 +61,74 @@ def _to_crores(val: Any) -> float | None:
         return None
 
 
+def _to_millions_usd(val: Any) -> float | None:
+    """Convert large numbers to USD Millions with single decimal precision.
+
+    1 Million USD = 1,000,000
+    Example: 20,157,999,104 -> 20158.0 M USD
+    """
+    if val is None or val == "":
+        return None
+    try:
+        num = float(val)
+        millions = num / 1000000  # 1 Million = 10^6
+        return round(millions, 1)
+    except (ValueError, TypeError):
+        return None
+
+
+def _convert_usd_to_inr_crores(usd_val: Any, exchange_rate: float = 83.0) -> float | None:
+    """Convert USD value to INR Crores.
+
+    Args:
+        usd_val: Value in USD
+        exchange_rate: USD to INR rate (default 83)
+
+    Example:
+        $20.158 Billion * 83 = ₹1,673.1 Billion = 167,310 Cr
+    """
+    if usd_val is None or usd_val == "":
+        return None
+    try:
+        num = float(usd_val)
+        inr = num * exchange_rate
+        crores = inr / 10000000
+        return round(crores, 1)
+    except (ValueError, TypeError):
+        return None
+
+
+def _process_financial_value(val: Any, is_usd: bool, exchange_rate: float = 83.0) -> tuple[float | None, float | None]:
+    """Process financial value and return (INR_crores, USD_millions).
+
+    Args:
+        val: Raw value from Yahoo Finance
+        is_usd: True if company reports in USD
+        exchange_rate: USD to INR rate
+
+    Returns:
+        Tuple of (INR value in Crores, USD value in Millions)
+    """
+    if val is None or val == "":
+        return (None, None)
+
+    try:
+        num = float(val)
+
+        if is_usd:
+            # Value is in USD - convert to INR Crores and also store as USD Millions
+            inr_crores = round((num * exchange_rate) / 10000000, 1)
+            usd_millions = round(num / 1000000, 1)
+        else:
+            # Value is in INR - convert to Crores and also calculate USD Millions
+            inr_crores = round(num / 10000000, 1)
+            usd_millions = round((num / exchange_rate) / 1000000, 1)
+
+        return (inr_crores, usd_millions)
+    except (ValueError, TypeError):
+        return (None, None)
+
+
 async def fetch_and_store_fundamentals(
     symbols: list[str],
     exchange: str = "NSE"
@@ -131,17 +199,38 @@ async def fetch_and_store_fundamentals(
 async def _store_company_info(symbol: str, exchange: str, info: dict) -> bool:
     """Store company info in fundamentals_info table."""
     try:
+        # Detect currency - some companies (like INFY) report in USD
+        financial_currency = _safe_get(info, "financialCurrency", "INR")
+        is_usd = (financial_currency == "USD")
+
+        # Exchange rate for USD to INR conversion
+        USD_TO_INR = 83.0
+
         # Extract fields with safe defaults
-        # Note: Large financial values are converted to Crores before storing
+        # Note: Store both INR (Crores) and USD (Millions) values
         data = {
             "symbol": symbol,
             "exchange": exchange,
+            "currency": financial_currency,
             "company_name": _safe_get(info, "longName") or _safe_get(info, "shortName"),
             "sector": _safe_get(info, "sector"),
             "industry": _safe_get(info, "industry"),
-            # Convert to Crores (÷ 10M)
-            "market_cap": _to_crores(_safe_get(info, "marketCap")),
-            "enterprise_value": _to_crores(_safe_get(info, "enterpriseValue")),
+        }
+
+        # Market cap and enterprise value (handle both USD and INR reporting)
+        market_cap_raw = _safe_get(info, "marketCap")
+        enterprise_value_raw = _safe_get(info, "enterpriseValue")
+
+        market_cap_inr, market_cap_usd = _process_financial_value(market_cap_raw, is_usd, USD_TO_INR)
+        enterprise_value_inr, enterprise_value_usd = _process_financial_value(enterprise_value_raw, is_usd, USD_TO_INR)
+
+        data["market_cap"] = market_cap_inr
+        data["market_cap_usd"] = market_cap_usd
+        data["enterprise_value"] = enterprise_value_inr
+        data["enterprise_value_usd"] = enterprise_value_usd
+
+        # Continue with ratios (currency-independent)
+        data.update({
             # Ratios remain as-is
             "trailing_pe": _safe_float(_safe_get(info, "trailingPE")),
             "forward_pe": _safe_float(_safe_get(info, "forwardPE")),
@@ -174,17 +263,35 @@ async def _store_company_info(symbol: str, exchange: str, info: dict) -> bool:
             "current_ratio": _safe_float(_safe_get(info, "currentRatio")),
             "debt_to_equity": _safe_float(_safe_get(info, "debtToEquity")),
             "quick_ratio": _safe_float(_safe_get(info, "quickRatio")),
-            # Convert to Crores
-            "total_cash": _to_crores(_safe_get(info, "totalCash")),
-            "total_debt": _to_crores(_safe_get(info, "totalDebt")),
-            "total_revenue": _to_crores(_safe_get(info, "totalRevenue")),
-            "gross_profits": _to_crores(_safe_get(info, "grossProfits")),
-            "free_cashflow": _to_crores(_safe_get(info, "freeCashflow")),
-            "operating_cashflow": _to_crores(_safe_get(info, "operatingCashflow")),
-            "ebitda": _to_crores(_safe_get(info, "ebitda")),
+        })
+
+        # Process financial values with USD/INR conversion
+        total_cash_inr, total_cash_usd = _process_financial_value(_safe_get(info, "totalCash"), is_usd, USD_TO_INR)
+        total_debt_inr, total_debt_usd = _process_financial_value(_safe_get(info, "totalDebt"), is_usd, USD_TO_INR)
+        total_revenue_inr, total_revenue_usd = _process_financial_value(_safe_get(info, "totalRevenue"), is_usd, USD_TO_INR)
+        gross_profits_inr, gross_profits_usd = _process_financial_value(_safe_get(info, "grossProfits"), is_usd, USD_TO_INR)
+        free_cashflow_inr, free_cashflow_usd = _process_financial_value(_safe_get(info, "freeCashflow"), is_usd, USD_TO_INR)
+        operating_cashflow_inr, operating_cashflow_usd = _process_financial_value(_safe_get(info, "operatingCashflow"), is_usd, USD_TO_INR)
+        ebitda_inr, ebitda_usd = _process_financial_value(_safe_get(info, "ebitda"), is_usd, USD_TO_INR)
+
+        data.update({
+            "total_cash": total_cash_inr,
+            "total_cash_usd": total_cash_usd,
+            "total_debt": total_debt_inr,
+            "total_debt_usd": total_debt_usd,
+            "total_revenue": total_revenue_inr,
+            "total_revenue_usd": total_revenue_usd,
+            "gross_profits": gross_profits_inr,
+            "gross_profits_usd": gross_profits_usd,
+            "free_cashflow": free_cashflow_inr,
+            "free_cashflow_usd": free_cashflow_usd,
+            "operating_cashflow": operating_cashflow_inr,
+            "operating_cashflow_usd": operating_cashflow_usd,
+            "ebitda": ebitda_inr,
+            "ebitda_usd": ebitda_usd,
             "website": _safe_get(info, "website"),
             "last_updated": datetime.now()
-        }
+        })
 
         # UPSERT: update if exists, insert if not
         cols = ", ".join(f"`{k}`" for k in data.keys())
@@ -209,6 +316,12 @@ async def _store_company_info(symbol: str, exchange: str, info: dict) -> bool:
 async def _store_quarterly_financials(symbol: str, ticker: yf.Ticker) -> int:
     """Store quarterly financials. Returns number of periods stored."""
     try:
+        # Detect currency for this symbol
+        info = await asyncio.to_thread(lambda: ticker.info)
+        financial_currency = _safe_get(info, "financialCurrency", "INR")
+        is_usd = (financial_currency == "USD")
+        USD_TO_INR = 83.0
+
         # Fetch quarterly financials
         quarterly_income = await asyncio.to_thread(lambda: ticker.quarterly_income_stmt)
         quarterly_balance = await asyncio.to_thread(lambda: ticker.quarterly_balance_sheet)
@@ -223,39 +336,95 @@ async def _store_quarterly_financials(symbol: str, ticker: yf.Ticker) -> int:
         for col in quarterly_income.columns:
             quarter_date = col.date() if hasattr(col, 'date') else col
 
-            # Extract financial metrics (convert to Crores before storing)
+            # Process financial values with currency conversion
+            total_revenue_inr, total_revenue_usd = _process_financial_value(
+                quarterly_income.loc["Total Revenue", col] if "Total Revenue" in quarterly_income.index else None, is_usd, USD_TO_INR)
+            gross_profit_inr, gross_profit_usd = _process_financial_value(
+                quarterly_income.loc["Gross Profit", col] if "Gross Profit" in quarterly_income.index else None, is_usd, USD_TO_INR)
+            operating_income_inr, operating_income_usd = _process_financial_value(
+                quarterly_income.loc["Operating Income", col] if "Operating Income" in quarterly_income.index else None, is_usd, USD_TO_INR)
+            net_income_inr, net_income_usd = _process_financial_value(
+                quarterly_income.loc["Net Income", col] if "Net Income" in quarterly_income.index else None, is_usd, USD_TO_INR)
+            ebitda_inr, ebitda_usd = _process_financial_value(
+                quarterly_income.loc["EBITDA", col] if "EBITDA" in quarterly_income.index else None, is_usd, USD_TO_INR)
+
+            # Extract financial metrics
             data = {
                 "symbol": symbol,
                 "quarter_end_date": quarter_date,
-                "total_revenue": _to_crores(quarterly_income.loc["Total Revenue", col] if "Total Revenue" in quarterly_income.index else None),
-                "gross_profit": _to_crores(quarterly_income.loc["Gross Profit", col] if "Gross Profit" in quarterly_income.index else None),
-                "operating_income": _to_crores(quarterly_income.loc["Operating Income", col] if "Operating Income" in quarterly_income.index else None),
-                "net_income": _to_crores(quarterly_income.loc["Net Income", col] if "Net Income" in quarterly_income.index else None),
-                "ebitda": _to_crores(quarterly_income.loc["EBITDA", col] if "EBITDA" in quarterly_income.index else None),
+                "currency": financial_currency,
+                "total_revenue": total_revenue_inr,
+                "total_revenue_usd": total_revenue_usd,
+                "gross_profit": gross_profit_inr,
+                "gross_profit_usd": gross_profit_usd,
+                "operating_income": operating_income_inr,
+                "operating_income_usd": operating_income_usd,
+                "net_income": net_income_inr,
+                "net_income_usd": net_income_usd,
+                "ebitda": ebitda_inr,
+                "ebitda_usd": ebitda_usd,
                 "eps_basic": _safe_float(quarterly_income.loc["Basic EPS", col] if "Basic EPS" in quarterly_income.index else None),
                 "eps_diluted": _safe_float(quarterly_income.loc["Diluted EPS", col] if "Diluted EPS" in quarterly_income.index else None),
             }
 
-            # Add balance sheet data if available (convert to Crores)
+            # Add balance sheet data if available
             if quarterly_balance is not None and not quarterly_balance.empty and col in quarterly_balance.columns:
+                total_assets_inr, total_assets_usd = _process_financial_value(
+                    quarterly_balance.loc["Total Assets", col] if "Total Assets" in quarterly_balance.index else None, is_usd, USD_TO_INR)
+                total_liabilities_inr, total_liabilities_usd = _process_financial_value(
+                    quarterly_balance.loc["Total Liabilities Net Minority Interest", col] if "Total Liabilities Net Minority Interest" in quarterly_balance.index else None, is_usd, USD_TO_INR)
+                stockholders_equity_inr, stockholders_equity_usd = _process_financial_value(
+                    quarterly_balance.loc["Stockholders Equity", col] if "Stockholders Equity" in quarterly_balance.index else None, is_usd, USD_TO_INR)
+                total_debt_inr, total_debt_usd = _process_financial_value(
+                    quarterly_balance.loc["Total Debt", col] if "Total Debt" in quarterly_balance.index else None, is_usd, USD_TO_INR)
+                current_assets_inr, current_assets_usd = _process_financial_value(
+                    quarterly_balance.loc["Current Assets", col] if "Current Assets" in quarterly_balance.index else None, is_usd, USD_TO_INR)
+                current_liabilities_inr, current_liabilities_usd = _process_financial_value(
+                    quarterly_balance.loc["Current Liabilities", col] if "Current Liabilities" in quarterly_balance.index else None, is_usd, USD_TO_INR)
+                cash_and_equivalents_inr, cash_and_equivalents_usd = _process_financial_value(
+                    quarterly_balance.loc["Cash And Cash Equivalents", col] if "Cash And Cash Equivalents" in quarterly_balance.index else None, is_usd, USD_TO_INR)
+
                 data.update({
-                    "total_assets": _to_crores(quarterly_balance.loc["Total Assets", col] if "Total Assets" in quarterly_balance.index else None),
-                    "total_liabilities": _to_crores(quarterly_balance.loc["Total Liabilities Net Minority Interest", col] if "Total Liabilities Net Minority Interest" in quarterly_balance.index else None),
-                    "stockholders_equity": _to_crores(quarterly_balance.loc["Stockholders Equity", col] if "Stockholders Equity" in quarterly_balance.index else None),
-                    "total_debt": _to_crores(quarterly_balance.loc["Total Debt", col] if "Total Debt" in quarterly_balance.index else None),
-                    "current_assets": _to_crores(quarterly_balance.loc["Current Assets", col] if "Current Assets" in quarterly_balance.index else None),
-                    "current_liabilities": _to_crores(quarterly_balance.loc["Current Liabilities", col] if "Current Liabilities" in quarterly_balance.index else None),
-                    "cash_and_equivalents": _to_crores(quarterly_balance.loc["Cash And Cash Equivalents", col] if "Cash And Cash Equivalents" in quarterly_balance.index else None),
+                    "total_assets": total_assets_inr,
+                    "total_assets_usd": total_assets_usd,
+                    "total_liabilities": total_liabilities_inr,
+                    "total_liabilities_usd": total_liabilities_usd,
+                    "stockholders_equity": stockholders_equity_inr,
+                    "stockholders_equity_usd": stockholders_equity_usd,
+                    "total_debt": total_debt_inr,
+                    "total_debt_usd": total_debt_usd,
+                    "current_assets": current_assets_inr,
+                    "current_assets_usd": current_assets_usd,
+                    "current_liabilities": current_liabilities_inr,
+                    "current_liabilities_usd": current_liabilities_usd,
+                    "cash_and_equivalents": cash_and_equivalents_inr,
+                    "cash_and_equivalents_usd": cash_and_equivalents_usd,
                 })
 
-            # Add cashflow data if available (convert to Crores)
+            # Add cashflow data if available
             if quarterly_cashflow is not None and not quarterly_cashflow.empty and col in quarterly_cashflow.columns:
+                operating_cashflow_inr, operating_cashflow_usd = _process_financial_value(
+                    quarterly_cashflow.loc["Operating Cash Flow", col] if "Operating Cash Flow" in quarterly_cashflow.index else None, is_usd, USD_TO_INR)
+                investing_cashflow_inr, investing_cashflow_usd = _process_financial_value(
+                    quarterly_cashflow.loc["Investing Cash Flow", col] if "Investing Cash Flow" in quarterly_cashflow.index else None, is_usd, USD_TO_INR)
+                financing_cashflow_inr, financing_cashflow_usd = _process_financial_value(
+                    quarterly_cashflow.loc["Financing Cash Flow", col] if "Financing Cash Flow" in quarterly_cashflow.index else None, is_usd, USD_TO_INR)
+                free_cashflow_inr, free_cashflow_usd = _process_financial_value(
+                    quarterly_cashflow.loc["Free Cash Flow", col] if "Free Cash Flow" in quarterly_cashflow.index else None, is_usd, USD_TO_INR)
+                capital_expenditure_inr, capital_expenditure_usd = _process_financial_value(
+                    quarterly_cashflow.loc["Capital Expenditure", col] if "Capital Expenditure" in quarterly_cashflow.index else None, is_usd, USD_TO_INR)
+
                 data.update({
-                    "operating_cashflow": _to_crores(quarterly_cashflow.loc["Operating Cash Flow", col] if "Operating Cash Flow" in quarterly_cashflow.index else None),
-                    "investing_cashflow": _to_crores(quarterly_cashflow.loc["Investing Cash Flow", col] if "Investing Cash Flow" in quarterly_cashflow.index else None),
-                    "financing_cashflow": _to_crores(quarterly_cashflow.loc["Financing Cash Flow", col] if "Financing Cash Flow" in quarterly_cashflow.index else None),
-                    "free_cashflow": _to_crores(quarterly_cashflow.loc["Free Cash Flow", col] if "Free Cash Flow" in quarterly_cashflow.index else None),
-                    "capital_expenditure": _to_crores(quarterly_cashflow.loc["Capital Expenditure", col] if "Capital Expenditure" in quarterly_cashflow.index else None),
+                    "operating_cashflow": operating_cashflow_inr,
+                    "operating_cashflow_usd": operating_cashflow_usd,
+                    "investing_cashflow": investing_cashflow_inr,
+                    "investing_cashflow_usd": investing_cashflow_usd,
+                    "financing_cashflow": financing_cashflow_inr,
+                    "financing_cashflow_usd": financing_cashflow_usd,
+                    "free_cashflow": free_cashflow_inr,
+                    "free_cashflow_usd": free_cashflow_usd,
+                    "capital_expenditure": capital_expenditure_inr,
+                    "capital_expenditure_usd": capital_expenditure_usd,
                 })
 
             # UPSERT
@@ -283,6 +452,12 @@ async def _store_quarterly_financials(symbol: str, ticker: yf.Ticker) -> int:
 async def _store_yearly_financials(symbol: str, ticker: yf.Ticker) -> int:
     """Store yearly financials. Returns number of periods stored."""
     try:
+        # Detect currency for this symbol
+        info = await asyncio.to_thread(lambda: ticker.info)
+        financial_currency = _safe_get(info, "financialCurrency", "INR")
+        is_usd = (financial_currency == "USD")
+        USD_TO_INR = 83.0
+
         # Fetch annual financials
         yearly_income = await asyncio.to_thread(lambda: ticker.income_stmt)
         yearly_balance = await asyncio.to_thread(lambda: ticker.balance_sheet)
@@ -297,39 +472,95 @@ async def _store_yearly_financials(symbol: str, ticker: yf.Ticker) -> int:
         for col in yearly_income.columns:
             year_date = col.date() if hasattr(col, 'date') else col
 
-            # Extract financial metrics (convert to Crores before storing)
+            # Process financial values with currency conversion
+            total_revenue_inr, total_revenue_usd = _process_financial_value(
+                yearly_income.loc["Total Revenue", col] if "Total Revenue" in yearly_income.index else None, is_usd, USD_TO_INR)
+            gross_profit_inr, gross_profit_usd = _process_financial_value(
+                yearly_income.loc["Gross Profit", col] if "Gross Profit" in yearly_income.index else None, is_usd, USD_TO_INR)
+            operating_income_inr, operating_income_usd = _process_financial_value(
+                yearly_income.loc["Operating Income", col] if "Operating Income" in yearly_income.index else None, is_usd, USD_TO_INR)
+            net_income_inr, net_income_usd = _process_financial_value(
+                yearly_income.loc["Net Income", col] if "Net Income" in yearly_income.index else None, is_usd, USD_TO_INR)
+            ebitda_inr, ebitda_usd = _process_financial_value(
+                yearly_income.loc["EBITDA", col] if "EBITDA" in yearly_income.index else None, is_usd, USD_TO_INR)
+
+            # Extract financial metrics
             data = {
                 "symbol": symbol,
                 "fiscal_year_end": year_date,
-                "total_revenue": _to_crores(yearly_income.loc["Total Revenue", col] if "Total Revenue" in yearly_income.index else None),
-                "gross_profit": _to_crores(yearly_income.loc["Gross Profit", col] if "Gross Profit" in yearly_income.index else None),
-                "operating_income": _to_crores(yearly_income.loc["Operating Income", col] if "Operating Income" in yearly_income.index else None),
-                "net_income": _to_crores(yearly_income.loc["Net Income", col] if "Net Income" in yearly_income.index else None),
-                "ebitda": _to_crores(yearly_income.loc["EBITDA", col] if "EBITDA" in yearly_income.index else None),
+                "currency": financial_currency,
+                "total_revenue": total_revenue_inr,
+                "total_revenue_usd": total_revenue_usd,
+                "gross_profit": gross_profit_inr,
+                "gross_profit_usd": gross_profit_usd,
+                "operating_income": operating_income_inr,
+                "operating_income_usd": operating_income_usd,
+                "net_income": net_income_inr,
+                "net_income_usd": net_income_usd,
+                "ebitda": ebitda_inr,
+                "ebitda_usd": ebitda_usd,
                 "eps_basic": _safe_float(yearly_income.loc["Basic EPS", col] if "Basic EPS" in yearly_income.index else None),
                 "eps_diluted": _safe_float(yearly_income.loc["Diluted EPS", col] if "Diluted EPS" in yearly_income.index else None),
             }
 
-            # Add balance sheet data if available (convert to Crores)
+            # Add balance sheet data if available
             if yearly_balance is not None and not yearly_balance.empty and col in yearly_balance.columns:
+                total_assets_inr, total_assets_usd = _process_financial_value(
+                    yearly_balance.loc["Total Assets", col] if "Total Assets" in yearly_balance.index else None, is_usd, USD_TO_INR)
+                total_liabilities_inr, total_liabilities_usd = _process_financial_value(
+                    yearly_balance.loc["Total Liabilities Net Minority Interest", col] if "Total Liabilities Net Minority Interest" in yearly_balance.index else None, is_usd, USD_TO_INR)
+                stockholders_equity_inr, stockholders_equity_usd = _process_financial_value(
+                    yearly_balance.loc["Stockholders Equity", col] if "Stockholders Equity" in yearly_balance.index else None, is_usd, USD_TO_INR)
+                total_debt_inr, total_debt_usd = _process_financial_value(
+                    yearly_balance.loc["Total Debt", col] if "Total Debt" in yearly_balance.index else None, is_usd, USD_TO_INR)
+                current_assets_inr, current_assets_usd = _process_financial_value(
+                    yearly_balance.loc["Current Assets", col] if "Current Assets" in yearly_balance.index else None, is_usd, USD_TO_INR)
+                current_liabilities_inr, current_liabilities_usd = _process_financial_value(
+                    yearly_balance.loc["Current Liabilities", col] if "Current Liabilities" in yearly_balance.index else None, is_usd, USD_TO_INR)
+                cash_and_equivalents_inr, cash_and_equivalents_usd = _process_financial_value(
+                    yearly_balance.loc["Cash And Cash Equivalents", col] if "Cash And Cash Equivalents" in yearly_balance.index else None, is_usd, USD_TO_INR)
+
                 data.update({
-                    "total_assets": _to_crores(yearly_balance.loc["Total Assets", col] if "Total Assets" in yearly_balance.index else None),
-                    "total_liabilities": _to_crores(yearly_balance.loc["Total Liabilities Net Minority Interest", col] if "Total Liabilities Net Minority Interest" in yearly_balance.index else None),
-                    "stockholders_equity": _to_crores(yearly_balance.loc["Stockholders Equity", col] if "Stockholders Equity" in yearly_balance.index else None),
-                    "total_debt": _to_crores(yearly_balance.loc["Total Debt", col] if "Total Debt" in yearly_balance.index else None),
-                    "current_assets": _to_crores(yearly_balance.loc["Current Assets", col] if "Current Assets" in yearly_balance.index else None),
-                    "current_liabilities": _to_crores(yearly_balance.loc["Current Liabilities", col] if "Current Liabilities" in yearly_balance.index else None),
-                    "cash_and_equivalents": _to_crores(yearly_balance.loc["Cash And Cash Equivalents", col] if "Cash And Cash Equivalents" in yearly_balance.index else None),
+                    "total_assets": total_assets_inr,
+                    "total_assets_usd": total_assets_usd,
+                    "total_liabilities": total_liabilities_inr,
+                    "total_liabilities_usd": total_liabilities_usd,
+                    "stockholders_equity": stockholders_equity_inr,
+                    "stockholders_equity_usd": stockholders_equity_usd,
+                    "total_debt": total_debt_inr,
+                    "total_debt_usd": total_debt_usd,
+                    "current_assets": current_assets_inr,
+                    "current_assets_usd": current_assets_usd,
+                    "current_liabilities": current_liabilities_inr,
+                    "current_liabilities_usd": current_liabilities_usd,
+                    "cash_and_equivalents": cash_and_equivalents_inr,
+                    "cash_and_equivalents_usd": cash_and_equivalents_usd,
                 })
 
-            # Add cashflow data if available (convert to Crores)
+            # Add cashflow data if available
             if yearly_cashflow is not None and not yearly_cashflow.empty and col in yearly_cashflow.columns:
+                operating_cashflow_inr, operating_cashflow_usd = _process_financial_value(
+                    yearly_cashflow.loc["Operating Cash Flow", col] if "Operating Cash Flow" in yearly_cashflow.index else None, is_usd, USD_TO_INR)
+                investing_cashflow_inr, investing_cashflow_usd = _process_financial_value(
+                    yearly_cashflow.loc["Investing Cash Flow", col] if "Investing Cash Flow" in yearly_cashflow.index else None, is_usd, USD_TO_INR)
+                financing_cashflow_inr, financing_cashflow_usd = _process_financial_value(
+                    yearly_cashflow.loc["Financing Cash Flow", col] if "Financing Cash Flow" in yearly_cashflow.index else None, is_usd, USD_TO_INR)
+                free_cashflow_inr, free_cashflow_usd = _process_financial_value(
+                    yearly_cashflow.loc["Free Cash Flow", col] if "Free Cash Flow" in yearly_cashflow.index else None, is_usd, USD_TO_INR)
+                capital_expenditure_inr, capital_expenditure_usd = _process_financial_value(
+                    yearly_cashflow.loc["Capital Expenditure", col] if "Capital Expenditure" in yearly_cashflow.index else None, is_usd, USD_TO_INR)
+
                 data.update({
-                    "operating_cashflow": _to_crores(yearly_cashflow.loc["Operating Cash Flow", col] if "Operating Cash Flow" in yearly_cashflow.index else None),
-                    "investing_cashflow": _to_crores(yearly_cashflow.loc["Investing Cash Flow", col] if "Investing Cash Flow" in yearly_cashflow.index else None),
-                    "financing_cashflow": _to_crores(yearly_cashflow.loc["Financing Cash Flow", col] if "Financing Cash Flow" in yearly_cashflow.index else None),
-                    "free_cashflow": _to_crores(yearly_cashflow.loc["Free Cash Flow", col] if "Free Cash Flow" in yearly_cashflow.index else None),
-                    "capital_expenditure": _to_crores(yearly_cashflow.loc["Capital Expenditure", col] if "Capital Expenditure" in yearly_cashflow.index else None),
+                    "operating_cashflow": operating_cashflow_inr,
+                    "operating_cashflow_usd": operating_cashflow_usd,
+                    "investing_cashflow": investing_cashflow_inr,
+                    "investing_cashflow_usd": investing_cashflow_usd,
+                    "financing_cashflow": financing_cashflow_inr,
+                    "financing_cashflow_usd": financing_cashflow_usd,
+                    "free_cashflow": free_cashflow_inr,
+                    "free_cashflow_usd": free_cashflow_usd,
+                    "capital_expenditure": capital_expenditure_inr,
+                    "capital_expenditure_usd": capital_expenditure_usd,
                 })
 
             # UPSERT
