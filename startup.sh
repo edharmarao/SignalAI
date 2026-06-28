@@ -1,10 +1,22 @@
 #!/usr/bin/env bash
 # =============================================================================
 # startup.sh — SignalAI startup script (works locally and on remote host)
+# Usage: ./startup.sh [--force-rebuild]
 # =============================================================================
 set -euo pipefail
 
 REMOTE_IP="209.182.232.165"
+FORCE_REBUILD=false
+
+# Parse arguments
+for arg in "$@"; do
+  case $arg in
+    --force-rebuild|-f)
+      FORCE_REBUILD=true
+      shift
+      ;;
+  esac
+done
 
 REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
 
@@ -265,10 +277,27 @@ ENV_FILE_CHANGED=false
 [ "$CURRENT_ENV_HASH" != "$STORED_ENV_HASH" ] && ENV_FILE_CHANGED=true
 
 if $IS_REMOTE; then
-  WEB_CODE_CHANGED=$(git diff HEAD@{1} HEAD --name-only 2>/dev/null | grep -c "^front-end/" || true)
-  if [ "$WEB_CODE_CHANGED" -gt 0 ] || $ENV_FILE_CHANGED || $NEED_BOOTSTRAP; then
-    log "Rebuilding Next.js app (web changes: $WEB_CODE_CHANGED, env changed: $ENV_FILE_CHANGED) …"
+  # Compare current commit with last build marker
+  LAST_BUILD_SHA=$(cat "$BUILD_MARKER" 2>/dev/null || echo "")
+  CURRENT_SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
+  WEB_CODE_CHANGED=0
+
+  if [ -n "$LAST_BUILD_SHA" ] && [ "$LAST_BUILD_SHA" != "$CURRENT_SHA" ]; then
+    # Check if front-end files changed between last build and current commit
+    WEB_CODE_CHANGED=$(git diff --name-only "$LAST_BUILD_SHA" "$CURRENT_SHA" 2>/dev/null | grep -c "^front-end/" || true)
+  elif [ -z "$LAST_BUILD_SHA" ]; then
+    # No previous build marker, force rebuild
+    WEB_CODE_CHANGED=1
+  fi
+
+  if [ "$WEB_CODE_CHANGED" -gt 0 ] || $ENV_FILE_CHANGED || $NEED_BOOTSTRAP || $FORCE_REBUILD; then
+    if $FORCE_REBUILD; then
+      log "Force rebuild requested — clearing Next.js cache …"
+      rm -rf "$WEB_DIR/.next" "$WEB_DIR/out"
+    fi
+    log "Rebuilding Next.js app (web changes: $WEB_CODE_CHANGED, env changed: $ENV_FILE_CHANGED, force: $FORCE_REBUILD) …"
     cd "$WEB_DIR" && "$NPM_CMD" run build 2>&1 | tail -5 && cd "$REPO_DIR"
+    echo "$CURRENT_SHA" > "$BUILD_MARKER"
     echo "$CURRENT_ENV_HASH" > "$ENV_HASH_MARKER"
     log "Web build complete."
   else
@@ -279,7 +308,11 @@ else
   CURRENT_SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
   WEB_DIRTY=$(git status --porcelain front-end/ 2>/dev/null | wc -l | tr -d ' ')
 
-  if [ "$CURRENT_SHA" != "$LAST_BUILD_SHA" ] || [ "$WEB_DIRTY" -gt 0 ] || $ENV_FILE_CHANGED || $NEED_BOOTSTRAP; then
+  if [ "$CURRENT_SHA" != "$LAST_BUILD_SHA" ] || [ "$WEB_DIRTY" -gt 0 ] || $ENV_FILE_CHANGED || $NEED_BOOTSTRAP || $FORCE_REBUILD; then
+    if $FORCE_REBUILD; then
+      log "Force rebuild requested — clearing Next.js cache …"
+      rm -rf "$WEB_DIR/.next" "$WEB_DIR/out"
+    fi
     log "Web source changes detected — rebuilding Next.js app …"
     cd "$WEB_DIR" && "$NPM_CMD" run build 2>&1 | tail -5 && cd "$REPO_DIR"
     echo "$CURRENT_SHA" > "$BUILD_MARKER"
@@ -353,7 +386,8 @@ echo "║  Logs:                                                   ║"
 printf "║    API → %-48s║\n" "$API_LOG"
 printf "║    Web → %-48s║\n" "$WEB_LOG"
 echo "╠══════════════════════════════════════════════════════════╣"
-echo "║  To stop:  ./stop.sh                                     ║"
+echo "║  To stop:         ./stop.sh                              ║"
+echo "║  Force rebuild:   ./startup.sh --force-rebuild           ║"
 echo "║  Tail API: tail -f $API_LOG"
 echo "║  Tail Web: tail -f $WEB_LOG"
 echo "╚══════════════════════════════════════════════════════════╝"
