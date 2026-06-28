@@ -1,19 +1,55 @@
 #!/usr/bin/env bash
 # =============================================================================
 # startup.sh — SignalAI startup script (works locally and on remote host)
-# Usage: ./startup.sh [--force-rebuild]
+# Usage: ./startup.sh [--force-frontend|--force-backend|--force-all]
 # =============================================================================
 set -euo pipefail
 
 REMOTE_IP="209.182.232.165"
-FORCE_REBUILD=false
+FORCE_FRONTEND=false
+FORCE_BACKEND=false
+
+show_usage() {
+  cat << EOF
+Usage: ./startup.sh [OPTIONS]
+
+Options:
+  --force-frontend, -ff   Force rebuild frontend (Next.js) only
+  --force-backend, -fb    Force reinstall backend (Python) dependencies
+  --force-all, -fa        Force rebuild both frontend and backend
+  -h, --help              Show this help message
+
+Examples:
+  ./startup.sh                    # Normal startup (auto-detect changes)
+  ./startup.sh --force-frontend   # Force rebuild Next.js only
+  ./startup.sh --force-backend    # Force reinstall Python deps only
+  ./startup.sh --force-all        # Force rebuild everything
+EOF
+  exit 0
+}
 
 # Parse arguments
 for arg in "$@"; do
   case $arg in
-    --force-rebuild|-f)
-      FORCE_REBUILD=true
-      shift
+    --force-frontend|-ff)
+      FORCE_FRONTEND=true
+      shift || true
+      ;;
+    --force-backend|-fb)
+      FORCE_BACKEND=true
+      shift || true
+      ;;
+    --force-all|-fa)
+      FORCE_FRONTEND=true
+      FORCE_BACKEND=true
+      shift || true
+      ;;
+    -h|--help)
+      show_usage
+      ;;
+    *)
+      echo "Unknown option: $arg"
+      show_usage
       ;;
   esac
 done
@@ -143,6 +179,9 @@ WEB_PORT="${PORT:-3003}"
 
 # ── Step 1: Stop any running instances ────────────────────────────────────────
 log "=== SignalAI Startup ==="
+if $FORCE_FRONTEND || $FORCE_BACKEND; then
+  log "Force rebuild requested: Frontend=$FORCE_FRONTEND, Backend=$FORCE_BACKEND"
+fi
 log "Stopping any running instances …"
 kill_pid_file
 kill_by_port "$API_PORT"
@@ -241,11 +280,24 @@ if $NEED_BOOTSTRAP; then
   hash_file "$WEB_DIR/package-lock.json" > "$NPM_LOCK_MARKER"
   log "Bootstrap complete."
 else
-  # FastAPI Python deps: reinstall only when requirements.txt hash changes
+  # FastAPI Python deps: reinstall only when requirements.txt hash changes OR force backend
   CURRENT_API_HASH=$(hash_file "$API_DIR/requirements.txt")
   STORED_API_HASH=$(cat "$API_REQ_MARKER" 2>/dev/null || echo "")
-  if [ "$CURRENT_API_HASH" != "$STORED_API_HASH" ]; then
-    log "requirements.txt changed — updating Python deps …"
+  if [ "$CURRENT_API_HASH" != "$STORED_API_HASH" ] || $FORCE_BACKEND; then
+    if $FORCE_BACKEND; then
+      log "Force backend rebuild — reinstalling Python deps …"
+      rm -rf "$VENV_DIR"
+      python3 -m venv "$VENV_DIR"
+      if [ -f "$VENV_DIR/Scripts/pip" ] || [ -f "$VENV_DIR/Scripts/pip.exe" ]; then
+        PIP_CMD="$VENV_DIR/Scripts/pip"
+        PYTHON_CMD="$VENV_DIR/Scripts/python"
+      else
+        PIP_CMD="$VENV_DIR/bin/pip"
+        PYTHON_CMD="$VENV_DIR/bin/python"
+      fi
+    else
+      log "requirements.txt changed — updating Python deps …"
+    fi
     "$PYTHON_CMD" -m pip install -q --upgrade pip
     "$PIP_CMD" install -q -r "$API_DIR/requirements.txt"
     echo "$CURRENT_API_HASH" > "$API_REQ_MARKER"
@@ -254,7 +306,7 @@ else
     log "Python deps unchanged — skipping pip install."
   fi
 
-  # npm deps: reinstall only when package-lock.json hash changes
+  # npm deps: reinstall only when package-lock.json hash changes (not affected by force flags)
   CURRENT_NPM_HASH=$(hash_file "$WEB_DIR/package-lock.json")
   STORED_NPM_HASH=$(cat "$NPM_LOCK_MARKER" 2>/dev/null || echo "")
   if [ "$CURRENT_NPM_HASH" != "$STORED_NPM_HASH" ]; then
@@ -290,12 +342,12 @@ if $IS_REMOTE; then
     WEB_CODE_CHANGED=1
   fi
 
-  if [ "$WEB_CODE_CHANGED" -gt 0 ] || $ENV_FILE_CHANGED || $NEED_BOOTSTRAP || $FORCE_REBUILD; then
-    if $FORCE_REBUILD; then
-      log "Force rebuild requested — clearing Next.js cache …"
+  if [ "$WEB_CODE_CHANGED" -gt 0 ] || $ENV_FILE_CHANGED || $NEED_BOOTSTRAP || $FORCE_FRONTEND; then
+    if $FORCE_FRONTEND; then
+      log "Force frontend rebuild — clearing Next.js cache …"
       rm -rf "$WEB_DIR/.next" "$WEB_DIR/out"
     fi
-    log "Rebuilding Next.js app (web changes: $WEB_CODE_CHANGED, env changed: $ENV_FILE_CHANGED, force: $FORCE_REBUILD) …"
+    log "Rebuilding Next.js app (web changes: $WEB_CODE_CHANGED, env changed: $ENV_FILE_CHANGED, force: $FORCE_FRONTEND) …"
     cd "$WEB_DIR" && "$NPM_CMD" run build 2>&1 | tail -5 && cd "$REPO_DIR"
     echo "$CURRENT_SHA" > "$BUILD_MARKER"
     echo "$CURRENT_ENV_HASH" > "$ENV_HASH_MARKER"
@@ -308,9 +360,9 @@ else
   CURRENT_SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
   WEB_DIRTY=$(git status --porcelain front-end/ 2>/dev/null | wc -l | tr -d ' ')
 
-  if [ "$CURRENT_SHA" != "$LAST_BUILD_SHA" ] || [ "$WEB_DIRTY" -gt 0 ] || $ENV_FILE_CHANGED || $NEED_BOOTSTRAP || $FORCE_REBUILD; then
-    if $FORCE_REBUILD; then
-      log "Force rebuild requested — clearing Next.js cache …"
+  if [ "$CURRENT_SHA" != "$LAST_BUILD_SHA" ] || [ "$WEB_DIRTY" -gt 0 ] || $ENV_FILE_CHANGED || $NEED_BOOTSTRAP || $FORCE_FRONTEND; then
+    if $FORCE_FRONTEND; then
+      log "Force frontend rebuild — clearing Next.js cache …"
       rm -rf "$WEB_DIR/.next" "$WEB_DIR/out"
     fi
     log "Web source changes detected — rebuilding Next.js app …"
@@ -386,8 +438,14 @@ echo "║  Logs:                                                   ║"
 printf "║    API → %-48s║\n" "$API_LOG"
 printf "║    Web → %-48s║\n" "$WEB_LOG"
 echo "╠══════════════════════════════════════════════════════════╣"
-echo "║  To stop:         ./stop.sh                              ║"
-echo "║  Force rebuild:   ./startup.sh --force-rebuild           ║"
-echo "║  Tail API: tail -f $API_LOG"
-echo "║  Tail Web: tail -f $WEB_LOG"
+echo "║  Commands:                                               ║"
+echo "║    Stop:              ./stop.sh                          ║"
+echo "║    Force frontend:    ./startup.sh --force-frontend      ║"
+echo "║    Force backend:     ./startup.sh --force-backend       ║"
+echo "║    Force all:         ./startup.sh --force-all           ║"
+echo "║    Help:              ./startup.sh --help                ║"
+echo "╠══════════════════════════════════════════════════════════╣"
+echo "║  Logs:                                                   ║"
+echo "║    tail -f $API_LOG"
+echo "║    tail -f $WEB_LOG"
 echo "╚══════════════════════════════════════════════════════════╝"
