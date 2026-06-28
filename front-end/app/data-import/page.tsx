@@ -1,7 +1,7 @@
-import DataImportPage from "@/components/tools/DataImportPage";
+import DataImportLanding from "@/components/tools/DataImportLanding";
 
 export const metadata = { title: "Data Import — SignalAI" };
 
 export default function Page() {
-  return <DataImportPage />;
+  return <DataImportLanding />;
 }

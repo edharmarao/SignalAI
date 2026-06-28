@@ -82,6 +82,26 @@ const I = {
       <circle cx="12" cy="12" r="5" />
     </svg>
   ),
+  chevronDown: (p: IconProps) => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={p.className}>
+      <path d="m6 9 6 6 6-6" />
+    </svg>
+  ),
+  ohlcv: (p: IconProps) => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className={p.className}>
+      <path d="M18 20V10M12 20V4M6 20v-6" />
+    </svg>
+  ),
+  fundamentals: (p: IconProps) => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className={p.className}>
+      <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+    </svg>
+  ),
+  symbols: (p: IconProps) => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className={p.className}>
+      <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />
+    </svg>
+  ),
 };
 
 type Desk = "equity" | "mutual-funds" | "options";
@@ -160,12 +180,20 @@ export default function Sidebar() {
   const nav = navForDesk(desk);
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [dataImportOpen, setDataImportOpen] = useState(false);
 
   // Persist + broadcast collapse state
   useEffect(() => {
     const stored = localStorage.getItem("sidebar-collapsed");
     if (stored === "1") setCollapsed(true);
   }, []);
+
+  // Auto-expand data import submenu if on any data-import path
+  useEffect(() => {
+    if (path.startsWith("/data-import")) {
+      setDataImportOpen(true);
+    }
+  }, [path]);
 
   // Close mobile drawer on route change
   useEffect(() => { setMobileOpen(false); }, [path]);
@@ -223,13 +251,49 @@ export default function Sidebar() {
           <I.charts className={`w-4 h-4 shrink-0 ${path.startsWith("/charts") ? "text-amber-400" : "text-slate-400"}`} />
           {!collapsed && <span>Charts</span>}
         </Link>
-        <Link href="/data-import" onClick={onLinkClick} title={collapsed ? "Data Import" : undefined}
-          className={`flex items-center gap-3 rounded-md text-sm transition ${collapsed ? "justify-center p-2" : "px-3 py-2"} ${
-            path.startsWith("/data-import") ? "bg-teal-500/10 text-teal-300" : "text-slate-400 hover:bg-slate-800/60 hover:text-slate-100"
-          }`}>
-          <I.import className={`w-4 h-4 shrink-0 ${path.startsWith("/data-import") ? "text-teal-400" : "text-slate-400"}`} />
-          {!collapsed && <span>Data Import</span>}
-        </Link>
+
+        {/* Data Import with submenu */}
+        <div>
+          <button
+            onClick={() => !collapsed && setDataImportOpen(!dataImportOpen)}
+            title={collapsed ? "Data Import" : undefined}
+            className={`w-full flex items-center gap-3 rounded-md text-sm transition ${collapsed ? "justify-center p-2" : "px-3 py-2"} ${
+              path.startsWith("/data-import") ? "bg-teal-500/10 text-teal-300" : "text-slate-400 hover:bg-slate-800/60 hover:text-slate-100"
+            }`}>
+            <I.import className={`w-4 h-4 shrink-0 ${path.startsWith("/data-import") ? "text-teal-400" : "text-slate-400"}`} />
+            {!collapsed && (
+              <>
+                <span className="flex-1 text-left">Data Import</span>
+                <I.chevronDown className={`w-3.5 h-3.5 transition-transform ${dataImportOpen ? "rotate-180" : ""}`} />
+              </>
+            )}
+          </button>
+          {!collapsed && dataImportOpen && (
+            <div className="mt-1 ml-7 space-y-0.5 border-l border-slate-700/50 pl-3">
+              <Link href="/data-import/ohlcv" onClick={onLinkClick}
+                className={`flex items-center gap-2 rounded-md text-xs transition px-2 py-1.5 ${
+                  path.startsWith("/data-import/ohlcv") ? "bg-emerald-500/10 text-emerald-300 font-medium" : "text-slate-400 hover:bg-slate-800/60 hover:text-slate-100"
+                }`}>
+                <I.ohlcv className="w-3.5 h-3.5 shrink-0" />
+                <span>OHLCV Data</span>
+              </Link>
+              <Link href="/data-import/fundamentals" onClick={onLinkClick}
+                className={`flex items-center gap-2 rounded-md text-xs transition px-2 py-1.5 ${
+                  path.startsWith("/data-import/fundamentals") ? "bg-sky-500/10 text-sky-300 font-medium" : "text-slate-400 hover:bg-slate-800/60 hover:text-slate-100"
+                }`}>
+                <I.fundamentals className="w-3.5 h-3.5 shrink-0" />
+                <span>Fundamentals</span>
+              </Link>
+              <Link href="/data-import/symbols" onClick={onLinkClick}
+                className={`flex items-center gap-2 rounded-md text-xs transition px-2 py-1.5 ${
+                  path.startsWith("/data-import/symbols") ? "bg-violet-500/10 text-violet-300 font-medium" : "text-slate-400 hover:bg-slate-800/60 hover:text-slate-100"
+                }`}>
+                <I.symbols className="w-3.5 h-3.5 shrink-0" />
+                <span>Symbols Update</span>
+              </Link>
+            </div>
+          )}
+        </div>
         <Link href="/api-tester" onClick={onLinkClick} title={collapsed ? "API Tester" : undefined}
           className={`flex items-center gap-3 rounded-md text-sm transition ${collapsed ? "justify-center p-2" : "px-3 py-2"} ${
             path.startsWith("/api-tester") ? "bg-violet-500/10 text-violet-300" : "text-slate-400 hover:bg-slate-800/60 hover:text-slate-100"
