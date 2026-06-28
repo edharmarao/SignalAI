@@ -5,8 +5,6 @@ import { Button, Card, Input } from "@signalai/ui";
 import { auth } from "@/lib/auth";
 import { useAuth } from "@/store/auth";
 
-const API = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8003") + "/api/v1";
-
 function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -27,7 +25,8 @@ function LoginForm() {
     setError(null);
     setLoading(true);
     try {
-      const res = await fetch(`${API}/auth/login`, {
+      // Use relative path - goes through Next.js rewrite to backend
+      const res = await fetch("/api/v1/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username, password }),
