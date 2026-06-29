@@ -102,6 +102,14 @@ const I = {
       <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />
     </svg>
   ),
+  fundamentals: (p: IconProps) => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className={p.className}>
+      <path d="M3 3v18h18" />
+      <path d="M18 17V9" />
+      <path d="M13 17V5" />
+      <path d="M8 17v-3" />
+    </svg>
+  ),
 };
 
 type Desk = "equity" | "mutual-funds" | "options";
@@ -250,6 +258,13 @@ export default function Sidebar() {
           }`}>
           <I.charts className={`w-4 h-4 shrink-0 ${path.startsWith("/charts") ? "text-amber-400" : "text-slate-400"}`} />
           {!collapsed && <span>Charts</span>}
+        </Link>
+        <Link href="/fundamentals" onClick={onLinkClick} title={collapsed ? "Fundamentals" : undefined}
+          className={`flex items-center gap-3 rounded-md text-sm transition ${collapsed ? "justify-center p-2" : "px-3 py-2"} ${
+            path.startsWith("/fundamentals") ? "bg-blue-500/10 text-blue-300" : "text-slate-400 hover:bg-slate-800/60 hover:text-slate-100"
+          }`}>
+          <I.fundamentals className={`w-4 h-4 shrink-0 ${path.startsWith("/fundamentals") ? "text-blue-400" : "text-slate-400"}`} />
+          {!collapsed && <span>Fundamentals</span>}
         </Link>
 
         {/* Data Import with submenu */}
