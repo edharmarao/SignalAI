@@ -209,18 +209,19 @@ rm -f "$API_LOG" "$WEB_LOG" "$LOG_DIR/signal_ai.log" "$LOG_DIR/trades.log" "$LOG
 
 # ── Step 2: Pull latest code (remote only) ────────────────────────────────────
 if $IS_REMOTE; then
-  log "Pulling latest code from GitHub …"
-  if [ -n "$GITHUB_TOKEN" ] && [ "$GITHUB_TOKEN" != "your_personal_access_token_here" ]; then
-    REMOTE_URL="https://${GITHUB_USER}:${GITHUB_TOKEN}@github.com/${GITHUB_USER}/SignalAI.git"
-    git remote set-url origin "$REMOTE_URL" 2>/dev/null || true
-  fi
-
-  git fetch origin main
-  git reset --hard origin/main
-  log "Code updated to: $(git log --oneline -1)"
-
-  # Remove token from remote URL after pull (security)
-  git remote set-url origin "https://github.com/${GITHUB_USER}/SignalAI.git" 2>/dev/null || true
+  log "Skipping git pull/reset (disabled to preserve local changes) — using current working tree"
+  # log "Pulling latest code from GitHub …"
+  # if [ -n "$GITHUB_TOKEN" ] && [ "$GITHUB_TOKEN" != "your_personal_access_token_here" ]; then
+  #   REMOTE_URL="https://${GITHUB_USER}:${GITHUB_TOKEN}@github.com/${GITHUB_USER}/SignalAI.git"
+  #   git remote set-url origin "$REMOTE_URL" 2>/dev/null || true
+  # fi
+  #
+  # git fetch origin main
+  # git reset --hard origin/main
+  # log "Code updated to: $(git log --oneline -1)"
+  #
+  # # Remove token from remote URL after pull (security)
+  # git remote set-url origin "https://github.com/${GITHUB_USER}/SignalAI.git" 2>/dev/null || true
 else
   log "Skipping git pull (local mode) — using current working tree"
 fi
@@ -379,9 +380,9 @@ fi
 log "Starting API on port $API_PORT …"
 cd "$REPO_DIR"
 if $IS_REMOTE; then
-  nohup "$NPM_CMD" run api:prod >> "$API_LOG" 2>&1 &
+  setsid "$NPM_CMD" run api:prod >> "$API_LOG" 2>&1 &
 else
-  nohup "$NPM_CMD" run api >> "$API_LOG" 2>&1 &
+  setsid "$NPM_CMD" run api >> "$API_LOG" 2>&1 &
 fi
 API_PID=$!
 echo "$API_PID" > "$PID_FILE"
@@ -391,9 +392,9 @@ log "API started (PID $API_PID)"
 log "Starting Web on port $WEB_PORT …"
 cd "$REPO_DIR"
 if $IS_REMOTE; then
-  nohup "$NPM_CMD" run start >> "$WEB_LOG" 2>&1 &
+  setsid "$NPM_CMD" run start >> "$WEB_LOG" 2>&1 &
 else
-  nohup "$NPM_CMD" run dev >> "$WEB_LOG" 2>&1 &
+  setsid "$NPM_CMD" run dev >> "$WEB_LOG" 2>&1 &
 fi
 WEB_PID=$!
 echo "$WEB_PID" >> "$PID_FILE"
