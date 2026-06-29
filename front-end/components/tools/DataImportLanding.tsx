@@ -149,6 +149,10 @@ export default function DataImportLanding() {
               <li>Update <span className="text-violet-300 font-medium">Symbols</span> metadata (uses fundamentals data)</li>
               <li>Import <span className="text-emerald-300 font-medium">OHLCV</span> price data as needed</li>
             </ol>
+            <div className="mt-3 p-2 bg-blue-500/10 border border-blue-500/30 rounded text-xs text-slate-400">
+              <strong className="text-blue-300">Bulk Import:</strong> Can handle up to 1000 symbols.
+              Fundamentals: ~1 symbol/sec (~13 min for 750). Symbols update: ~10 symbols/sec.
+            </div>
           </div>
         </div>
       </div>

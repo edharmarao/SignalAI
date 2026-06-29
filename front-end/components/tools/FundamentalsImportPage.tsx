@@ -82,9 +82,13 @@ export default function FundamentalsImportPage() {
     setSummary({ details: symbols.map((s) => ({ symbol: s, status: "pending" })) });
 
     try {
+      // Timeout: 1 second per symbol + 60 second buffer
+      // 750 symbols = 750s + 60s = 810s = 13.5 minutes
+      const timeoutMs = Math.max(600_000, symbols.length * 1000 + 60_000);
+
       const data = await api<ImportResponse>("/data-sync/fundamentals", {
         method: "POST",
-        timeoutMs: 600_000,
+        timeoutMs,
         body: JSON.stringify({
           symbols,
           exchange: "NSE",
@@ -224,7 +228,11 @@ export default function FundamentalsImportPage() {
             </ul>
             <div className="mt-4 p-3 bg-amber-500/10 border border-amber-500/30 rounded-lg">
               <div className="text-xs text-amber-300 font-medium mb-1">⚠️ Rate Limit</div>
-              <div className="text-xs text-slate-400">1 symbol per second (Yahoo Finance API)</div>
+              <div className="text-xs text-slate-400">
+                1 symbol per second (Yahoo Finance API)
+                <br />
+                Max: 1000 symbols (~17 minutes)
+              </div>
             </div>
           </div>
 
@@ -234,11 +242,28 @@ export default function FundamentalsImportPage() {
             disabled={selected.size === 0 || importing}
             className="w-full py-3 rounded-xl text-sm font-semibold transition disabled:opacity-40 disabled:cursor-not-allowed bg-emerald-500 hover:bg-emerald-400 text-slate-950">
             {importing
-              ? "Importing…"
+              ? `Importing… (${successCount + failCount}/${selected.size})`
               : selected.size === 0
               ? "Select symbols to import"
               : `Import ${selected.size} symbol${selected.size !== 1 ? "s" : ""}`}
           </button>
+          {importing && selected.size > 0 && (
+            <div className="mt-2">
+              <div className="flex justify-between text-xs text-slate-400 mb-1">
+                <span>Progress</span>
+                <span>{Math.round(((successCount + failCount) / selected.size) * 100)}%</span>
+              </div>
+              <div className="h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-emerald-500 transition-all duration-300"
+                  style={{ width: `${((successCount + failCount) / selected.size) * 100}%` }}
+                ></div>
+              </div>
+              <div className="text-xs text-slate-500 mt-2 text-center">
+                Est. time: ~{selected.size} seconds ({Math.round(selected.size / 60)} min)
+              </div>
+            </div>
+          )}
         </div>
       </div>
 

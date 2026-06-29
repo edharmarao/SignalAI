@@ -22,7 +22,7 @@ router = APIRouter(prefix="/data-sync", tags=["data-sync"])
 
 class FundamentalsUpdateRequest(BaseModel):
     """Request to update fundamentals data."""
-    symbols: list[str] = Field(..., min_length=1, max_length=100)
+    symbols: list[str] = Field(..., min_length=1, max_length=1000)
     exchange: str = Field(default="NSE")
     from_year: Optional[int] = Field(None, ge=2000, le=2030, description="Start year for historical data")
     to_year: Optional[int] = Field(None, ge=2000, le=2030, description="End year for historical data")
@@ -31,7 +31,7 @@ class FundamentalsUpdateRequest(BaseModel):
 
 class SymbolsUpdateRequest(BaseModel):
     """Request to update nse_eq_symbols data."""
-    symbols: list[str] = Field(..., min_length=1, max_length=100)
+    symbols: list[str] = Field(..., min_length=1, max_length=1000)
     exchange: str = Field(default="NSE")
 
 
@@ -327,7 +327,7 @@ async def update_symbols(request: SymbolsUpdateRequest, user=optional_user):
 
 class CombinedUpdateRequest(BaseModel):
     """Request to update both fundamentals and symbols."""
-    symbols: list[str] = Field(..., min_length=1, max_length=100)
+    symbols: list[str] = Field(..., min_length=1, max_length=1000)
     exchange: str = Field(default="NSE")
     from_year: Optional[int] = None
     to_year: Optional[int] = None

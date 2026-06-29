@@ -61,7 +61,7 @@ const nextConfig = {
     root: repoRoot,
   },
   experimental: {
-    proxyTimeout: 600_000, // 10 min — needed for bulk symbol imports
+    proxyTimeout: 1_200_000, // 20 min — needed for bulk fundamentals import (1000 symbols)
   },
   async rewrites() {
     // Proxy /api/v1/* → FastAPI backend (server-side, never exposes the internal URL to the browser)

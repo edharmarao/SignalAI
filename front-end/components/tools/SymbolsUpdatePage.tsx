@@ -86,9 +86,12 @@ export default function SymbolsUpdatePage() {
     setSummary({ details: symbols.map((s) => ({ symbol: s, status: "pending" })) });
 
     try {
+      // Symbols update is fast (no rate limit), but allow time for large batches
+      const timeoutMs = Math.max(300_000, symbols.length * 200 + 60_000);
+
       const data = await api<ImportResponse>("/data-sync/symbols", {
         method: "POST",
-        timeoutMs: 600_000,
+        timeoutMs,
         body: JSON.stringify({
           symbols,
           exchange: "NSE",
@@ -238,11 +241,28 @@ export default function SymbolsUpdatePage() {
             disabled={selected.size === 0 || importing}
             className="w-full py-3 rounded-xl text-sm font-semibold transition disabled:opacity-40 disabled:cursor-not-allowed bg-emerald-500 hover:bg-emerald-400 text-slate-950">
             {importing
-              ? "Updating…"
+              ? `Updating… (${successCount + failCount}/${selected.size})`
               : selected.size === 0
               ? "Select symbols to update"
               : `Update ${selected.size} symbol${selected.size !== 1 ? "s" : ""}`}
           </button>
+          {importing && selected.size > 0 && (
+            <div className="mt-2">
+              <div className="flex justify-between text-xs text-slate-400 mb-1">
+                <span>Progress</span>
+                <span>{Math.round(((successCount + failCount) / selected.size) * 100)}%</span>
+              </div>
+              <div className="h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-emerald-500 transition-all duration-300"
+                  style={{ width: `${((successCount + failCount) / selected.size) * 100}%` }}
+                ></div>
+              </div>
+              <div className="text-xs text-slate-500 mt-2 text-center">
+                Fast update (~{Math.round(selected.size / 10)} seconds)
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
