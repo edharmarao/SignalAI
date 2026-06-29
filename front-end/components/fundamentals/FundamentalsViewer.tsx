@@ -23,7 +23,7 @@ export default function FundamentalsViewer() {
   // Load available symbols
   useEffect(() => {
     api<any>("/fundamentals/")
-      .then((res) => setSymbols(res || []))
+      .then((res) => setSymbols(res?.symbols || []))
       .catch(console.error);
   }, []);
 
