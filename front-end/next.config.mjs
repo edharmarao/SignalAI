@@ -55,7 +55,7 @@ const publicEnv = Object.fromEntries(
 const nextConfig = {
   reactStrictMode: true,
   transpilePackages: ["@signalai/types", "@signalai/ui", "@signalai/utils"],
-  allowedDevOrigins: ["*.local", "*.localhost", "192.168.*.*"],
+  allowedDevOrigins: ["*.local", "*.localhost", "192.168.*.*", "209.182.232.165"],
   env: publicEnv,
   turbopack: {
     root: repoRoot,

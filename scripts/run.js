@@ -82,8 +82,22 @@ function killPort(port) {
         });
       }
     } else {
-      // Unix: use lsof/kill
-      execSync(`lsof -ti:${port} | xargs kill -9 2>/dev/null || true`, { stdio: 'ignore' });
+      // Unix: use lsof when available, then fall back to fuser or ss.
+      try {
+        execSync(`lsof -ti:${port} | xargs -r kill -9`, { stdio: 'ignore' });
+      } catch (e) {
+        try {
+          execSync(`fuser -k ${port}/tcp`, { stdio: 'ignore' });
+        } catch (fallbackError) {
+          try {
+            const pids = execSync(`ss -tlnp 2>/dev/null | grep ':${port} ' | grep -oP 'pid=\\K[0-9]+'`, { encoding: 'utf8' })
+              .trim()
+              .split(/\s+/)
+              .filter(Boolean);
+            pids.forEach(pid => execSync(`kill -9 ${pid}`, { stdio: 'ignore' }));
+          } catch (ssError) {}
+        }
+      }
     }
   } catch (e) {
     // Port not in use, or utility missing
@@ -105,7 +119,7 @@ if (cmd === 'dev') {
   const port = process.env.PORT || '3003';
   killPort(port);
   console.log('[runner] Starting Next.js in dev mode...');
-  const child = spawn('npm', ['run', 'dev'], {
+  const child = spawn('npm', ['run', 'dev', '--', '--hostname', '0.0.0.0'], {
     cwd: FRONT_END_DIR,
     stdio: 'inherit',
     shell: true
