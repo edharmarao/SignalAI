@@ -52,6 +52,10 @@
     {
       "key": "isin",
       "value": "INE002A01018"
+    },
+    {
+      "key": "screener_symbols",
+      "value": "[\"RELIANCE\", \"TCS\", \"INFY\"]"
     }
   ],
   "item": [
@@ -3704,6 +3708,55 @@
             },
             "description": "List latest logs (max 500), optionally filtered by desk."
           }
+        }
+      ]
+    },
+    {
+      "name": "📊 Screener.in Fundamentals",
+      "item": [
+        {
+          "name": "POST /fundamentals/screener/download",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Basic {{auth_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"symbols\": {{screener_symbols}}\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/fundamentals/screener/download",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "fundamentals",
+                "screener",
+                "download"
+              ]
+            },
+            "description": "Download Screener.in Excel fundamentals reports for the requested symbols. Configure SCREENER_EMAIL and SCREENER_PASSWORD on the backend."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Screener download request accepted', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
         }
       ]
     }

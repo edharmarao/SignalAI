@@ -184,6 +184,23 @@ DELETE /api/v1/fundamentals/RELIANCE
 }
 ```
 
+### 5. Download Screener.in Reports
+
+**Endpoint:** `POST /api/v1/fundamentals/screener/download`
+
+Download Excel fundamentals reports without storing them in the database.
+
+```json
+{
+  "symbols": ["RELIANCE", "TCS", "INFY"]
+}
+```
+
+The response includes saved file paths and per-symbol failures. Configure
+`SCREENER_EMAIL` and `SCREENER_PASSWORD` in the backend environment. Never
+commit these values to source control. Set `SCREENER_DOWNLOAD_DIR` to override
+the default `downloads/` directory.
+
 ## Setup & Installation
 
 ### 1. Install Dependencies
@@ -194,6 +211,13 @@ pip install -r requirements.txt
 ```
 
 This installs `yfinance>=0.2.40` along with other dependencies.
+
+For Screener.in downloads, install the Chromium browser once after installing
+Python dependencies:
+
+```bash
+playwright install chromium
+```
 
 ### 2. Run Database Migration
 

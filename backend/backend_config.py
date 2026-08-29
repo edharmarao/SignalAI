@@ -87,6 +87,11 @@ class Settings(BaseSettings):
     icici_secret_key: str = ""
     icici_api_url: str = "https://breezeapi.icicidirect.com/"
 
+    # Screener.in
+    screener_email: str = ""
+    screener_password: str = ""
+    screener_download_dir: str = ""
+
     allow_live_trading: bool = False
 
     @property
