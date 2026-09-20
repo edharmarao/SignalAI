@@ -1,3 +1,9 @@
+function formatNumber(value: unknown, digits = 0): string {
+  if (value == null || value === "") return "—";
+  const numericValue = Number(String(value).replace(/,/g, ""));
+  return Number.isFinite(numericValue) ? numericValue.toLocaleString("en-IN", { maximumFractionDigits: digits }) : "—";
+}
+
 export default function QuarterlyTable({ data }: { data: any[] }) {
   if (!data || data.length === 0) return null;
 
@@ -22,16 +28,16 @@ export default function QuarterlyTable({ data }: { data: any[] }) {
                   {new Date(quarter.quarter_end_date).toLocaleDateString('en-US', { year: 'numeric', month: 'short' })}
                 </td>
                 <td className="text-right py-2 px-3 text-slate-200 tabular-nums">
-                  {quarter.total_revenue?.toLocaleString() || '—'}
+                  {formatNumber(quarter.total_revenue)}
                 </td>
                 <td className="text-right py-2 px-3 text-slate-200 tabular-nums">
-                  {quarter.net_income?.toLocaleString() || '—'}
+                  {formatNumber(quarter.net_income)}
                 </td>
                 <td className="text-right py-2 px-3 text-slate-200 tabular-nums">
-                  {quarter.ebitda?.toLocaleString() || '—'}
+                  {formatNumber(quarter.ebitda)}
                 </td>
                 <td className="text-right py-2 px-3 text-slate-200 tabular-nums">
-                  {quarter.eps_diluted?.toFixed(2) || '—'}
+                  {formatNumber(quarter.eps_diluted, 2)}
                 </td>
               </tr>
             ))}

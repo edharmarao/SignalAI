@@ -16,9 +16,13 @@ export default function RatiosCard({ info }: { info: any }) {
       <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
         {ratios.map((ratio) => {
           if (ratio.value == null) return null;
+          const rawValue = String(ratio.value).trim();
+          const numericValue = Number(rawValue.replace(/,/g, "").replace(/%$/, ""));
+          if (!Number.isFinite(numericValue)) return null;
+          const isAlreadyPercent = rawValue.endsWith("%");
           const displayValue = ratio.format === "percent"
-            ? `${(ratio.value * 100).toFixed(2)}%`
-            : ratio.value.toFixed(2);
+            ? `${(isAlreadyPercent ? numericValue : numericValue * 100).toFixed(2)}%`
+            : numericValue.toFixed(2);
 
           return (
             <div key={ratio.label} className="bg-slate-800/50 rounded-lg p-3">

@@ -188,7 +188,8 @@ DELETE /api/v1/fundamentals/RELIANCE
 
 **Endpoint:** `POST /api/v1/fundamentals/screener/download`
 
-Download Excel fundamentals reports without storing them in the database.
+Download Excel fundamentals reports and store the parsed data in the existing
+fundamentals tables.
 
 ```json
 {
@@ -199,7 +200,52 @@ Download Excel fundamentals reports without storing them in the database.
 The response includes saved file paths and per-symbol failures. Configure
 `SCREENER_EMAIL` and `SCREENER_PASSWORD` in the backend environment. Never
 commit these values to source control. Set `SCREENER_DOWNLOAD_DIR` to override
-the default `downloads/` directory.
+the default `downloads/` directory. Re-running a download updates existing
+records for the same symbol and reporting period. Periods no longer present in
+the latest Screener workbook are removed, so each symbol remains an exact
+snapshot of the latest downloaded report.
+
+Each workbook's `Profit & Loss`, `Quarters`, `Balance Sheet`, `Cash Flow`, and
+normalized `Data Sheet` tabs are read. The normalized `Data Sheet` is used for
+the database mapping because it combines the report values without duplicating
+rows from the presentation tabs. `Customization` is an instructions tab and
+does not contain financial records.
+
+### 6. Download All Stock-Master Symbols in Batches
+
+**Endpoint:** `POST /api/v1/fundamentals/screener/bulk-download`
+
+Omit the body, or send `{}`, to load all symbols from `nse_eq_symbols`. The
+service processes them sequentially in batches of 50 and continues with the
+next batch after each batch finishes. To process a selected list, send for
+example:
+
+```json
+{
+  "symbols": ["RELIANCE", "TCS", "INFY"]
+}
+```
+
+The response reports the number of batches, batch-level results, downloaded
+files, and individual failures. This operation may take several minutes for
+750 symbols because Screener requests are intentionally sequential.
+
+### 7. Read Screener Import Log Tail
+
+**Endpoint:** `GET /api/v1/fundamentals/screener/logs/tail?lines=100`
+
+The Data Import screen polls this authenticated endpoint every two seconds
+while a Screener import is running and displays the latest backend log lines.
+The `lines` value is capped at 500.
+
+### 8. Stop an Import
+
+**Screener:** `POST /api/v1/fundamentals/screener/cancel`
+
+**Yahoo:** `POST /api/v1/data-sync/fundamentals/cancel`
+
+The import stops before the next symbol or batch. A symbol currently being
+processed may finish before the stop request takes effect.
 
 ## Setup & Installation
 

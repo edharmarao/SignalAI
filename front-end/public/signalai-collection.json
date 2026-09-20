@@ -3757,6 +3757,50 @@
               }
             }
           ]
+        },
+        {
+          "name": "POST /fundamentals/screener/bulk-download (all stock master)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Basic {{auth_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            },
+            "url": {
+              "raw": "{{base_url}}/fundamentals/screener/bulk-download",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "fundamentals",
+                "screener",
+                "bulk-download"
+              ]
+            },
+            "description": "Download and store every symbol in nse_eq_symbols. The backend processes 50 symbols per batch and continues until all symbols are complete."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Bulk Screener download accepted', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
         }
       ]
     }

@@ -65,6 +65,12 @@ interface EditedConfig {
   body: string;
 }
 
+const SCREENER_UNIVERSES = [
+  "ALL_750", "NIFTY_50", "NIFTY_100", "NIFTY_150", "NIFTY_200",
+  "NIFTY_250", "NIFTY_300", "NIFTY_350", "NIFTY_400", "NIFTY_450",
+  "NIFTY_500", "NIFTY_550", "NIFTY_600", "NIFTY_650", "NIFTY_700", "NIFTY_750",
+] as const;
+
 // ── Minimal pm mock ───────────────────────────────────────────────────────────
 
 function runTests(
@@ -180,6 +186,19 @@ function resolveTemplate(tmpl: string, vars: Record<string, string>): string {
   return tmpl.replace(/\{\{(\w+)\}\}/g, (_, k) => vars[k] ?? `{{${k}}}`);
 }
 
+function normalizeApiTesterUrl(url: string): string {
+  if (typeof window === "undefined") return url;
+  try {
+    const parsed = new URL(url, window.location.origin);
+    if (parsed.hostname === "localhost" && parsed.port === "8003") {
+      return `${window.location.origin}${parsed.pathname}${parsed.search}`;
+    }
+  } catch {
+    return url;
+  }
+  return url;
+}
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function ApiTesterPage() {
@@ -239,26 +258,24 @@ export default function ApiTesterPage() {
       .then((r) => r.json())
       .then((data: PMCollection) => {
         setCollection(data);
-        
-        // Load variables from localStorage
-        const saved = localStorage.getItem("signalai_api_tester_variables");
-        if (saved) {
-          try {
-            setVariables(JSON.parse(saved));
-            return;
-          } catch (e) {
-            console.error("Failed to parse saved variables", e);
-          }
-        }
-        
-        // Wrangle defaults from collection
+
         const defaults: Record<string, string> = {};
         if (data.variable) {
           data.variable.forEach((v) => {
             if (v.key) defaults[v.key] = v.value ?? "";
           });
         }
-        
+
+        // Keep user overrides while adding variables introduced by the collection.
+        const saved = localStorage.getItem("signalai_api_tester_variables");
+        if (saved) {
+          try {
+            Object.assign(defaults, JSON.parse(saved));
+          } catch (e) {
+            console.error("Failed to parse saved variables", e);
+          }
+        }
+
         // Fallback default setups for local environment
         const apiBase = `${window.location.origin}/api/v1`;
         const apiRoot = window.location.origin;
@@ -325,7 +342,7 @@ export default function ApiTesterPage() {
   async function runRequest(item: PMItem, reqKey: string, currentVars: Record<string, string>): Promise<RequestResult> {
     const [folderName, reqName] = reqKey.split("::");
     const config = getRequestConfig(folderName, reqName);
-    const url = resolveTemplate(config.url, currentVars);
+    const url = normalizeApiTesterUrl(resolveTemplate(config.url, currentVars));
     const method = config.method.toUpperCase();
 
     // Prepare headers resolving variables
@@ -366,12 +383,17 @@ export default function ApiTesterPage() {
         resolvedBody = resolveTemplate(config.body, currentVars);
       }
 
-      const res = await fetch(url, {
-        method,
-        headers,
-        body: resolvedBody,
-        signal: ctrl.signal,
-      });
+      let res: Response;
+      try {
+        res = await fetch(url, {
+          method,
+          headers,
+          body: resolvedBody,
+          signal: ctrl.signal,
+        });
+      } catch (error) {
+        throw new Error(`Request could not be sent to ${url}: ${(error as Error).message}`);
+      }
       status = res.status;
       statusText = res.statusText;
       const text = await res.text();
@@ -379,9 +401,23 @@ export default function ApiTesterPage() {
       try { responseJson = JSON.parse(text); } catch { responseJson = text; }
     } catch (e) {
       if ((e as Error).name === "AbortError") {
-        return { name: item.name, method, url, status: null, statusText: "Aborted", durationMs: 0, responseBody: "", tests: [] };
+        const result: RequestResult = { name: item.name, method, url, status: null, statusText: "Aborted", durationMs: 0, responseBody: "", tests: [] };
+        setResults((prev) => ({ ...prev, [reqKey]: result }));
+        return result;
       }
-      return { name: item.name, method, url, status: null, statusText: String(e), durationMs: Date.now() - start, responseBody: "", tests: [], error: String(e) };
+      const result: RequestResult = {
+        name: item.name,
+        method,
+        url,
+        status: null,
+        statusText: String(e),
+        durationMs: Date.now() - start,
+        responseBody: "",
+        tests: [],
+        error: String(e),
+      };
+      setResults((prev) => ({ ...prev, [reqKey]: result }));
+      return result;
     }
 
     const durationMs = Date.now() - start;
@@ -831,6 +867,37 @@ export default function ApiTesterPage() {
                     {/* Body */}
                     {(["POST", "PUT", "PATCH"].includes(currentConfig.method) || currentConfig.body.length > 0) && (
                       <div className="flex-1 flex flex-col min-h-0">
+                        {reqName.includes("screener/bulk-download") && (
+                          <div className="mb-3 rounded-lg border border-violet-500/20 bg-violet-500/5 p-3">
+                            <div className="text-xs font-semibold text-violet-300 mb-1.5">Screener universe</div>
+                            <select
+                              value={(() => {
+                                try {
+                                  const parsed = JSON.parse(resolveTemplate(currentConfig.body, variables)) as { universe?: string };
+                                  return parsed.universe ?? "ALL_750";
+                                } catch { return "ALL_750"; }
+                              })()}
+                              onChange={(e) => {
+                                const value = e.target.value;
+                                updateRequestConfig(activeRequest, {
+                                  body: value === "ALL_750"
+                                    ? "{}"
+                                    : JSON.stringify({ universe: value }, null, 2),
+                                });
+                              }}
+                              className="w-full bg-slate-950 border border-slate-800 rounded px-2 py-1.5 text-xs text-slate-200 focus:border-violet-500 focus:outline-none"
+                            >
+                              {SCREENER_UNIVERSES.map((universe) => (
+                                <option key={universe} value={universe}>
+                                  {universe === "ALL_750" ? "All stock-master symbols (750)" : universe.replace("_", " ")}
+                                </option>
+                              ))}
+                            </select>
+                            <div className="text-[10px] text-slate-500 mt-1.5">
+                              Choose a preset or edit the JSON below with a custom <code>symbols</code> array.
+                            </div>
+                          </div>
+                        )}
                         <div className="text-xs font-semibold text-slate-400 uppercase mb-1.5 tracking-wider">Request Body (JSON)</div>
                         <textarea
                           value={currentConfig.body}

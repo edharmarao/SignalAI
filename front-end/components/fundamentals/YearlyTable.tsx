@@ -1,3 +1,9 @@
+function formatNumber(value: unknown, digits = 0): string {
+  if (value == null || value === "") return "—";
+  const numericValue = Number(String(value).replace(/,/g, ""));
+  return Number.isFinite(numericValue) ? numericValue.toLocaleString("en-IN", { maximumFractionDigits: digits }) : "—";
+}
+
 export default function YearlyTable({ data }: { data: any[] }) {
   if (!data || data.length === 0) return null;
 
@@ -23,19 +29,19 @@ export default function YearlyTable({ data }: { data: any[] }) {
                   {new Date(year.fiscal_year_end).getFullYear()}
                 </td>
                 <td className="text-right py-2 px-3 text-slate-200 tabular-nums">
-                  {year.total_revenue?.toLocaleString() || '—'}
+                  {formatNumber(year.total_revenue)}
                 </td>
                 <td className="text-right py-2 px-3 text-slate-200 tabular-nums">
-                  {year.net_income?.toLocaleString() || '—'}
+                  {formatNumber(year.net_income)}
                 </td>
                 <td className="text-right py-2 px-3 text-slate-200 tabular-nums">
-                  {year.ebitda?.toLocaleString() || '—'}
+                  {formatNumber(year.ebitda)}
                 </td>
                 <td className="text-right py-2 px-3 text-slate-200 tabular-nums">
-                  {year.eps_diluted?.toFixed(2) || '—'}
+                  {formatNumber(year.eps_diluted, 2)}
                 </td>
                 <td className="text-right py-2 px-3 text-slate-200 tabular-nums">
-                  {year.total_assets?.toLocaleString() || '—'}
+                  {formatNumber(year.total_assets)}
                 </td>
               </tr>
             ))}

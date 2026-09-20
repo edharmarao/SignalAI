@@ -9,7 +9,7 @@ from typing import Any
 
 import pandas as pd
 
-from db import db_execute
+from db import db_execute, db_query
 from backend_config import get_settings
 
 logger = logging.getLogger("signal_ai.screener")
@@ -21,6 +21,8 @@ class ScreenerConfigurationError(RuntimeError):
 
 class ScreenerService:
     """Automate Screener.in login and Excel report downloads."""
+
+    _cancel_requested = False
 
     def __init__(self, save_path: str | None = None) -> None:
         settings = get_settings()
@@ -52,6 +54,12 @@ class ScreenerService:
     def _import_report(self, symbol: str, file_path: Path) -> dict[str, int | bool]:
         """Import the workbook's annual and quarterly data into fundamentals tables."""
         workbook = pd.ExcelFile(file_path)
+        logger.info("Reading Screener workbook for %s: tabs=%s", symbol, ", ".join(workbook.sheet_names))
+        report_tabs = {"Profit & Loss", "Quarters", "Balance Sheet", "Cash Flow"}
+        loaded_tabs = [sheet for sheet in workbook.sheet_names if sheet in report_tabs]
+        for sheet in loaded_tabs:
+            pd.read_excel(workbook, sheet_name=sheet, header=None)
+        logger.info("Screener report tabs loaded for %s: %s", symbol, ", ".join(loaded_tabs) or "none")
         data = pd.read_excel(workbook, sheet_name="Data Sheet", header=None)
 
         def row_values(label: str, occurrence: int = 0) -> list[Any]:
@@ -113,8 +121,10 @@ class ScreenerService:
         def upsert(table: str, records: list[dict[str, Any]], date_column: str) -> int:
             if not records:
                 return 0
+            period_dates = []
             for record in records:
                 record[date_column] = record.pop("period_date")
+                period_dates.append(record[date_column])
                 columns = ", ".join(f"`{key}`" for key in record)
                 placeholders = ", ".join(["%s"] * len(record))
                 updates = ", ".join(
@@ -127,6 +137,13 @@ class ScreenerService:
                     f"ON DUPLICATE KEY UPDATE {updates}",
                     list(record.values()),
                 )
+
+            placeholders = ", ".join(["%s"] * len(period_dates))
+            db_execute(
+                f"DELETE FROM `{table}` WHERE `symbol` = %s "
+                f"AND `{date_column}` NOT IN ({placeholders})",
+                [symbol, *period_dates],
+            )
             return len(records)
 
         quarterly_count = upsert("fundamentals_quarterly", quarterly, "quarter_end_date")
@@ -162,7 +179,12 @@ class ScreenerService:
             f"ON DUPLICATE KEY UPDATE {updates}",
             list(profile.values()),
         )
-        return {"stored": True, "quarterly_periods": quarterly_count, "yearly_periods": yearly_count}
+        return {
+            "stored": True,
+            "quarterly_periods": quarterly_count,
+            "yearly_periods": yearly_count,
+            "tabs_processed": len(loaded_tabs) + 1,
+        }
 
     async def _download_single(self, page: Any, stock_code: str) -> dict[str, Any]:
         """Download one stock report using an already authenticated page."""
@@ -200,6 +222,7 @@ class ScreenerService:
 
     async def download_single(self, stock_code: str) -> dict[str, Any]:
         """Download one report and return its status and saved file path."""
+        type(self)._cancel_requested = False
         results = await self.download_multiple([stock_code])
         if results["success"]:
             return {
@@ -253,6 +276,10 @@ class ScreenerService:
                     raise RuntimeError("Screener.in login failed; check credentials")
 
                 for index, stock_code in enumerate(stock_codes):
+                    if type(self)._cancel_requested:
+                        logger.warning("Screener import stopped before %s", stock_code)
+                        failed_downloads.extend({"stock_code": code, "error": "Import stopped by user"} for code in stock_codes[index:])
+                        break
                     result = await self._download_single(page, stock_code)
                     if result["status"] == "success":
                         downloaded_files.append(result["file_path"])
@@ -270,6 +297,94 @@ class ScreenerService:
             "total": len(stock_codes),
             "success": len(downloaded_files),
             "failed": len(failed_downloads),
+            "downloaded_files": downloaded_files,
+            "failed_downloads": failed_downloads,
+        }
+
+    @classmethod
+    def request_cancel(cls) -> None:
+        cls._cancel_requested = True
+
+    async def download_in_batches(
+        self,
+        stock_codes: list[str] | None = None,
+        batch_size: int = 50,
+        universe: str | None = None,
+    ) -> dict[str, Any]:
+        """Download all requested symbols sequentially in bounded batches."""
+        type(self)._cancel_requested = False
+        if stock_codes is None:
+            limit = int(universe.split("_")[1]) if universe else 750
+            rows = db_query(
+                "SELECT symbol FROM nse_eq_symbols "
+                "WHERE symbol IS NOT NULL AND symbol <> '' "
+                "ORDER BY market_cap_rank IS NULL, market_cap_rank, "
+                "market_cap DESC, symbol LIMIT %s",
+                (limit,),
+            )
+            stock_codes = [row["symbol"] for row in rows]
+
+        symbols = list(dict.fromkeys(symbol.strip().upper() for symbol in stock_codes if symbol.strip()))
+        if not symbols:
+            return {
+                "total": 0,
+                "success": 0,
+                "failed": 0,
+                "batches": 0,
+                "downloaded_files": [],
+                "failed_downloads": [],
+            }
+
+        downloaded_files: list[str] = []
+        failed_downloads: list[dict[str, str]] = []
+        batch_results: list[dict[str, Any]] = []
+
+        for start in range(0, len(symbols), batch_size):
+            if type(self)._cancel_requested:
+                logger.warning("Screener batch import stopped by user")
+                failed_downloads.extend({"stock_code": symbol, "error": "Import stopped by user"} for symbol in symbols[start:])
+                break
+            batch_number = start // batch_size + 1
+            batch = symbols[start:start + batch_size]
+            logger.info(
+                "Starting Screener batch %d (%d symbols, %d-%d of %d)",
+                batch_number,
+                len(batch),
+                start + 1,
+                start + len(batch),
+                len(symbols),
+            )
+            try:
+                result = await self.download_multiple(batch)
+            except Exception as exc:
+                logger.exception("Screener batch %d failed", batch_number)
+                result = {
+                    "total": len(batch),
+                    "success": 0,
+                    "failed": len(batch),
+                    "downloaded_files": [],
+                    "failed_downloads": [
+                        {"stock_code": symbol, "error": str(exc)} for symbol in batch
+                    ],
+                }
+
+            downloaded_files.extend(result["downloaded_files"])
+            failed_downloads.extend(result["failed_downloads"])
+            batch_results.append({
+                "batch": batch_number,
+                "first_symbol": batch[0],
+                "last_symbol": batch[-1],
+                "total": result["total"],
+                "success": result["success"],
+                "failed": result["failed"],
+            })
+
+        return {
+            "total": len(symbols),
+            "success": len(downloaded_files),
+            "failed": len(failed_downloads),
+            "batches": len(batch_results),
+            "batch_results": batch_results,
             "downloaded_files": downloaded_files,
             "failed_downloads": failed_downloads,
         }

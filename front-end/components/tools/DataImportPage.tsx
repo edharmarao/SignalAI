@@ -78,7 +78,7 @@ export default function DataImportPage() {
 
   // Load symbols
   useEffect(() => {
-    api<StockInfo[]>("/charts/symbols")
+    api<StockInfo[]>("/charts/symbols", { timeoutMs: 60_000 })
       .then(setStocks)
       .catch(console.error)
       .finally(() => setLoading(false));

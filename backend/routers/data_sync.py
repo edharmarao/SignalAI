@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 
 from db import db_query, db_execute
 from deps import optional_user
-from services.yahoo_fundamentals import fetch_and_store_fundamentals
+from services.yahoo_fundamentals import fetch_and_store_fundamentals, fetch_and_store_fundamentals_info, request_cancel
 
 logger = logging.getLogger("signal_ai")
 router = APIRouter(prefix="/data-sync", tags=["data-sync"])
@@ -100,6 +100,24 @@ async def update_fundamentals(request: FundamentalsUpdateRequest, user=optional_
         failed=result["failed"],
         details=result["details"]
     )
+
+
+@router.post("/fundamentals-info", response_model=UpdateResponse)
+async def update_fundamentals_info(request: FundamentalsUpdateRequest, user=optional_user):
+    """Update only fundamentals_info company profile data from Yahoo Finance."""
+    del user
+    symbols = list(dict.fromkeys(symbol.strip().upper() for symbol in request.symbols if symbol.strip()))
+    logger.info("Updating Yahoo fundamentals info for %d symbols", len(symbols))
+    result = await fetch_and_store_fundamentals_info(symbols, request.exchange)
+    return UpdateResponse(**result)
+
+
+@router.post("/fundamentals/cancel")
+async def cancel_fundamentals_import(user=optional_user):
+    """Request that an active Yahoo import stop before the next symbol."""
+    del user
+    request_cancel()
+    return {"status": "stopping"}
 
 
 # ============================================================================

@@ -67,12 +67,12 @@ export default function DataImportLanding() {
             </div>
           </div>
           <p className="text-sm text-slate-400 mb-4">
-            Import fundamental data from Yahoo Finance including financials, ratios, and company profiles.
+            Import fundamental data from Yahoo Finance or Screener.in, including financials and company profiles.
           </p>
           <ul className="text-xs text-slate-500 space-y-1.5 mb-4">
             <li className="flex items-center gap-2">
               <span className="text-sky-400">✓</span>
-              <span>Company profile & industry</span>
+              <span>Yahoo and Screener company profiles</span>
             </li>
             <li className="flex items-center gap-2">
               <span className="text-sky-400">✓</span>
@@ -80,11 +80,34 @@ export default function DataImportLanding() {
             </li>
             <li className="flex items-center gap-2">
               <span className="text-sky-400">✓</span>
-              <span>Market cap, PE, PB ratios</span>
+              <span>Market data and financial statements</span>
             </li>
           </ul>
           <div className="flex items-center gap-2 text-sky-400 text-sm font-medium">
             <span>Import Fundamentals</span>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4 group-hover:translate-x-1 transition">
+              <path d="M5 12h14M12 5l7 7-7 7" />
+            </svg>
+          </div>
+        </Link>
+
+        {/* Yahoo Fundamentals Info */}
+        <Link href="/data-import/fundamentals-info"
+          className="group bg-slate-900 border border-slate-800 hover:border-cyan-500/50 rounded-xl p-6 transition-all hover:shadow-lg hover:shadow-cyan-500/10">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="w-12 h-12 rounded-lg bg-cyan-500/15 flex items-center justify-center group-hover:bg-cyan-500/25 transition">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-6 h-6 text-cyan-400">
+                <circle cx="12" cy="12" r="9" /><path d="M12 8v4l3 2" />
+              </svg>
+            </div>
+            <div>
+              <h2 className="text-base font-semibold text-slate-100 group-hover:text-cyan-300 transition">Fundamentals Info</h2>
+              <p className="text-xs text-slate-500">Yahoo profile only</p>
+            </div>
+          </div>
+          <p className="text-sm text-slate-400 mb-4">Refresh company profile, market cap, ratios, prices, and share information without downloading financial statements.</p>
+          <div className="flex items-center gap-2 text-cyan-400 text-sm font-medium">
+            <span>Import Info Only</span>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4 group-hover:translate-x-1 transition">
               <path d="M5 12h14M12 5l7 7-7 7" />
             </svg>

@@ -8,7 +8,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 
 import yfinance as yf
@@ -18,6 +18,47 @@ logger = logging.getLogger("signal_ai")
 
 # Rate limiting config for free Yahoo API
 DELAY_BETWEEN_SYMBOLS = 1.0  # seconds between each symbol fetch
+_cancel_requested = False
+
+
+def request_cancel() -> None:
+    global _cancel_requested
+    _cancel_requested = True
+
+
+async def _get_latest_usd_inr_rate() -> float:
+    """Return today's persisted USD/INR market rate, fetching it once if absent."""
+    rate_date = date.today()
+    cached = await asyncio.to_thread(
+        db_query,
+        "SELECT usd_inr FROM fx_daily_rates WHERE rate_date = %s",
+        (rate_date,),
+    )
+    if cached:
+        return float(cached[0]["usd_inr"])
+
+    def read_rate() -> float:
+        ticker = yf.Ticker("USDINR=X")
+        try:
+            rate = float(ticker.fast_info["last_price"])
+        except (KeyError, TypeError, ValueError):
+            history = ticker.history(period="1d")
+            if history.empty:
+                raise RuntimeError("USD/INR quote returned no data")
+            rate = float(history["Close"].dropna().iloc[-1])
+        if not math.isfinite(rate) or rate <= 0:
+            raise RuntimeError(f"Invalid USD/INR quote: {rate}")
+        return rate
+
+    rate = round(await asyncio.to_thread(read_rate), 6)
+    await asyncio.to_thread(
+        db_execute,
+        "INSERT INTO fx_daily_rates (rate_date, usd_inr) VALUES (%s, %s) "
+        "ON DUPLICATE KEY UPDATE usd_inr = VALUES(usd_inr)",
+        (rate_date, rate),
+    )
+    logger.info("Using latest USD/INR conversion rate for %s: %.6f", rate_date, rate)
+    return rate
 
 
 def _safe_get(data: dict, key: str, default: Any = None) -> Any:
@@ -35,7 +76,7 @@ def _safe_float(val: Any, default: float | None = None) -> float | None:
         # MySQL doesn't support NaN or Inf - return None instead
         if math.isnan(f) or math.isinf(f):
             return default
-        return f
+        return round(f, 1)
     except (ValueError, TypeError):
         return default
 
@@ -92,12 +133,12 @@ def _to_millions_usd(val: Any) -> float | None:
         return None
 
 
-def _convert_usd_to_inr_crores(usd_val: Any, exchange_rate: float = 83.0) -> float | None:
+def _convert_usd_to_inr_crores(usd_val: Any, exchange_rate: float) -> float | None:
     """Convert USD value to INR Crores.
 
     Args:
         usd_val: Value in USD
-        exchange_rate: USD to INR rate (default 83)
+        exchange_rate: Current USD to INR rate
 
     Example:
         $20.158 Billion * 83 = ₹1,673.1 Billion = 167,310 Cr
@@ -116,7 +157,7 @@ def _convert_usd_to_inr_crores(usd_val: Any, exchange_rate: float = 83.0) -> flo
         return None
 
 
-def _process_financial_value(val: Any, is_usd: bool, exchange_rate: float = 83.0) -> tuple[float | None, float | None]:
+def _process_financial_value(val: Any, is_usd: bool, exchange_rate: float) -> tuple[float | None, float | None]:
     """Process financial value and return (INR_crores, USD_millions).
 
     Args:
@@ -164,6 +205,8 @@ async def fetch_and_store_fundamentals(
     Returns:
         Dict with success/failure counts and details per symbol
     """
+    global _cancel_requested
+    _cancel_requested = False
     results = {
         "total": len(symbols),
         "success": 0,
@@ -172,6 +215,11 @@ async def fetch_and_store_fundamentals(
     }
 
     for idx, symbol in enumerate(symbols):
+        if _cancel_requested:
+            logger.warning("Yahoo fundamentals import stopped by user")
+            results["failed"] += len(symbols) - idx
+            results["details"].extend({"symbol": pending, "status": "failed", "error": "Import stopped by user"} for pending in symbols[idx:])
+            break
         try:
             # For NSE symbols, append .NS suffix for Yahoo Finance
             yahoo_symbol = f"{symbol}.NS" if exchange == "NSE" else symbol
@@ -218,6 +266,38 @@ async def fetch_and_store_fundamentals(
     return results
 
 
+async def fetch_and_store_fundamentals_info(
+    symbols: list[str],
+    exchange: str = "NSE",
+) -> dict[str, Any]:
+    """Fetch and store only Yahoo Finance company profile information."""
+    global _cancel_requested
+    _cancel_requested = False
+    results: dict[str, Any] = {"total": len(symbols), "success": 0, "failed": 0, "details": []}
+    for idx, symbol in enumerate(symbols):
+        if _cancel_requested:
+            logger.warning("Yahoo fundamentals info import stopped by user")
+            results["failed"] += len(symbols) - idx
+            results["details"].extend({"symbol": pending, "status": "failed", "error": "Import stopped by user"} for pending in symbols[idx:])
+            break
+        try:
+            yahoo_symbol = f"{symbol}.NS" if exchange == "NSE" else symbol
+            logger.info("Fetching Yahoo fundamentals info for %s (%d/%d)", symbol, idx + 1, len(symbols))
+            ticker = await asyncio.to_thread(yf.Ticker, yahoo_symbol)
+            info = await asyncio.to_thread(lambda: ticker.info)
+            stored = await _store_company_info(symbol, exchange, info)
+            results["success"] += 1
+            results["details"].append({"symbol": symbol, "status": "success", "info_stored": stored})
+            logger.info("Yahoo info stored for %s: %s", symbol, stored)
+        except Exception as exc:
+            logger.error("Failed to fetch Yahoo info for %s: %s", symbol, exc)
+            results["failed"] += 1
+            results["details"].append({"symbol": symbol, "status": "failed", "error": str(exc)})
+        if idx < len(symbols) - 1:
+            await asyncio.sleep(DELAY_BETWEEN_SYMBOLS)
+    return results
+
+
 async def _store_company_info(symbol: str, exchange: str, info: dict) -> bool:
     """Store company info in fundamentals_info table."""
     try:
@@ -225,8 +305,7 @@ async def _store_company_info(symbol: str, exchange: str, info: dict) -> bool:
         financial_currency = _safe_get(info, "financialCurrency", "INR")
         is_usd = (financial_currency == "USD")
 
-        # Exchange rate for USD to INR conversion
-        USD_TO_INR = 83.0
+        USD_TO_INR = await _get_latest_usd_inr_rate()
 
         # Extract fields with safe defaults
         # Note: Store both INR (Crores) and USD (Millions) values
@@ -342,7 +421,7 @@ async def _store_quarterly_financials(symbol: str, ticker: yf.Ticker) -> int:
         info = await asyncio.to_thread(lambda: ticker.info)
         financial_currency = _safe_get(info, "financialCurrency", "INR")
         is_usd = (financial_currency == "USD")
-        USD_TO_INR = 83.0
+        USD_TO_INR = await _get_latest_usd_inr_rate()
 
         # Fetch quarterly financials
         quarterly_income = await asyncio.to_thread(lambda: ticker.quarterly_income_stmt)
@@ -478,7 +557,7 @@ async def _store_yearly_financials(symbol: str, ticker: yf.Ticker) -> int:
         info = await asyncio.to_thread(lambda: ticker.info)
         financial_currency = _safe_get(info, "financialCurrency", "INR")
         is_usd = (financial_currency == "USD")
-        USD_TO_INR = 83.0
+        USD_TO_INR = await _get_latest_usd_inr_rate()
 
         # Fetch annual financials
         yearly_income = await asyncio.to_thread(lambda: ticker.income_stmt)

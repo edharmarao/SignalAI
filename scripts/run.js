@@ -163,10 +163,10 @@ else if (cmd === 'lint') {
 else if (cmd === 'api') {
   const apiPort = process.env.API_PORT || '8003';
   killPort(apiPort);
-  console.log('[runner] Starting FastAPI development server...');
+  console.log('[runner] Starting FastAPI development server with two workers...');
   
   const uvicornPath = path.join(BACKEND_DIR, '.venv', venvBin, isWin ? 'uvicorn.exe' : 'uvicorn');
-  const args = ['main:app', '--reload', '--host', '0.0.0.0', '--port', apiPort];
+  const args = ['main:app', '--workers', '2', '--host', '0.0.0.0', '--port', apiPort];
   
   const child = spawn(uvicornPath, args, {
     cwd: BACKEND_DIR,
