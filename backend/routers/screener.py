@@ -106,3 +106,36 @@ async def bulk_download_screener_fundamentals(
     except Exception as exc:
         logger.exception("Bulk Screener download failed")
         raise HTTPException(status_code=502, detail="Screener bulk download failed") from exc
+
+
+@router.post("/rendered-download", response_model=ScreenerDownloadResponse)
+async def rendered_download_screener_fundamentals(
+    request: ScreenerDownloadRequest,
+) -> ScreenerDownloadResponse:
+    """Import rendered consolidated Screener pages through Playwright."""
+    try:
+        results: dict[str, Any] = await ScreenerService().download_rendered_multiple(request.symbols)
+        return ScreenerDownloadResponse(**results)
+    except ScreenerConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Rendered Screener download failed")
+        raise HTTPException(status_code=502, detail="Rendered Screener download failed") from exc
+
+
+@router.post("/bulk-rendered-download", response_model=ScreenerBulkDownloadResponse)
+async def bulk_rendered_download_screener_fundamentals(
+    request: ScreenerBulkDownloadRequest,
+) -> ScreenerBulkDownloadResponse:
+    """Import consolidated Screener pages in browser batches of 25."""
+    try:
+        results: dict[str, Any] = await ScreenerService().download_rendered_in_batches(
+            request.symbols,
+            universe=request.universe,
+        )
+        return ScreenerBulkDownloadResponse(**results)
+    except ScreenerConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Bulk rendered Screener download failed")
+        raise HTTPException(status_code=502, detail="Bulk rendered Screener download failed") from exc

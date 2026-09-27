@@ -1,3 +1,5 @@
+import FinancialStatements from "./FinancialStatements";
+
 function formatNumber(value: unknown, digits = 0): string {
   if (value == null || value === "") return "—";
   const numericValue = Number(String(value).replace(/,/g, ""));
@@ -7,47 +9,35 @@ function formatNumber(value: unknown, digits = 0): string {
 export default function YearlyTable({ data }: { data: any[] }) {
   if (!data || data.length === 0) return null;
 
+  const rows = [
+    ["Sales", "total_revenue"],
+    ["Operating Profit", "operating_income"],
+    ["EBITDA", "ebitda"],
+    ["Net Profit", "net_income"],
+    ["EPS in Rs", "eps_diluted", 2],
+    ["Total Assets", "total_assets"],
+    ["Total Debt", "total_debt"],
+    ["Operating Cash Flow", "operating_cashflow"],
+    ["Free Cash Flow", "free_cashflow"],
+  ] as const;
+
   return (
-    <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
-      <h2 className="text-lg font-semibold text-slate-100 mb-4">Annual Financials</h2>
+    <>
+    <section className="overflow-hidden rounded-xl border border-slate-800 bg-slate-900">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 px-5 py-4">
+        <div><h2 className="text-xl font-semibold text-slate-100">Profit & Loss</h2><p className="mt-1 text-sm text-slate-500">Consolidated figures in Rs. Crores</p></div>
+        <span className="rounded-md border border-emerald-500/30 px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-emerald-400">Annual results</span>
+      </div>
       <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-slate-800">
-              <th className="text-left py-2 px-3 text-slate-400 font-medium">Year</th>
-              <th className="text-right py-2 px-3 text-slate-400 font-medium">Revenue (Cr)</th>
-              <th className="text-right py-2 px-3 text-slate-400 font-medium">Profit (Cr)</th>
-              <th className="text-right py-2 px-3 text-slate-400 font-medium">EBITDA (Cr)</th>
-              <th className="text-right py-2 px-3 text-slate-400 font-medium">EPS</th>
-              <th className="text-right py-2 px-3 text-slate-400 font-medium">Total Assets (Cr)</th>
-            </tr>
-          </thead>
+        <table className="min-w-[900px] w-full text-sm">
+          <thead><tr className="border-b border-slate-800 bg-slate-950"><th className="sticky left-0 bg-slate-950 px-4 py-3 text-left font-semibold text-slate-400">Particulars</th>{data.map((year, idx) => <th key={idx} className="whitespace-nowrap px-4 py-3 text-right font-semibold text-slate-400">{new Date(year.fiscal_year_end).getFullYear()}</th>)}</tr></thead>
           <tbody>
-            {data.map((year, idx) => (
-              <tr key={idx} className="border-b border-slate-800/50 hover:bg-slate-800/30">
-                <td className="py-2 px-3 text-slate-300">
-                  {new Date(year.fiscal_year_end).getFullYear()}
-                </td>
-                <td className="text-right py-2 px-3 text-slate-200 tabular-nums">
-                  {formatNumber(year.total_revenue)}
-                </td>
-                <td className="text-right py-2 px-3 text-slate-200 tabular-nums">
-                  {formatNumber(year.net_income)}
-                </td>
-                <td className="text-right py-2 px-3 text-slate-200 tabular-nums">
-                  {formatNumber(year.ebitda)}
-                </td>
-                <td className="text-right py-2 px-3 text-slate-200 tabular-nums">
-                  {formatNumber(year.eps_diluted, 2)}
-                </td>
-                <td className="text-right py-2 px-3 text-slate-200 tabular-nums">
-                  {formatNumber(year.total_assets)}
-                </td>
-              </tr>
-            ))}
+            {rows.map(([label, key, digits = 0], rowIndex) => <tr key={key} className={`border-b border-slate-800/70 ${rowIndex === 1 || rowIndex === 3 ? "font-semibold" : ""}`}><td className="sticky left-0 bg-slate-900 px-4 py-2.5 text-left text-slate-300">{label}</td>{data.map((year, idx) => <td key={idx} className="px-4 py-2.5 text-right tabular-nums text-slate-200">{formatNumber(year[key], digits)}</td>)}</tr>)}
           </tbody>
         </table>
       </div>
-    </div>
+    </section>
+    <FinancialStatements yearly={data} />
+    </>
   );
 }

@@ -50,7 +50,7 @@ export default function FundamentalsImportPage({ infoOnly = false }: { infoOnly?
 
   const [importing, setImporting] = useState(false);
   const [summary, setSummary]     = useState<ImportSummary | null>(null);
-  const [source, setSource]       = useState<"yahoo" | "screener">("yahoo");
+  const [source, setSource]       = useState<"yahoo" | "screener" | "screener-rendered">("yahoo");
   const [logLines, setLogLines]   = useState<string[]>([]);
   const importController = useRef<AbortController | null>(null);
   const logPanel = useRef<HTMLPreElement | null>(null);
@@ -64,7 +64,7 @@ export default function FundamentalsImportPage({ infoOnly = false }: { infoOnly?
   }, []);
 
   useEffect(() => {
-    if (!importing || source !== "screener") return;
+    if (!importing || source === "yahoo") return;
     let active = true;
     const loadLogs = () => {
       api<{ lines: string[] }>("/fundamentals/screener/logs/tail?lines=100")
@@ -114,15 +114,18 @@ export default function FundamentalsImportPage({ infoOnly = false }: { infoOnly?
     const controller = new AbortController();
     importController.current = controller;
     const selectedSymbols = Array.from(selected);
-    if (source === "screener") setLogLines([]);
+    if (source !== "yahoo") setLogLines([]);
     setSummary({ details: selectedSymbols.map((s) => ({ symbol: s, status: "pending" })) });
 
     try {
-      if (source === "screener") {
+      if (source !== "yahoo") {
         if (infoOnly) {
           throw new Error("Screener import is available only for full fundamentals data.");
         }
-        const data = await api<ScreenerResponse>("/fundamentals/screener/bulk-download", {
+        const endpoint = source === "screener-rendered"
+          ? "/fundamentals/screener/bulk-rendered-download"
+          : "/fundamentals/screener/bulk-download";
+        const data = await api<ScreenerResponse>(endpoint, {
           method: "POST",
           timeoutMs: Math.max(900_000, selectedSymbols.length * 90_000),
           signal: controller.signal,
@@ -178,7 +181,7 @@ export default function FundamentalsImportPage({ infoOnly = false }: { infoOnly?
   }
 
   async function stopImport() {
-    const cancelPath = source === "screener" ? "/fundamentals/screener/cancel" : "/data-sync/fundamentals/cancel";
+    const cancelPath = source !== "yahoo" ? "/fundamentals/screener/cancel" : "/data-sync/fundamentals/cancel";
     await api(cancelPath, { method: "POST" }).catch(console.error);
     importController.current?.abort();
   }
@@ -194,12 +197,12 @@ export default function FundamentalsImportPage({ infoOnly = false }: { infoOnly?
         <h1 className="text-xl font-semibold text-slate-100">Fundamentals Data Import</h1>
         <p className="text-sm text-slate-400 mt-1">{infoOnly ? "Import company profile and market information only from Yahoo Finance." : "Import company profiles and financial statements from Yahoo Finance or Screener.in."}</p>
         {!infoOnly && <div className="flex gap-2 mt-4">
-          {(["yahoo", "screener"] as const).map((item) => (
+          {(["yahoo", "screener", "screener-rendered"] as const).map((item) => (
             <button key={item} onClick={() => setSource(item)} disabled={importing}
               className={`px-4 py-2 rounded-lg text-sm font-medium border transition ${source === item
                 ? item === "screener" ? "bg-amber-500/15 text-amber-300 border-amber-500/40" : "bg-sky-500/15 text-sky-300 border-sky-500/40"
                 : "bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200"} disabled:opacity-50 disabled:cursor-not-allowed`}>
-              {item === "screener" ? "Screener.in" : "Yahoo Finance"}
+              {item === "yahoo" ? "Yahoo Finance" : item === "screener" ? "Screener Excel" : "Screener Browser"}
             </button>
           ))}
         </div>}
@@ -289,11 +292,11 @@ export default function FundamentalsImportPage({ infoOnly = false }: { infoOnly?
         <div className="flex flex-col gap-4">
 
           <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
-            {source === "screener" ? (
+            {source !== "yahoo" ? (
               <>
-                <div className="text-sm font-medium text-slate-200 mb-3">Screener.in import</div>
-                <p className="text-xs text-slate-400">Uses the same selected symbols on the left as OHLCV Data. Select individual symbols, filter by sector, or use Select all for the stock master list.</p>
-                <p className="text-xs text-slate-500 mt-3">Reports are processed in batches of 50 and replace the symbol snapshot in the fundamentals tables.</p>
+                <div className="text-sm font-medium text-slate-200 mb-3">{source === "screener-rendered" ? "Screener browser import" : "Screener Excel import"}</div>
+                <p className="text-xs text-slate-400">Uses the selected symbols and opens each consolidated Screener page in a real browser session.</p>
+                <p className="text-xs text-slate-500 mt-3">{source === "screener-rendered" ? "Rendered pages are processed in browser batches of 25." : "Excel reports are processed in batches of 50."}</p>
               </>
             ) : (
               <>
@@ -363,7 +366,7 @@ export default function FundamentalsImportPage({ infoOnly = false }: { infoOnly?
                 ></div>
               </div>
               <div className="text-xs text-slate-500 mt-2 text-center">
-                {source === "screener" ? "Screener is downloading reports in batches of 50." : `Est. time: ~${requestedCount} seconds (${Math.round(requestedCount / 60)} min)`}
+                {source !== "yahoo" ? source === "screener-rendered" ? "Screener pages are opening in browser batches of 25." : "Screener Excel reports are downloading in batches of 50." : `Est. time: ~${requestedCount} seconds (${Math.round(requestedCount / 60)} min)`}
               </div>
             </div>
           )}
@@ -373,7 +376,7 @@ export default function FundamentalsImportPage({ infoOnly = false }: { infoOnly?
       {importing || logLines.length > 0 ? (
         <div className="bg-slate-950 border border-amber-500/20 rounded-xl p-5">
           <div className="flex items-center justify-between mb-3">
-            <h2 className="text-sm font-semibold text-slate-200">{source === "screener" ? "Screener" : "Yahoo Finance"} import log tail</h2>
+            <h2 className="text-sm font-semibold text-slate-200">{source === "yahoo" ? "Yahoo Finance" : "Screener"} import log tail</h2>
             <span className={`text-xs ${importing ? "text-amber-300" : "text-slate-500"}`}>
               {importing ? "Live · refreshing every 2s" : "Last run"}
             </span>
@@ -398,7 +401,7 @@ export default function FundamentalsImportPage({ infoOnly = false }: { infoOnly?
             <span className="text-xs px-2 py-0.5 rounded-full bg-red-500/15 text-red-400 border border-red-500/30">
               ✗ {failCount} failed
             </span>
-            {source === "screener" && summary?.batches !== undefined && (
+            {source !== "yahoo" && summary?.batches !== undefined && (
               <span className="text-xs text-slate-500">{summary.batches} batch{summary.batches !== 1 ? "es" : ""}</span>
             )}
           </div>

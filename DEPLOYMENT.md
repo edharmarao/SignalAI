@@ -80,6 +80,25 @@ tail -f logs/web.log
 git log --oneline -1
 ```
 
+### Screener Browser Import
+
+The `Screener Browser` fundamentals import uses Playwright Chromium to open
+`/company/{SYMBOL}/consolidated/` in an authenticated browser session. After
+installing backend requirements, install the browser binary once on the host:
+
+```bash
+cd backend
+python -m playwright install chromium
+```
+
+The rendered import endpoints are:
+
+- `POST /api/v1/fundamentals/screener/rendered-download`
+- `POST /api/v1/fundamentals/screener/bulk-rendered-download`
+
+Set `SCREENER_EMAIL` and `SCREENER_PASSWORD` in the backend environment before
+using this mode. The existing Excel endpoints are unchanged.
+
 ## Troubleshooting
 
 ### Changes Not Reflecting
