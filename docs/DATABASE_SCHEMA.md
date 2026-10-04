@@ -2,7 +2,7 @@
 
 **Last Updated:** 2026-06-28  
 **Database:** stocks  
-**Total Tables:** 34  
+**Total Tables:** 35 (after applying migrations 011–012)
 **DDL Location:** `sql/stocks_ddl.sql`
 
 ---
@@ -12,9 +12,10 @@
 1. [Stock Data Tables (15)](#stock-data-tables)
 2. [Options Data Tables (5)](#options-data-tables)
 3. [Fundamentals Tables (3)](#fundamentals-tables)
-4. [Symbol/Script Tables (5)](#symbolscript-tables)
-5. [Trading Tables (3)](#trading-tables)
-6. [System Tables (3)](#system-tables)
+4. [Fyers Technical Overview](#fyers-technical-overview)
+5. [Symbol/Script Tables (5)](#symbolscript-tables)
+6. [Trading Tables (3)](#trading-tables)
+7. [System Tables (3)](#system-tables)
 
 ---
 
@@ -201,6 +202,14 @@ Q4 2026 Revenue:  ₹  294,059.0 Cr  |  $ 35,428.8 M
 
 ---
 
+## Fyers Technical Overview
+
+The `technical_indicators` table stores the latest Fyers technical snapshot for each stock code and selected time period. The composite primary key is `(stock_code, time_period)`. Oscillator, moving-average, candlestick-pattern, pivot, and technical-ratio values and trends are stored in individual typed columns; no raw-response JSON column is required.
+
+Apply migrations `011_create_fyers_technical_overview.sql` and `012_rename_fyers_technical_overview.sql`, then run `backend/.venv/bin/python backend/migrations/013_expand_technical_indicators.py` from the repository root. Migration 013 adds the typed columns, converts any existing JSON snapshots, and removes the legacy `data` column after a successful conversion.
+
+---
+
 ## Symbol/Script Tables
 
 Symbol master data from exchanges.
@@ -293,7 +302,7 @@ Application logs and metadata.
 ## Key Statistics
 
 ### Storage Summary
-- **Total Tables:** 34
+- **Total Tables:** 35 (after applying migrations 011–012)
 - **Total Rows:** 61,543,150+
 - **Largest Table:** stock_data_5min (38M+ rows)
 - **Active Tables:** 24

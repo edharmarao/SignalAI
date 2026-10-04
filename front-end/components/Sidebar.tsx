@@ -294,6 +294,13 @@ export default function Sidebar() {
                 <I.fundamentals className="w-3.5 h-3.5 shrink-0" />
                 <span>Fundamentals</span>
               </Link>
+              <Link href="/data-import/fyers-technicals" onClick={onLinkClick}
+                className={`flex items-center gap-2 rounded-md text-xs transition px-2 py-1.5 ${
+                  path.startsWith("/data-import/fyers-technicals") ? "bg-amber-500/10 text-amber-300 font-medium" : "text-slate-400 hover:bg-slate-800/60 hover:text-slate-100"
+                }`}>
+                <I.charts className="w-3.5 h-3.5 shrink-0" />
+                <span>Fyers Technicals</span>
+              </Link>
               <Link href="/data-import/symbols" onClick={onLinkClick}
                 className={`flex items-center gap-2 rounded-md text-xs transition px-2 py-1.5 ${
                   path.startsWith("/data-import/symbols") ? "bg-violet-500/10 text-violet-300 font-medium" : "text-slate-400 hover:bg-slate-800/60 hover:text-slate-100"

@@ -500,11 +500,16 @@ def list_chart_symbols():
     """Return all NSE EQ symbols from nse_eq_symbols table."""
     try:
         rows = db_query(
-            "SELECT symbol, company_name, industry FROM nse_eq_symbols "
+            "SELECT symbol, company_name, industry, series FROM nse_eq_symbols "
             "WHERE symbol IS NOT NULL AND symbol <> '' ORDER BY symbol LIMIT 750"
         )
         return [
-            {"symbol": r["symbol"], "name": r.get("company_name", ""), "sector": r.get("industry", "")}
+            {
+                "symbol": r["symbol"],
+                "name": r.get("company_name", ""),
+                "sector": r.get("industry", ""),
+                "series": r.get("series") or "EQ",
+            }
             for r in rows
         ]
     except Exception as exc:

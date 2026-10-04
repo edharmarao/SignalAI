@@ -23,7 +23,7 @@ from fastapi.responses import JSONResponse
 
 from backend_config import get_settings
 from middleware import RequestContextMiddleware, SecurityHeadersMiddleware
-from routers import strategies, backtest, instruments, prices, orders, broker, records, ws, charts, upstox_router as upstox_router, orb_router as orb_router, system as system_router, icici_direct_router as icici_direct_router, fundamentals, screener, symbols, sync, data_sync
+from routers import strategies, backtest, instruments, prices, orders, broker, records, ws, charts, upstox_router as upstox_router, orb_router as orb_router, system as system_router, icici_direct_router as icici_direct_router, fundamentals, screener, symbols, sync, data_sync, fyers
 from routers.auth import router as auth_router
 
 logger = logging.getLogger("signal_ai")
@@ -217,5 +217,6 @@ app.include_router(screener.router)
 app.include_router(symbols.router, prefix="/api/v1")
 app.include_router(sync.router, prefix="/api/v1")
 app.include_router(data_sync.router, prefix="/api/v1")
+app.include_router(fyers.router, prefix="/api/v1")
 app.include_router(system_router.router, prefix="/api/v1")
 app.include_router(ws.router)

@@ -153,6 +153,45 @@ export default function DataImportLanding() {
           </div>
         </Link>
 
+        {/* Fyers Technicals */}
+        <Link href="/data-import/fyers-technicals"
+          className="group bg-slate-900 border border-slate-800 hover:border-amber-500/50 rounded-xl p-6 transition-all hover:shadow-lg hover:shadow-amber-500/10">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="w-12 h-12 rounded-lg bg-amber-500/15 flex items-center justify-center group-hover:bg-amber-500/25 transition">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-6 h-6 text-amber-400">
+                <path d="M3 3v18h18" /><path d="m19 9-5 5-4-4-3 3" />
+              </svg>
+            </div>
+            <div>
+              <h2 className="text-base font-semibold text-slate-100 group-hover:text-amber-300 transition">Fyers Technicals</h2>
+              <p className="text-xs text-slate-500">Technical overview</p>
+            </div>
+          </div>
+          <p className="text-sm text-slate-400 mb-4">
+            Select multiple symbols and a time period, fetch their technical overviews, and save the results.
+          </p>
+          <ul className="text-xs text-slate-500 space-y-1.5 mb-4">
+            <li className="flex items-center gap-2">
+              <span className="text-amber-400">✓</span>
+              <span>Search and select multiple symbols</span>
+            </li>
+            <li className="flex items-center gap-2">
+              <span className="text-amber-400">✓</span>
+              <span>Token is not stored</span>
+            </li>
+            <li className="flex items-center gap-2">
+              <span className="text-amber-400">✓</span>
+              <span>Save by stock code and time period</span>
+            </li>
+          </ul>
+          <div className="flex items-center gap-2 text-amber-400 text-sm font-medium">
+            <span>Fetch technicals</span>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4 group-hover:translate-x-1 transition">
+              <path d="M5 12h14M12 5l7 7-7 7" />
+            </svg>
+          </div>
+        </Link>
+
       </div>
 
       {/* Info banner */}
