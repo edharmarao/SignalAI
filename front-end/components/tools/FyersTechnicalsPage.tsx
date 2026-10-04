@@ -27,10 +27,16 @@ interface BulkResponse {
   storage_failed: number;
   time_period: string;
   details: SymbolResult[];
+  token_valid?: boolean | null;
 }
 
 interface ImportSummary extends BulkResponse {
   downloaded_at: string;
+}
+
+interface FyersTokenStatus {
+  configured: boolean;
+  token_hint: string | null;
 }
 
 const TIMEFRAMES = ["1", "5", "15", "30", "60"];
@@ -59,6 +65,10 @@ export default function FyersTechnicalsPage() {
   const [fyersSymbolOverrides, setFyersSymbolOverrides] = useState<Record<string, string>>({});
 
   const [accessToken, setAccessToken] = useState("");
+  const [savedTokenHint, setSavedTokenHint] = useState<string | null>(null);
+  const [tokenStatus, setTokenStatus] = useState<"loading" | "saved" | "expired" | "missing" | "error">("loading");
+  const [tokenStatusError, setTokenStatusError] = useState("");
+  const [validatingToken, setValidatingToken] = useState(false);
   const [timeframe, setTimeframe] = useState("60");
   const [importing, setImporting] = useState(false);
   const [summary, setSummary] = useState<ImportSummary | null>(null);
@@ -69,6 +79,18 @@ export default function FyersTechnicalsPage() {
       .then(setStocks)
       .catch((err: unknown) => setSymbolsError(err instanceof Error ? err.message : String(err)))
       .finally(() => setLoadingSymbols(false));
+  }, []);
+
+  useEffect(() => {
+    api<FyersTokenStatus>("/fyers/technical-token/status")
+      .then((status) => {
+        setSavedTokenHint(status.token_hint);
+        setTokenStatus(status.configured ? "saved" : "missing");
+      })
+      .catch((err: unknown) => {
+        setTokenStatus("error");
+        setTokenStatusError(err instanceof Error ? err.message : String(err));
+      });
   }, []);
 
   const sectors = useMemo(() => {
@@ -104,14 +126,56 @@ export default function FyersTechnicalsPage() {
     setSelected(new Set());
   }
 
+  async function validateAndSaveToken() {
+    if (selected.size === 0) {
+      setTokenStatusError("Select a symbol to test the token against.");
+      return;
+    }
+    if (!accessToken.trim()) {
+      setTokenStatusError("Enter the new Fyers access token.");
+      return;
+    }
+
+    const symbol = selected.values().next().value;
+    if (!symbol) {
+      setTokenStatusError("Select a symbol to test the token against.");
+      return;
+    }
+    const stock = stocks.find((item) => item.symbol === symbol);
+    const fyersSymbol = fyersSymbolOverrides[symbol]?.trim() || toFyersSymbol(symbol, stock?.series);
+
+    setValidatingToken(true);
+    setTokenStatusError("");
+    try {
+      const result = await api<FyersTokenStatus & { ok: boolean }>("/fyers/technical-token/validate", {
+        method: "POST",
+        body: JSON.stringify({
+          access_token: accessToken.trim(),
+          symbol: fyersSymbol,
+          timeframe,
+        }),
+      });
+      setSavedTokenHint(result.token_hint);
+      setTokenStatus("saved");
+      setAccessToken("");
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      setTokenStatusError(message);
+    } finally {
+      setValidatingToken(false);
+    }
+  }
+
   async function fetchTechnicals(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (selected.size === 0) {
       setError("Select at least one symbol.");
       return;
     }
-    if (!accessToken.trim()) {
-      setError("Enter your Fyers access token.");
+    if (tokenStatus !== "saved") {
+      setError(tokenStatus === "expired"
+        ? "The saved Fyers token was rejected or expired. Validate a replacement token first."
+        : "Save and validate a Fyers token before importing.");
       return;
     }
 
@@ -130,11 +194,17 @@ export default function FyersTechnicalsPage() {
         method: "POST",
         timeoutMs: Math.max(600_000, symbols.length * 1_000 + 60_000),
         body: JSON.stringify({
-          access_token: accessToken.trim(),
           symbols,
           timeframe,
         }),
       });
+      if (result.token_valid === false) {
+        setTokenStatus("expired");
+        setTokenStatusError("The saved Fyers token was rejected or has expired. Validate a replacement token.");
+      } else if (result.token_valid === true) {
+        setTokenStatus("saved");
+        setTokenStatusError("");
+      }
       setSummary({
         ...result,
         downloaded_at: new Date().toISOString(),
@@ -142,7 +212,6 @@ export default function FyersTechnicalsPage() {
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
-      setAccessToken("");
       setImporting(false);
     }
   }
@@ -268,22 +337,40 @@ export default function FyersTechnicalsPage() {
 
         <section className="flex flex-col gap-4">
           <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
-            <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs leading-relaxed text-amber-200">
-              Use a current Fyers access token (the bearer token from your request, not the OAuth authorization code).
-              It is sent only for this request and is not stored.
+            <div className={`rounded-lg border p-3 text-xs leading-relaxed ${
+              tokenStatus === "expired"
+                ? "border-red-500/30 bg-red-500/10 text-red-200"
+                : "border-amber-500/30 bg-amber-500/10 text-amber-200"
+            }`}>
+              {tokenStatus === "loading" ? "Checking for a saved Fyers token…" :
+                tokenStatus === "saved" ? `Token saved in Redis (••••${savedTokenHint ?? ""}). Imports will use this token.` :
+                  tokenStatus === "expired" ? "The saved token was rejected or expired. It remains in Redis until a replacement validates." :
+                    tokenStatus === "error" ? `Could not check the saved token. ${tokenStatusError}` :
+                      "Enter a Fyers access token (not the OAuth authorization code). It replaces the saved token only after Fyers accepts it."}
             </div>
-            <label htmlFor="fyers-token" className="text-sm font-medium text-slate-200 mt-4 mb-2 block">Fyers access token</label>
+            <label htmlFor="fyers-token" className="text-sm font-medium text-slate-200 mt-4 mb-2 block">New Fyers access token</label>
             <input
               id="fyers-token"
               type="password"
               value={accessToken}
-              onChange={(event) => setAccessToken(event.target.value)}
+              onChange={(event) => {
+                setAccessToken(event.target.value);
+                setTokenStatusError("");
+              }}
               autoComplete="off"
               spellCheck={false}
-              required
-              placeholder="Paste the access token"
+              placeholder="Paste a replacement token"
               className="w-full px-3 py-2.5 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-emerald-500/50"
             />
+            <button
+              type="button"
+              onClick={validateAndSaveToken}
+              disabled={validatingToken || importing || selected.size === 0 || !accessToken.trim()}
+              className="mt-3 w-full rounded-lg border border-emerald-500/40 px-3 py-2 text-xs font-semibold text-emerald-300 transition hover:bg-emerald-500/10 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {validatingToken ? "Checking token with Fyers…" : "Validate and save token"}
+            </button>
+            {tokenStatusError && <p role="alert" className="mt-3 text-xs text-red-400">{tokenStatusError}</p>}
           </div>
 
           <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
@@ -305,10 +392,12 @@ export default function FyersTechnicalsPage() {
 
           <button
             type="submit"
-            disabled={importing || loadingSymbols || selected.size === 0 || !accessToken.trim()}
+            disabled={importing || loadingSymbols || selected.size === 0 || tokenStatus !== "saved"}
             className="w-full py-3 rounded-xl text-sm font-semibold transition disabled:opacity-40 disabled:cursor-not-allowed bg-emerald-500 hover:bg-emerald-400 text-slate-950"
           >
-            {importing ? "Fetching and saving…" : selected.size === 0 ? "Select symbols to fetch" : `Fetch ${selected.size} symbol${selected.size === 1 ? "" : "s"}`}
+            {importing ? "Fetching and saving…" : selected.size === 0 ? "Select symbols to fetch" :
+              tokenStatus !== "saved" ? "Validate a Fyers token first" :
+                `Fetch ${selected.size} symbol${selected.size === 1 ? "" : "s"}`}
           </button>
         </section>
       </form>

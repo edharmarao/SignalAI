@@ -29,11 +29,24 @@ interface FundamentalsData {
 }
 
 interface MarketSummary {
+  symbol: string;
   latestClose: number;
   latestDate?: string;
   high52w: number;
   low52w: number;
   avgVolume: number;
+}
+
+interface LivePriceQuote {
+  ltp: number | null;
+  source: string;
+}
+
+interface LivePriceState {
+  symbol: string;
+  ltp: number | null;
+  updatedAt: number | null;
+  error: string;
 }
 
 interface TechnicalRecord {
@@ -292,7 +305,19 @@ function IndicatorTable({
   );
 }
 
-function TechnicalDataView({ record }: { record: TechnicalRecord }) {
+function TechnicalDataView({
+  record,
+  livePrice,
+  livePriceUpdatedAt,
+  latestClose,
+  livePriceError,
+}: {
+  record: TechnicalRecord;
+  livePrice: number | null;
+  livePriceUpdatedAt: number | null;
+  latestClose: number | undefined;
+  livePriceError: string;
+}) {
   const meters = [
     { label: "Oscillators", indicators: OSCILLATORS },
     { label: "Moving averages", indicators: MOVING_AVERAGES },
@@ -363,6 +388,12 @@ function TechnicalDataView({ record }: { record: TechnicalRecord }) {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800">
+              <PivotCurrentPriceRow
+                livePrice={livePrice}
+                updatedAt={livePriceUpdatedAt}
+                latestClose={latestClose}
+                error={livePriceError}
+              />
               {PIVOT_LEVELS.map(([label, column]) => (
                 <tr key={column}>
                   <td className="py-2.5 pr-4 text-xs text-slate-400">{label}</td>
@@ -382,6 +413,41 @@ function TechnicalDataView({ record }: { record: TechnicalRecord }) {
   );
 }
 
+function PivotCurrentPriceRow({
+  livePrice,
+  updatedAt,
+  latestClose,
+  error,
+}: {
+  livePrice: number | null;
+  updatedAt: number | null;
+  latestClose: number | undefined;
+  error: string;
+}) {
+  const fallbackPrice = typeof latestClose === "number" && latestClose > 0 ? latestClose : null;
+  const price = livePrice ?? fallbackPrice;
+
+  return (
+    <tr className="border-y border-dashed border-emerald-500/50 bg-emerald-500/5">
+      <td className="py-2.5 pr-4 text-xs font-semibold text-emerald-300">Current price</td>
+      <td colSpan={PIVOT_TYPES.length} className="px-3 py-2.5 text-right tabular-nums text-slate-100">
+        <span className="font-semibold">{price === null ? "—" : rupees(price, 2)}</span>
+        <span className={`ml-2 text-[10px] font-semibold ${livePrice === null ? "text-amber-300" : "text-emerald-300"}`}>
+          {livePrice === null ? (fallbackPrice === null ? "UNAVAILABLE" : "LAST CLOSE") : "LIVE · UPSTOX"}
+        </span>
+        {livePrice !== null && updatedAt !== null && (
+          <span className="ml-2 text-[10px] text-slate-500">
+            {new Date(updatedAt).toLocaleTimeString()}
+          </span>
+        )}
+        {livePrice === null && error && (
+          <span className="ml-2 text-[10px] text-amber-300">{error}</span>
+        )}
+      </td>
+    </tr>
+  );
+}
+
 export default function FundamentalsViewer() {
   const [search, setSearch] = useState("");
   const [symbols, setSymbols] = useState<Stock[]>([]);
@@ -398,6 +464,7 @@ export default function FundamentalsViewer() {
   const [technicalRecord, setTechnicalRecord] = useState<TechnicalRecord | null>(null);
   const [technicalLoading, setTechnicalLoading] = useState(false);
   const [technicalError, setTechnicalError] = useState("");
+  const [livePriceState, setLivePriceState] = useState<LivePriceState | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -487,6 +554,48 @@ export default function FundamentalsViewer() {
       .finally(() => { if (active) setTechnicalLoading(false); });
     return () => { active = false; };
   }, [activeTab, selectedSymbol, timePeriod]);
+
+  useEffect(() => {
+    if (!selectedSymbol || activeTab !== "technicals") return;
+    let active = true;
+
+    const loadLivePrice = async () => {
+      try {
+        const quote = await api<LivePriceQuote>(`/prices/ltp/${encodeURIComponent(selectedSymbol)}`);
+        if (!active) return;
+        if (typeof quote.ltp === "number" && Number.isFinite(quote.ltp)) {
+          setLivePriceState({
+            symbol: selectedSymbol,
+            ltp: quote.ltp,
+            updatedAt: Date.now(),
+            error: "",
+          });
+        } else {
+          setLivePriceState({
+            symbol: selectedSymbol,
+            ltp: null,
+            updatedAt: null,
+            error: "Live quote unavailable.",
+          });
+        }
+      } catch (err: unknown) {
+        if (!active) return;
+        setLivePriceState({
+          symbol: selectedSymbol,
+          ltp: null,
+          updatedAt: null,
+          error: err instanceof Error ? err.message : "Live quote unavailable.",
+        });
+      }
+    };
+
+    void loadLivePrice();
+    const intervalId = window.setInterval(() => void loadLivePrice(), 10_000);
+    return () => {
+      active = false;
+      window.clearInterval(intervalId);
+    };
+  }, [activeTab, selectedSymbol]);
 
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -695,7 +804,13 @@ export default function FundamentalsViewer() {
                       <span>{technicalRecord.stock_code} · {technicalRecord.time_period} minute period</span>
                       <span>Updated {new Date(technicalRecord.updated_at).toLocaleString()}</span>
                     </div>
-                    <TechnicalDataView record={technicalRecord} />
+                    <TechnicalDataView
+                      record={technicalRecord}
+                      livePrice={livePriceState?.symbol === selectedSymbol ? livePriceState.ltp : null}
+                      livePriceUpdatedAt={livePriceState?.symbol === selectedSymbol ? livePriceState.updatedAt : null}
+                      latestClose={summary?.symbol === selectedSymbol ? summary.latestClose : undefined}
+                      livePriceError={livePriceState?.symbol === selectedSymbol ? livePriceState.error : ""}
+                    />
                   </>
                 ) : null}
               </div>

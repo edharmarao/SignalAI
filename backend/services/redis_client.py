@@ -40,6 +40,19 @@ def redis_client() -> redis.Redis:
 # ── Upstox-specific helpers (matches vasudha-backend key schema) ──────────────
 
 _UPSTOX_KEY = "upstox"
+_FYERS_KEY = "fyers"
+
+
+def get_fyers_technical_token() -> str | None:
+    """Fetch the Fyers technical token, falling back to the legacy access-token field."""
+    client = redis_client()
+    return client.hget(_FYERS_KEY, "technical_auth_token") or client.hget(_FYERS_KEY, "access_token")
+
+
+def save_fyers_technical_token(access_token: str) -> None:
+    """Persist a validated Fyers technical token in Redis."""
+    redis_client().hset(_FYERS_KEY, "technical_auth_token", access_token)
+    logger.info("Fyers technical auth token saved to Redis")
 
 
 def get_upstox_token() -> str | None:
@@ -108,4 +121,3 @@ def delete_breeze_token() -> None:
         logger.info("Breeze session_id removed from Redis hash 'icicidirect'")
     except Exception as e:
         logger.warning("Redis: could not delete Breeze session_id: %s", e)
-

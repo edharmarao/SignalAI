@@ -204,9 +204,9 @@ Q4 2026 Revenue:  ₹  294,059.0 Cr  |  $ 35,428.8 M
 
 ## Fyers Technical Overview
 
-The `technical_indicators` table stores the latest Fyers technical snapshot for each stock code and selected time period. The composite primary key is `(stock_code, time_period)`. Oscillator, moving-average, candlestick-pattern, pivot, and technical-ratio values and trends are stored in individual typed columns; no raw-response JSON column is required.
+The `technical_indicators` table stores the latest Fyers technical snapshot for each stock code and selected time period. The composite primary key is `(stock_code, time_period)`. Overall momentum, oscillator, and returns scores, plus moving-average, candlestick-pattern, pivot, and technical-ratio values and trends, are stored in individual typed columns; no raw-response JSON column is required.
 
-Apply migrations `011_create_fyers_technical_overview.sql` and `012_rename_fyers_technical_overview.sql`, then run `backend/.venv/bin/python backend/migrations/013_expand_technical_indicators.py` from the repository root. Migration 013 adds the typed columns, converts any existing JSON snapshots, and removes the legacy `data` column after a successful conversion.
+Apply migrations `011_create_fyers_technical_overview.sql` and `012_rename_fyers_technical_overview.sql`, then run `backend/.venv/bin/python backend/migrations/013_expand_technical_indicators.py` and `backend/.venv/bin/python backend/migrations/014_add_fyers_overall_scores.py` from the repository root. Migration 013 adds the typed columns, converts any existing JSON snapshots, and removes the legacy `data` column after a successful conversion. Migration 014 adds the overall score columns to existing installations.
 
 ---
 

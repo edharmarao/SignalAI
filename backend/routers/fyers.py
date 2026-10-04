@@ -9,9 +9,11 @@ from typing import Any
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, field_validator
+from redis.exceptions import RedisError
 
 from db import db_query, db_upsert
 from deps import get_current_user
+from services.redis_client import get_fyers_technical_token, save_fyers_technical_token
 
 logger = logging.getLogger("signal_ai")
 router = APIRouter(prefix="/fyers", tags=["fyers"])
@@ -82,6 +84,9 @@ _PIVOT_LEVELS = {
 
 _TECHNICAL_COLUMN_TYPES: dict[str, str] = {
     "technical_lut": "BIGINT NULL",
+    "momentum_score": "DECIMAL(20,6) NULL",
+    "oscillators_score": "DECIMAL(20,6) NULL",
+    "returns_score": "DECIMAL(20,6) NULL",
 }
 for _prefix, _indicators in (
     ("osc", _OSCILLATORS),
@@ -131,7 +136,7 @@ class TechnicalOverviewRequest(BaseModel):
 class BulkTechnicalOverviewRequest(BaseModel):
     """Request parameters for multiple Fyers technical overviews."""
 
-    access_token: str = Field(..., min_length=1, max_length=8192)
+    access_token: str | None = Field(default=None, min_length=1, max_length=8192)
     symbols: list[str] = Field(..., min_length=1, max_length=750)
     timeframe: str = Field(default="60", pattern=r"^\d{1,3}$")
 
@@ -141,6 +146,19 @@ class BulkTechnicalOverviewRequest(BaseModel):
         return list(dict.fromkeys(_normalize_symbol(value) for value in values))
 
 
+class FyersTokenValidationRequest(BaseModel):
+    """Candidate Fyers token and symbol used to validate before replacing Redis."""
+
+    access_token: str = Field(..., min_length=1, max_length=8192)
+    symbol: str = Field(..., min_length=1, max_length=64)
+    timeframe: str = Field(default="60", pattern=r"^\d{1,3}$")
+
+    @field_validator("symbol")
+    @classmethod
+    def normalize_symbol(cls, value: str) -> str:
+        return _normalize_symbol(value)
+
+
 def _access_token(value: str) -> str:
     token = value.strip()
     if token.lower().startswith("bearer "):
@@ -148,6 +166,14 @@ def _access_token(value: str) -> str:
     if not token:
         raise HTTPException(status_code=422, detail="Fyers access token is required.")
     return token
+
+
+def _saved_fyers_token() -> str | None:
+    try:
+        return get_fyers_technical_token()
+    except RedisError as exc:
+        logger.exception("Redis is unavailable while accessing the Fyers token")
+        raise HTTPException(status_code=503, detail="Could not access the saved Fyers token in Redis.") from exc
 
 
 async def _request_overview(
@@ -187,17 +213,94 @@ async def _request_overview(
     if not response.is_success:
         logger.warning("Fyers technical overview returned HTTP %s", response.status_code)
         message = _upstream_error_message(response, access_token)
+        token_rejected = response.status_code in {401, 403} or any(
+            word in message.lower() for word in ("token", "authoriz", "credential", "expired")
+        )
         raise HTTPException(
-            status_code=502,
-            detail=f"Fyers rejected the request (HTTP {response.status_code})"
-            + (f": {message}" if message else "."),
+            status_code=401 if token_rejected else 502,
+            detail=(
+                "Fyers rejected the access token; it may be expired."
+                if token_rejected
+                else f"Fyers rejected the request (HTTP {response.status_code})"
+                + (f": {message}" if message else ".")
+            ),
         )
 
     try:
-        return response.json()
+        data = response.json()
     except ValueError as exc:
         logger.warning("Fyers technical overview returned a non-JSON response")
         raise HTTPException(status_code=502, detail="Fyers returned an invalid JSON response.") from exc
+    _validate_overview_response(data, access_token)
+    return data
+
+
+@router.get("/technical-token/status")
+def fyers_token_status(user=Depends(get_current_user)):
+    """Report whether a token is saved without exposing its value."""
+    del user
+    token = _saved_fyers_token()
+    return {
+        "configured": bool(token),
+        "token_hint": token[-4:] if token else None,
+    }
+
+
+@router.post("/technical-token/validate")
+async def validate_fyers_token(
+    request: FyersTokenValidationRequest,
+    user=Depends(get_current_user),
+):
+    """Validate a candidate token with Fyers before replacing the saved token."""
+    del user
+    token = _access_token(request.access_token)
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            data = await _request_overview(client, token, request.symbol, request.timeframe)
+    except HTTPException as exc:
+        if exc.status_code == 401:
+            raise HTTPException(
+                status_code=401,
+                detail="The new Fyers token was rejected or expired. The previously saved token was not changed.",
+            ) from exc
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail=f"Could not validate the new Fyers token: {exc.detail} The previously saved token was not changed.",
+        ) from exc
+    _validate_overview_response(data, token)
+    try:
+        save_fyers_technical_token(token)
+    except RedisError as exc:
+        logger.exception("Could not save the validated Fyers token to Redis")
+        raise HTTPException(
+            status_code=503,
+            detail="Fyers accepted the token, but Redis could not save it. The previous saved token was not changed.",
+        ) from exc
+    return {"ok": True, "configured": True, "token_hint": token[-4:]}
+
+
+def _validate_overview_response(data: Any, access_token: str) -> None:
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=502, detail="Fyers returned an unexpected response; token was not saved.")
+    payload = data.get("data")
+    if (
+        data.get("s") != "ok"
+        or data.get("code") != 200
+        or not isinstance(payload, dict)
+        or not isinstance(payload.get("technical_meter"), dict)
+    ):
+        message = ""
+        for key in ("message", "error", "detail", "description", "msg"):
+            value = data.get(key)
+            if isinstance(value, str) and value.strip():
+                message = value.strip().replace(access_token, "[redacted]")[:200]
+                break
+        raise HTTPException(
+            status_code=401,
+            detail="Fyers rejected the token or symbol"
+            + (f": {message}" if message else ".")
+            + " The saved token was not changed.",
+        )
 
 
 def _upstream_error_message(response: httpx.Response, access_token: str) -> str:
@@ -240,6 +343,22 @@ def _numeric_value(value: Any, field: str) -> int | float | None:
     return value
 
 
+def _overall_score(payload: dict[str, Any], meter: dict[str, Any], section: str) -> int | float | None:
+    for source in (meter, payload):
+        for key in (section, f"{section}_overview"):
+            value = source.get(key)
+            if value is None:
+                continue
+            if isinstance(value, dict):
+                overview = value.get("overview")
+                if isinstance(overview, dict):
+                    value = overview
+                if isinstance(value, dict):
+                    value = value.get("value", value.get("score"))
+            return _numeric_value(value, f"{section}.score")
+    return None
+
+
 def _technical_indicator_row(symbol: str, timeframe: str, response: Any) -> dict[str, Any]:
     if not isinstance(response, dict) or not isinstance(response.get("data"), dict):
         raise ValueError("Fyers response is missing the data object.")
@@ -252,6 +371,9 @@ def _technical_indicator_row(symbol: str, timeframe: str, response: Any) -> dict
         "stock_code": _stock_code(symbol),
         "time_period": timeframe,
         "technical_lut": _numeric_value(meter.get("lut"), "technical_meter.lut"),
+        "momentum_score": _overall_score(payload, meter, "momentum"),
+        "oscillators_score": None,
+        "returns_score": _overall_score(payload, meter, "returns"),
         "updated_at": datetime.now(),
     }
     for prefix, indicators in (
@@ -308,6 +430,8 @@ def _technical_indicator_row(symbol: str, timeframe: str, response: Any) -> dict
         if description is not None and not isinstance(description, str):
             raise ValueError(f"Fyers {section_key}.overview.description must be text.")
         row[f"{overview_prefix}_overview_description"] = description
+
+    row["oscillators_score"] = row["oscillators_overview_value"]
 
     pivot_rows = payload.get("pivot")
     if not isinstance(pivot_rows, list):
@@ -400,16 +524,25 @@ async def get_bulk_technical_overview(
 ):
     """Fetch technical overviews sequentially, returning individual successes and failures."""
     del user
-    token = _access_token(request.access_token)
+    token = _access_token(request.access_token) if request.access_token else _saved_fyers_token()
+    if not token:
+        raise HTTPException(
+            status_code=400,
+            detail="No Fyers access token is saved. Enter and validate a token before importing.",
+        )
     details = []
+    token_valid: bool | None = None
 
     async with httpx.AsyncClient(timeout=30.0) as client:
         for symbol in request.symbols:
             try:
                 data = await _request_overview(client, token, symbol, request.timeframe)
                 details.append({"symbol": symbol, "status": "success", "data": data})
+                token_valid = True
             except HTTPException as exc:
                 details.append({"symbol": symbol, "status": "failed", "error": exc.detail})
+                if exc.status_code == 401:
+                    token_valid = False
 
     successful_details = [detail for detail in details if detail["status"] == "success"]
     rows = []
@@ -444,6 +577,7 @@ async def get_bulk_technical_overview(
         "stored": stored,
         "storage_failed": successful - stored,
         "time_period": request.timeframe,
+        "token_valid": token_valid,
         "details": details,
     }
 
